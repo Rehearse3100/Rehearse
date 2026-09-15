@@ -59,7 +59,7 @@ export function DiscoveryStageLayout({
               Mission Briefing
             </h2>
             <h1 className="font-headline-md text-headline-md mb-2">
-              Run a 20-minute discovery call with Dana Reyes.
+              Run a 15-minute discovery call with Dana Reyes.
             </h1>
             <p className="text-on-primary/70 font-body-md">
               Your goal is to uncover their business issues around scheduling before moving to the
@@ -127,7 +127,7 @@ export function DiscoveryStageLayout({
               <span className="font-code-lg text-code-lg text-white">
                 {formatDiscoveryTime(callSeconds)}
               </span>
-              <p className="text-white/40 text-xs mt-1">Target: 15-20 minutes</p>
+              <p className="text-white/40 text-xs mt-1">Target: 15 minutes</p>
             </section>
           )}
         </aside>

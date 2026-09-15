@@ -156,12 +156,12 @@ export function buildNegotiationPriorContext(
     label: string;
     key: keyof typeof PRIOR_CONTEXT_FALLBACKS.presentation;
   }[] = [
-    { label: "The Business Case", key: "businessCase" },
-    { label: "Underlying Pain Points", key: "underlyingPainPoints" },
-    { label: "How Tempo Solves It", key: "solution" },
-    { label: "Supporting Proof Point", key: "proofPoint" },
-    { label: "Who Needs to Say Yes", key: "powerStakeholder" },
-    { label: "The Next Step", key: "nextStep" },
+    { label: "Business Issue", key: "businessCase" },
+    { label: "Problem", key: "underlyingPainPoints" },
+    { label: "Solution", key: "solution" },
+    { label: "Value", key: "proofPoint" },
+    { label: "Power", key: "powerStakeholder" },
+    { label: "Plan", key: "nextStep" },
   ];
 
   const objectionFields: {

@@ -37,8 +37,8 @@ export const TEMPO_STAGES: TempoStageDefinition[] = [
     icon: "record_voice_over",
     modality: "Live Voice Call",
     description:
-      "A 20-minute live call with Dana Reyes. Uncover their business issues through smart questions — no pitching yet.",
-    time: "~20 min",
+      "A 15-minute live call with Dana Reyes. Uncover their business issues through smart questions — no pitching yet.",
+    time: "~15 min",
     noAI: true,
     stageKey: "discovery",
   },

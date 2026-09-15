@@ -139,14 +139,14 @@ export function PresentationStageLayout({
                 }
               }}
             >
-              {/* Field 1: The Business Case */}
+              {/* Field 1: Business Issue */}
               <div className="flex flex-col gap-sm">
                 <label
                   className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
                   htmlFor="business-case"
                 >
                   <MaterialIcon name="trending_down" className="text-on-surface-variant text-[18px]" />
-                  The Business Case
+                  Business Issue
                   {isPresentationSectionComplete(1, form) ? (
                     <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
                   ) : null}
@@ -164,14 +164,14 @@ export function PresentationStageLayout({
 
               <hr className="border-t border-outline-variant/30" />
 
-              {/* Field 2: Underlying Pain Points */}
+              {/* Field 2: Problem */}
               <div className="flex flex-col gap-sm">
                 <label
                   className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
                   htmlFor="pain-points"
                 >
                   <MaterialIcon name="report_problem" className="text-on-surface-variant text-[18px]" />
-                  Underlying Pain Points
+                  Problem
                   {isPresentationSectionComplete(2, form) ? (
                     <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
                   ) : null}
@@ -189,14 +189,14 @@ export function PresentationStageLayout({
 
               <hr className="border-t border-outline-variant/30" />
 
-              {/* Field 3: How Tempo Solves It */}
+              {/* Field 3: Solution */}
               <div className="flex flex-col gap-sm">
                 <label
                   className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
                   htmlFor="solution"
                 >
                   <MaterialIcon name="build" className="text-on-surface-variant text-[18px]" />
-                  How Tempo Solves It
+                  Solution
                   {isPresentationSectionComplete(3, form) ? (
                     <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
                   ) : null}
@@ -214,7 +214,7 @@ export function PresentationStageLayout({
 
               <hr className="border-t border-outline-variant/30" />
 
-              {/* Field 4: The Payoff */}
+              {/* Field 4: Value */}
               <div className="flex flex-col gap-md">
                 <label
                   className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
@@ -224,7 +224,7 @@ export function PresentationStageLayout({
                     name="monetization_on"
                     className="text-on-surface-variant text-[18px]"
                   />
-                  The Payoff
+                  Value
                   {isPresentationSectionComplete(4, form) ? (
                     <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
                   ) : null}
@@ -253,14 +253,14 @@ export function PresentationStageLayout({
 
               <hr className="border-t border-outline-variant/30" />
 
-              {/* Field 5: Who Needs to Say Yes */}
+              {/* Field 5: Power */}
               <div className="flex flex-col gap-sm">
                 <label
                   className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
                   htmlFor="power-stakeholder"
                 >
                   <MaterialIcon name="group" className="text-on-surface-variant text-[18px]" />
-                  Who Needs to Say Yes
+                  Power
                   {isPresentationSectionComplete(5, form) ? (
                     <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
                   ) : null}
@@ -278,14 +278,14 @@ export function PresentationStageLayout({
 
               <hr className="border-t border-outline-variant/30" />
 
-              {/* Field 6: The Next Step */}
+              {/* Field 6: Plan */}
               <div className="flex flex-col gap-sm">
                 <label
                   className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
                   htmlFor="next-step"
                 >
                   <MaterialIcon name="flag" className="text-on-surface-variant text-[18px]" />
-                  The Next Step
+                  Plan
                   {isPresentationSectionComplete(6, form) ? (
                     <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
                   ) : null}

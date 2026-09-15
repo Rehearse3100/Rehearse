@@ -1,8 +1,8 @@
 /**
  * tempo-presentation.ts
  * Types, copy, and helpers for Tempo Stage 3 Presentation (default class only).
- * Form follows ValuePrompter-style fields: Business Case / Pain / Solution /
- * Payoff proof / Power / Plan.
+ * Form follows ValueSelling fields: Business Issue / Problem / Solution /
+ * Value / Power / Plan. Display titles may change; persisted keys stay stable.
  */
 
 import type { DiscoverySummaryForm } from "@/lib/tempo-discovery";
@@ -25,7 +25,7 @@ export const EMPTY_PRESENTATION_FORM: PresentationForm = {
   nextStep: "",
 };
 
-/** Static ROI reference shown in The Payoff section (not student-editable). */
+/** Static ROI reference shown in the Value section (not student-editable). */
 export const PRESENTATION_PAYOFF_REFERENCE =
   "Reference: 6,400 appts × 18% no-shows × $120 = $138,240/month lost";
 
@@ -34,12 +34,12 @@ export type PresentationStageData = {
 };
 
 export const PRESENTATION_SECTIONS = [
-  { number: 1, title: "The Business Case", field: "businessCase" as const },
-  { number: 2, title: "Underlying Pain Points", field: "underlyingPainPoints" as const },
-  { number: 3, title: "How Tempo Solves It", field: "solution" as const },
-  { number: 4, title: "The Payoff", field: "proofPoint" as const },
-  { number: 5, title: "Who Needs to Say Yes", field: "powerStakeholder" as const },
-  { number: 6, title: "The Next Step", field: "nextStep" as const },
+  { number: 1, title: "Business Issue", field: "businessCase" as const },
+  { number: 2, title: "Problem", field: "underlyingPainPoints" as const },
+  { number: 3, title: "Solution", field: "solution" as const },
+  { number: 4, title: "Value", field: "proofPoint" as const },
+  { number: 5, title: "Power", field: "powerStakeholder" as const },
+  { number: 6, title: "Plan", field: "nextStep" as const },
 ] as const;
 
 export const TEMPO_REFERENCE_SECTIONS = [
