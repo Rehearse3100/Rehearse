@@ -1,13 +1,10 @@
 -- =============================================================================
--- Rehearse — FULL greenfield Supabase setup (current schema)
--- Paste this ENTIRE file into Supabase → SQL Editor → Run (once on a new project)
--- Safe-ish to re-run (IF NOT EXISTS / ON CONFLICT), but intended for empty DBs
---
--- After this runs, seed the prospect directory / data room with:
---   npx tsx scripts/generate-prospect-directory.ts
+-- Rehearse — FULL greenfield Supabase setup (single paste)
+-- Paste this ENTIRE file into Supabase → SQL Editor → Run once on a new project.
+-- Idempotent: safe to run a second time.
+-- Does NOT seed the 64 data-room companies (run generate-prospect-directory.ts after).
 -- =============================================================================
 
--- ── Extensions ───────────────────────────────────────────────────────────────
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ── Profiles (professors via Supabase Auth) ───────────────────────────────────
@@ -39,7 +36,7 @@ $$;
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
-  FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 -- ── Simulations ──────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.simulations (
@@ -194,11 +191,20 @@ CREATE TABLE IF NOT EXISTS public.crm_leads (
   why_fit text NOT NULL DEFAULT '',
   trigger_event text NOT NULL DEFAULT '',
   next_step text NOT NULL DEFAULT '',
+  decision_maker_rationale text NOT NULL DEFAULT '',
   status text NOT NULL DEFAULT 'new'
-    CHECK (status IN ('new', 'selected', 'converted')),
+    CHECK (status IN ('new', 'shortlisted', 'selected', 'converted')),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE public.crm_leads
+  ADD COLUMN IF NOT EXISTS decision_maker_rationale text NOT NULL DEFAULT '';
+
+ALTER TABLE public.crm_leads DROP CONSTRAINT IF EXISTS crm_leads_status_check;
+ALTER TABLE public.crm_leads
+  ADD CONSTRAINT crm_leads_status_check
+  CHECK (status IN ('new', 'shortlisted', 'selected', 'converted'));
 
 CREATE INDEX IF NOT EXISTS crm_leads_attempt_id_idx ON public.crm_leads (attempt_id);
 CREATE INDEX IF NOT EXISTS crm_leads_attempt_status_idx
@@ -216,7 +222,6 @@ CREATE TABLE IF NOT EXISTS public.crm_prospect_directory (
   entry_type text NOT NULL DEFAULT 'filler'
     CHECK (entry_type IN ('target', 'crafted_decoy', 'filler')),
   is_active boolean NOT NULL DEFAULT true,
-  -- Data room / directory v2 (visible layer)
   in_data_room boolean NOT NULL DEFAULT false,
   vertical text,
   locations integer,
@@ -226,7 +231,6 @@ CREATE TABLE IF NOT EXISTS public.crm_prospect_directory (
   online_booking boolean,
   blurb text,
   public_signals jsonb,
-  -- Data room / directory v2 (hidden / server-only layer)
   research_facts jsonb,
   class text,
   subtype text,
@@ -239,22 +243,38 @@ CREATE TABLE IF NOT EXISTS public.crm_prospect_directory (
 );
 
 ALTER TABLE public.crm_prospect_directory
-  ADD COLUMN IF NOT EXISTS in_data_room boolean NOT NULL DEFAULT false,
-  ADD COLUMN IF NOT EXISTS vertical text,
-  ADD COLUMN IF NOT EXISTS locations integer,
-  ADD COLUMN IF NOT EXISTS metro text,
-  ADD COLUMN IF NOT EXISTS in_territory boolean,
-  ADD COLUMN IF NOT EXISTS size_note text,
-  ADD COLUMN IF NOT EXISTS online_booking boolean,
-  ADD COLUMN IF NOT EXISTS blurb text,
-  ADD COLUMN IF NOT EXISTS public_signals jsonb,
-  ADD COLUMN IF NOT EXISTS research_facts jsonb,
-  ADD COLUMN IF NOT EXISTS class text,
-  ADD COLUMN IF NOT EXISTS subtype text,
-  ADD COLUMN IF NOT EXISTS fit_rank integer,
-  ADD COLUMN IF NOT EXISTS trigger_quality text,
-  ADD COLUMN IF NOT EXISTS keyed_trigger text,
-  ADD COLUMN IF NOT EXISTS best_contact text,
+  ADD COLUMN IF NOT EXISTS in_data_room boolean NOT NULL DEFAULT false;
+ALTER TABLE public.crm_prospect_directory
+  ADD COLUMN IF NOT EXISTS vertical text;
+ALTER TABLE public.crm_prospect_directory
+  ADD COLUMN IF NOT EXISTS locations integer;
+ALTER TABLE public.crm_prospect_directory
+  ADD COLUMN IF NOT EXISTS metro text;
+ALTER TABLE public.crm_prospect_directory
+  ADD COLUMN IF NOT EXISTS in_territory boolean;
+ALTER TABLE public.crm_prospect_directory
+  ADD COLUMN IF NOT EXISTS size_note text;
+ALTER TABLE public.crm_prospect_directory
+  ADD COLUMN IF NOT EXISTS online_booking boolean;
+ALTER TABLE public.crm_prospect_directory
+  ADD COLUMN IF NOT EXISTS blurb text;
+ALTER TABLE public.crm_prospect_directory
+  ADD COLUMN IF NOT EXISTS public_signals jsonb;
+ALTER TABLE public.crm_prospect_directory
+  ADD COLUMN IF NOT EXISTS research_facts jsonb;
+ALTER TABLE public.crm_prospect_directory
+  ADD COLUMN IF NOT EXISTS class text;
+ALTER TABLE public.crm_prospect_directory
+  ADD COLUMN IF NOT EXISTS subtype text;
+ALTER TABLE public.crm_prospect_directory
+  ADD COLUMN IF NOT EXISTS fit_rank integer;
+ALTER TABLE public.crm_prospect_directory
+  ADD COLUMN IF NOT EXISTS trigger_quality text;
+ALTER TABLE public.crm_prospect_directory
+  ADD COLUMN IF NOT EXISTS keyed_trigger text;
+ALTER TABLE public.crm_prospect_directory
+  ADD COLUMN IF NOT EXISTS best_contact text;
+ALTER TABLE public.crm_prospect_directory
   ADD COLUMN IF NOT EXISTS why text;
 
 CREATE INDEX IF NOT EXISTS crm_prospect_directory_simulation_id_idx
@@ -281,7 +301,7 @@ CREATE TABLE IF NOT EXISTS public.crm_prospect_contacts (
 CREATE INDEX IF NOT EXISTS crm_prospect_contacts_company_id_idx
   ON public.crm_prospect_contacts (company_id);
 
--- ── Prospect documents (Profile / News for data room) ────────────────────────
+-- ── Prospect documents (Profile / News — kept empty; generator does not seed) ─
 CREATE TABLE IF NOT EXISTS public.crm_prospect_documents (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   company_id uuid NOT NULL REFERENCES public.crm_prospect_directory(id) ON DELETE CASCADE,
@@ -312,7 +332,6 @@ ALTER TABLE public.crm_prospect_directory ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.crm_prospect_contacts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.crm_prospect_documents ENABLE ROW LEVEL SECURITY;
 
--- profiles
 DROP POLICY IF EXISTS "Users read own profile" ON public.profiles;
 CREATE POLICY "Users read own profile" ON public.profiles
   FOR SELECT USING (auth.uid() = id);
@@ -337,7 +356,6 @@ CREATE POLICY "professors_read_profiles_for_sim_attempts" ON public.profiles
     )
   );
 
--- simulations
 DROP POLICY IF EXISTS "Teachers manage own simulations" ON public.simulations;
 CREATE POLICY "Teachers manage own simulations" ON public.simulations
   FOR ALL USING (auth.uid() = teacher_id OR teacher_id IS NULL);
@@ -346,7 +364,6 @@ DROP POLICY IF EXISTS "Students read published simulations" ON public.simulation
 CREATE POLICY "Students read published simulations" ON public.simulations
   FOR SELECT USING (is_published = true OR auth.uid() = teacher_id);
 
--- classes
 DROP POLICY IF EXISTS "professors_manage_own_classes" ON public.classes;
 CREATE POLICY "professors_manage_own_classes" ON public.classes
   FOR ALL USING (professor_id = auth.uid() OR professor_id IS NULL);
@@ -355,7 +372,6 @@ DROP POLICY IF EXISTS "anyone_read_classes" ON public.classes;
 CREATE POLICY "anyone_read_classes" ON public.classes
   FOR SELECT USING (true);
 
--- students / enrollments (service role does student auth; professors read enrollments)
 DROP POLICY IF EXISTS "service_role_students" ON public.students;
 CREATE POLICY "service_role_students" ON public.students
   FOR ALL TO service_role USING (true) WITH CHECK (true);
@@ -394,7 +410,6 @@ DROP POLICY IF EXISTS "anyone_read_class_simulations" ON public.class_simulation
 CREATE POLICY "anyone_read_class_simulations" ON public.class_simulations
   FOR SELECT USING (true);
 
--- attempts / stage_scores (teachers read; service role used by student APIs)
 DROP POLICY IF EXISTS "Teachers read class student attempts" ON public.attempts;
 CREATE POLICY "Teachers read class student attempts" ON public.attempts
   FOR SELECT USING (
@@ -415,7 +430,6 @@ CREATE POLICY "Teachers read stage scores" ON public.stage_scores
     )
   );
 
--- Student CRM + directory tables: service-role policies
 DROP POLICY IF EXISTS "service_role_crm_log_entries" ON public.crm_log_entries;
 CREATE POLICY "service_role_crm_log_entries" ON public.crm_log_entries
   FOR ALL TO service_role USING (true) WITH CHECK (true);
@@ -455,7 +469,23 @@ GRANT SELECT ON public.simulations TO anon;
 
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
 
--- ── Seed: Rehearse Essentials + Tempo ────────────────────────────────────────
+-- ── Storage: onboarding videos (public bucket) ───────────────────────────────
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('onboarding-videos', 'onboarding-videos', true)
+ON CONFLICT (id) DO NOTHING;
+
+DROP POLICY IF EXISTS "Public read onboarding-videos" ON storage.objects;
+CREATE POLICY "Public read onboarding-videos" ON storage.objects
+  FOR SELECT
+  USING (bucket_id = 'onboarding-videos');
+
+DROP POLICY IF EXISTS "Service role write onboarding-videos" ON storage.objects;
+CREATE POLICY "Service role write onboarding-videos" ON storage.objects
+  FOR ALL TO service_role
+  USING (bucket_id = 'onboarding-videos')
+  WITH CHECK (bucket_id = 'onboarding-videos');
+
+-- ── Seed: Rehearse Essentials class ──────────────────────────────────────────
 INSERT INTO public.classes (
   id, professor_id, name, description, join_code, is_active, created_at
 ) VALUES (
@@ -467,11 +497,13 @@ INSERT INTO public.classes (
   true,
   now()
 )
-ON CONFLICT (id) DO UPDATE SET
-  name = EXCLUDED.name,
-  description = EXCLUDED.description,
-  is_active = true;
+ON CONFLICT (id) DO NOTHING;
 
+-- ── Seed: Tempo simulation (EXACT ID required by lib/constants.ts) ───────────
+-- Live Discovery / Objection prompts are read from lib/constants.ts at runtime
+-- (DANA_REYES_SYSTEM_PROMPT / DR_KIM_SYSTEM_PROMPT), not from this row.
+-- persona_system_prompt / product_context must still be non-empty (NOT NULL).
+-- Anam IDs recovered from supabase/anam-ids-migration.sql (also previously in FULL-SETUP).
 INSERT INTO public.simulations (
   id,
   teacher_id,
@@ -507,16 +539,7 @@ Stay in character. Short, realistic responses — 2-3 sentences max. Never break
   true,
   now()
 )
-ON CONFLICT (id) DO UPDATE SET
-  title = EXCLUDED.title,
-  description = EXCLUDED.description,
-  persona_name = EXCLUDED.persona_name,
-  persona_role = EXCLUDED.persona_role,
-  persona_system_prompt = EXCLUDED.persona_system_prompt,
-  product_context = EXCLUDED.product_context,
-  anam_avatar_ids = EXCLUDED.anam_avatar_ids,
-  anam_voice_ids = EXCLUDED.anam_voice_ids,
-  is_published = true;
+ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO public.class_simulations (class_id, simulation_id)
 VALUES (
@@ -527,9 +550,75 @@ ON CONFLICT (class_id, simulation_id) DO NOTHING;
 
 NOTIFY pgrst, 'reload schema';
 
--- Done.
--- Next:
--- 1. Copy Project URL + anon key + service_role key into .env.local
--- 2. Set STUDENT_SESSION_SECRET to a long random string
--- 3. Seed directory/data room:
---      npx tsx scripts/generate-prospect-directory.ts
+-- =============================================================================
+-- OPTIONAL — only if Anam IDs need to be replaced later (already seeded above)
+-- =============================================================================
+-- UPDATE public.simulations
+--   SET anam_avatar_ids = '{"discovery":"PASTE","objections":"PASTE"}'::jsonb,
+--       anam_voice_ids  = '{"discovery":"PASTE","objections":"PASTE"}'::jsonb
+-- WHERE id = '00000000-0000-0000-0000-000000000002';
+
+-- ── Final check (SQL Editor shows only the last result) ──────────────────────
+SELECT
+  (
+    SELECT COUNT(*)::int
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name = ANY (ARRAY[
+        'profiles',
+        'simulations',
+        'classes',
+        'students',
+        'student_classes',
+        'class_simulations',
+        'attempts',
+        'stage_scores',
+        'crm_log_entries',
+        'crm_account_notes',
+        'crm_contact_notes',
+        'crm_leads',
+        'crm_prospect_directory',
+        'crm_prospect_contacts',
+        'crm_prospect_documents'
+      ])
+  ) AS expected_tables_present,
+  EXISTS (
+    SELECT 1
+    FROM public.simulations
+    WHERE id = '00000000-0000-0000-0000-000000000002'
+  ) AS tempo_row_exists,
+  EXISTS (
+    SELECT 1
+    FROM public.simulations
+    WHERE id = '00000000-0000-0000-0000-000000000002'
+      AND COALESCE(anam_avatar_ids->>'discovery', '') <> ''
+      AND COALESCE(anam_avatar_ids->>'objections', '') <> ''
+      AND COALESCE(anam_voice_ids->>'discovery', '') <> ''
+      AND COALESCE(anam_voice_ids->>'objections', '') <> ''
+  ) AS anam_ids_populated,
+  EXISTS (
+    SELECT 1
+    FROM storage.buckets
+    WHERE id = 'onboarding-videos' AND public = true
+  ) AS onboarding_videos_bucket_public,
+  EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'crm_prospect_directory'
+      AND column_name = 'research_facts'
+  )
+  AND EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'crm_prospect_directory'
+      AND column_name = 'in_data_room'
+  )
+  AND EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'crm_prospect_directory'
+      AND column_name = 'vertical'
+  ) AS data_room_v2_columns_present;
