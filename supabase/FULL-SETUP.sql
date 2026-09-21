@@ -1,7 +1,10 @@
 -- =============================================================================
--- Rehearse — FULL greenfield Supabase setup
+-- Rehearse — FULL greenfield Supabase setup (current schema)
 -- Paste this ENTIRE file into Supabase → SQL Editor → Run (once on a new project)
 -- Safe-ish to re-run (IF NOT EXISTS / ON CONFLICT), but intended for empty DBs
+--
+-- After this runs, seed the prospect directory / data room with:
+--   npx tsx scripts/generate-prospect-directory.ts
 -- =============================================================================
 
 -- ── Extensions ───────────────────────────────────────────────────────────────
@@ -49,9 +52,23 @@ CREATE TABLE IF NOT EXISTS public.simulations (
   persona_system_prompt text NOT NULL,
   product_context text NOT NULL,
   simli_face_id text NOT NULL DEFAULT '',
+  anam_avatar_ids jsonb NOT NULL DEFAULT '{}'::jsonb,
+  anam_voice_ids jsonb NOT NULL DEFAULT '{}'::jsonb,
   is_published boolean NOT NULL DEFAULT false,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE public.simulations
+  ADD COLUMN IF NOT EXISTS anam_avatar_ids jsonb NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE public.simulations
+  ADD COLUMN IF NOT EXISTS anam_voice_ids jsonb NOT NULL DEFAULT '{}'::jsonb;
+
+COMMENT ON COLUMN public.simulations.anam_avatar_ids IS
+  'Per-stage Anam avatar UUIDs, e.g. {"discovery":"…","objections":"…"}';
+
+COMMENT ON COLUMN public.simulations.anam_voice_ids IS
+  'Per-stage Anam voice UUIDs, e.g. {"discovery":"…","objections":"…"}';
 
 -- ── Classes ──────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.classes (
@@ -199,8 +216,46 @@ CREATE TABLE IF NOT EXISTS public.crm_prospect_directory (
   entry_type text NOT NULL DEFAULT 'filler'
     CHECK (entry_type IN ('target', 'crafted_decoy', 'filler')),
   is_active boolean NOT NULL DEFAULT true,
+  -- Data room / directory v2 (visible layer)
+  in_data_room boolean NOT NULL DEFAULT false,
+  vertical text,
+  locations integer,
+  metro text,
+  in_territory boolean,
+  size_note text,
+  online_booking boolean,
+  blurb text,
+  public_signals jsonb,
+  -- Data room / directory v2 (hidden / server-only layer)
+  research_facts jsonb,
+  class text,
+  subtype text,
+  fit_rank integer,
+  trigger_quality text,
+  keyed_trigger text,
+  best_contact text,
+  why text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE public.crm_prospect_directory
+  ADD COLUMN IF NOT EXISTS in_data_room boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS vertical text,
+  ADD COLUMN IF NOT EXISTS locations integer,
+  ADD COLUMN IF NOT EXISTS metro text,
+  ADD COLUMN IF NOT EXISTS in_territory boolean,
+  ADD COLUMN IF NOT EXISTS size_note text,
+  ADD COLUMN IF NOT EXISTS online_booking boolean,
+  ADD COLUMN IF NOT EXISTS blurb text,
+  ADD COLUMN IF NOT EXISTS public_signals jsonb,
+  ADD COLUMN IF NOT EXISTS research_facts jsonb,
+  ADD COLUMN IF NOT EXISTS class text,
+  ADD COLUMN IF NOT EXISTS subtype text,
+  ADD COLUMN IF NOT EXISTS fit_rank integer,
+  ADD COLUMN IF NOT EXISTS trigger_quality text,
+  ADD COLUMN IF NOT EXISTS keyed_trigger text,
+  ADD COLUMN IF NOT EXISTS best_contact text,
+  ADD COLUMN IF NOT EXISTS why text;
 
 CREATE INDEX IF NOT EXISTS crm_prospect_directory_simulation_id_idx
   ON public.crm_prospect_directory (simulation_id);
@@ -226,6 +281,20 @@ CREATE TABLE IF NOT EXISTS public.crm_prospect_contacts (
 CREATE INDEX IF NOT EXISTS crm_prospect_contacts_company_id_idx
   ON public.crm_prospect_contacts (company_id);
 
+-- ── Prospect documents (Profile / News for data room) ────────────────────────
+CREATE TABLE IF NOT EXISTS public.crm_prospect_documents (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id uuid NOT NULL REFERENCES public.crm_prospect_directory(id) ON DELETE CASCADE,
+  doc_type text NOT NULL CHECK (doc_type IN ('profile', 'news')),
+  title text NOT NULL DEFAULT '',
+  content text NOT NULL DEFAULT '',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (company_id, doc_type)
+);
+
+CREATE INDEX IF NOT EXISTS crm_prospect_documents_company_id_idx
+  ON public.crm_prospect_documents (company_id);
+
 -- ── RLS ──────────────────────────────────────────────────────────────────────
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.simulations ENABLE ROW LEVEL SECURITY;
@@ -241,6 +310,7 @@ ALTER TABLE public.crm_contact_notes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.crm_leads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.crm_prospect_directory ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.crm_prospect_contacts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.crm_prospect_documents ENABLE ROW LEVEL SECURITY;
 
 -- profiles
 DROP POLICY IF EXISTS "Users read own profile" ON public.profiles;
@@ -345,7 +415,7 @@ CREATE POLICY "Teachers read stage scores" ON public.stage_scores
     )
   );
 
--- Student CRM + directory tables: no authenticated policies (service-role only)
+-- Student CRM + directory tables: service-role policies
 DROP POLICY IF EXISTS "service_role_crm_log_entries" ON public.crm_log_entries;
 CREATE POLICY "service_role_crm_log_entries" ON public.crm_log_entries
   FOR ALL TO service_role USING (true) WITH CHECK (true);
@@ -368,6 +438,10 @@ CREATE POLICY "service_role_crm_prospect_directory" ON public.crm_prospect_direc
 
 DROP POLICY IF EXISTS "service_role_crm_prospect_contacts" ON public.crm_prospect_contacts;
 CREATE POLICY "service_role_crm_prospect_contacts" ON public.crm_prospect_contacts
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "service_role_crm_prospect_documents" ON public.crm_prospect_documents;
+CREATE POLICY "service_role_crm_prospect_documents" ON public.crm_prospect_documents
   FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 -- ── Grants ───────────────────────────────────────────────────────────────────
@@ -408,6 +482,8 @@ INSERT INTO public.simulations (
   persona_system_prompt,
   product_context,
   simli_face_id,
+  anam_avatar_ids,
+  anam_voice_ids,
   is_published,
   created_at
 ) VALUES (
@@ -426,6 +502,8 @@ On discovery calls: answer questions honestly but do not volunteer pain points u
 Stay in character. Short, realistic responses — 2-3 sentences max. Never break character or mention that this is a simulation.$$,
   $$Tempo AI is an AI-powered patient scheduling platform for dental practices. It integrates with Dentrix and OpenDental, sends automated multi-channel reminders, handles routine re-bookings, and reduces no-shows by up to 40%. Pricing starts around $800/month per location with volume discounts for multi-site groups.$$,
   '',
+  '{"discovery":"071b0286-4cce-4808-bee2-e642f1062de3","objections":"960f614f-ea88-47c3-9883-f02094f70874"}'::jsonb,
+  '{"discovery":"d338ed86-05e6-4ca0-a3fc-3d438ddb1a96","objections":"2e7fc41b-be40-49d8-a5ca-b26ab5775a33"}'::jsonb,
   true,
   now()
 )
@@ -436,6 +514,8 @@ ON CONFLICT (id) DO UPDATE SET
   persona_role = EXCLUDED.persona_role,
   persona_system_prompt = EXCLUDED.persona_system_prompt,
   product_context = EXCLUDED.product_context,
+  anam_avatar_ids = EXCLUDED.anam_avatar_ids,
+  anam_voice_ids = EXCLUDED.anam_voice_ids,
   is_published = true;
 
 INSERT INTO public.class_simulations (class_id, simulation_id)
@@ -448,6 +528,8 @@ ON CONFLICT (class_id, simulation_id) DO NOTHING;
 NOTIFY pgrst, 'reload schema';
 
 -- Done.
--- Next: seed prospect directory with:
---   npx tsx scripts/generate-prospect-directory.ts
--- (after .env.local points at this project)
+-- Next:
+-- 1. Copy Project URL + anon key + service_role key into .env.local
+-- 2. Set STUDENT_SESSION_SECRET to a long random string
+-- 3. Seed directory/data room:
+--      npx tsx scripts/generate-prospect-directory.ts
