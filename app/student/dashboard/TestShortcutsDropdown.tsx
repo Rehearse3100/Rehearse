@@ -36,7 +36,15 @@ export function TestShortcutsDropdown({
   const router = useRouter();
 
   return (
-    <select
+    <div className="flex items-center gap-2">
+      <span
+        className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-green-600 text-sm leading-none select-none shadow-sm"
+        aria-hidden
+        title="Tester settings"
+      >
+        🧪
+      </span>
+      <select
       className={
         compact
           ? "h-10 min-w-[9.5rem] pl-3 pr-8 border border-outline-variant text-on-surface rounded-lg bg-surface-container-lowest hover:bg-surface-container transition-colors text-label-md font-label-md cursor-pointer outline-none focus:ring-2 focus:ring-secondary/20 appearance-none bg-[length:12px] bg-[right_0.65rem_center] bg-no-repeat"
@@ -101,5 +109,6 @@ export function TestShortcutsDropdown({
         <option value="badges:all">Test → Badges — All Earned</option>
       </optgroup>
     </select>
+    </div>
   );
 }
