@@ -58,7 +58,7 @@ export function TempoCallSessionShell({
 
       <div className="flex-1 flex flex-col items-center justify-center px-4 pt-16 pb-4 min-h-0">
         <div
-          className={`relative w-full max-w-4xl aspect-video max-h-[min(64vh,calc(100%-1rem))] rounded-3xl overflow-hidden transition-all duration-700 ${
+          className={`relative w-full max-w-4xl aspect-video max-h-[min(68vh,calc(100%-1rem))] rounded-3xl overflow-hidden transition-all duration-700 ${
             connected && isPersonaSpeaking ? "speaking-ring-gold" : "border border-white/10"
           }`}
         >

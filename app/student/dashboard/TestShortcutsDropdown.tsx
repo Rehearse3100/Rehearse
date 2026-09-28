@@ -36,19 +36,11 @@ export function TestShortcutsDropdown({
   const router = useRouter();
 
   return (
-    <div className="flex items-center gap-2">
-      <span
-        className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-green-600 text-sm leading-none select-none shadow-sm"
-        aria-hidden
-        title="Tester settings"
-      >
-        🧪
-      </span>
-      <select
+    <select
       className={
         compact
-          ? "h-10 min-w-[9.5rem] pl-3 pr-8 border border-outline-variant text-on-surface rounded-lg bg-surface-container-lowest hover:bg-surface-container transition-colors text-label-md font-label-md cursor-pointer outline-none focus:ring-2 focus:ring-secondary/20 appearance-none bg-[length:12px] bg-[right_0.65rem_center] bg-no-repeat"
-          : "h-11 min-w-[11rem] pl-3 pr-8 border border-outline-variant text-on-surface font-bold rounded-lg bg-surface-container-lowest hover:bg-surface-container transition-colors text-label-md cursor-pointer outline-none focus:ring-2 focus:ring-secondary/30 focus:border-secondary appearance-none bg-[length:12px] bg-[right_0.65rem_center] bg-no-repeat"
+          ? "h-10 min-w-[10.5rem] pl-3 pr-8 border border-outline-variant text-on-surface rounded-lg bg-surface-container-lowest hover:bg-surface-container transition-colors text-label-md font-label-md cursor-pointer outline-none focus:ring-2 focus:ring-secondary/20 appearance-none bg-[length:12px] bg-[right_0.65rem_center] bg-no-repeat"
+          : "h-11 min-w-[12rem] pl-3 pr-8 border border-outline-variant text-on-surface font-bold rounded-lg bg-surface-container-lowest hover:bg-surface-container transition-colors text-label-md cursor-pointer outline-none focus:ring-2 focus:ring-secondary/30 focus:border-secondary appearance-none bg-[length:12px] bg-[right_0.65rem_center] bg-no-repeat"
       }
       style={{
         backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2347464c' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`,
@@ -91,7 +83,7 @@ export function TestShortcutsDropdown({
       aria-label="Tester settings"
     >
       <option value="" disabled>
-        Tester settings
+        🧪 Tester settings
       </option>
       <optgroup label="Stages">
         {TEST_STAGES.map((stage) => (
@@ -109,6 +101,5 @@ export function TestShortcutsDropdown({
         <option value="badges:all">Test → Badges — All Earned</option>
       </optgroup>
     </select>
-    </div>
   );
 }
