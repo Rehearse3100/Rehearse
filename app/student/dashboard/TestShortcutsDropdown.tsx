@@ -39,14 +39,14 @@ export function TestShortcutsDropdown({
     <select
       className={
         compact
-          ? "h-9 w-9 sm:w-auto sm:min-w-0 sm:max-w-[2.75rem] sm:hover:max-w-[9rem] pl-2 pr-2 sm:pr-7 border border-transparent text-on-surface-variant rounded-xl bg-transparent hover:bg-on-primary-container/10 hover:border-outline-variant transition-all duration-300 text-[11px] font-label-sm cursor-pointer outline-none focus:ring-2 focus:ring-secondary/20 appearance-none bg-[length:10px] bg-[right_0.4rem_center] bg-no-repeat opacity-70 hover:opacity-100"
-          : "h-10 pl-3 pr-8 border border-outline-variant text-on-surface font-bold rounded-lg bg-surface-container-lowest hover:bg-surface-container transition-colors text-label-md cursor-pointer outline-none focus:ring-2 focus:ring-secondary/30 focus:border-secondary appearance-none bg-[length:12px] bg-[right_0.65rem_center] bg-no-repeat"
+          ? "h-10 min-w-[9.5rem] pl-3 pr-8 border border-outline-variant text-on-surface rounded-lg bg-surface-container-lowest hover:bg-surface-container transition-colors text-label-md font-label-md cursor-pointer outline-none focus:ring-2 focus:ring-secondary/20 appearance-none bg-[length:12px] bg-[right_0.65rem_center] bg-no-repeat"
+          : "h-11 min-w-[11rem] pl-3 pr-8 border border-outline-variant text-on-surface font-bold rounded-lg bg-surface-container-lowest hover:bg-surface-container transition-colors text-label-md cursor-pointer outline-none focus:ring-2 focus:ring-secondary/30 focus:border-secondary appearance-none bg-[length:12px] bg-[right_0.65rem_center] bg-no-repeat"
       }
       style={{
         backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2347464c' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`,
       }}
       defaultValue=""
-      title="Test shortcuts"
+      title="Tester settings"
       onChange={(e) => {
         const value = e.target.value;
         if (!value) {
@@ -80,10 +80,10 @@ export function TestShortcutsDropdown({
 
         e.target.value = "";
       }}
-      aria-label="Test shortcuts menu"
+      aria-label="Tester settings"
     >
       <option value="" disabled>
-        {compact ? "🧪" : "🧪 Test…"}
+        Tester settings
       </option>
       <optgroup label="Stages">
         {TEST_STAGES.map((stage) => (
