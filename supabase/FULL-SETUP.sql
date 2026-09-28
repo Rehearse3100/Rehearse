@@ -534,7 +534,7 @@ On discovery calls: answer questions honestly but do not volunteer pain points u
 Stay in character. Short, realistic responses — 2-3 sentences max. Never break character or mention that this is a simulation.$$,
   $$Tempo AI is an AI-powered patient scheduling platform for dental practices. It integrates with Dentrix and OpenDental, sends automated multi-channel reminders, handles routine re-bookings, and reduces no-shows by up to 40%. Pricing starts around $800/month per location with volume discounts for multi-site groups.$$,
   '',
-  '{"discovery":"071b0286-4cce-4808-bee2-e642f1062de3","objections":"960f614f-ea88-47c3-9883-f02094f70874"}'::jsonb,
+  '{"discovery":"071b0286-4cce-4808-bee2-e642f1062de3","objections":"cd5b5961-717d-4173-95bd-179631789874"}'::jsonb,
   '{"discovery":"d338ed86-05e6-4ca0-a3fc-3d438ddb1a96","objections":"2e7fc41b-be40-49d8-a5ca-b26ab5775a33"}'::jsonb,
   true,
   now()

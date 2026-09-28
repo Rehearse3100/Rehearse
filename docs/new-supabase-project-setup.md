@@ -97,7 +97,7 @@ SELECT COUNT(*) FROM public.crm_prospect_documents;
 Recovered from `supabase/anam-ids-migration.sql` and already seeded into the Tempo row by `FULL-SETUP.sql`:
 
 ```json
-anam_avatar_ids: {"discovery":"071b0286-4cce-4808-bee2-e642f1062de3","objections":"960f614f-ea88-47c3-9883-f02094f70874"}
+anam_avatar_ids: {"discovery":"071b0286-4cce-4808-bee2-e642f1062de3","objections":"cd5b5961-717d-4173-95bd-179631789874"}
 anam_voice_ids:  {"discovery":"d338ed86-05e6-4ca0-a3fc-3d438ddb1a96","objections":"2e7fc41b-be40-49d8-a5ca-b26ab5775a33"}
 ```
 
@@ -185,7 +185,7 @@ None. No `.rpc("...")` calls in app/lib/hooks/components/scripts.
 **Recovered** from `supabase/anam-ids-migration.sql` (also present in later `FULL-SETUP.sql` history):
 
 - discovery avatar `071b0286-4cce-4808-bee2-e642f1062de3`
-- objections avatar `960f614f-ea88-47c3-9883-f02094f70874`
+- objections avatar `cd5b5961-717d-4173-95bd-179631789874`
 - discovery voice `d338ed86-05e6-4ca0-a3fc-3d438ddb1a96`
 - objections voice `2e7fc41b-be40-49d8-a5ca-b26ab5775a33`
 
