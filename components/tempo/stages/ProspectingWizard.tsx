@@ -30,6 +30,8 @@ type ProspectingWizardProps = {
   simulationTitle: string;
   /** Re-show the Stage 2 handoff over Stage 1 after returning mid-handoff. */
   initialDiscoveryHandoff?: boolean;
+  /** Server-reported TEMPO_TEST_BYPASS_GATES — never from client env. */
+  gateBypassEnabled?: boolean;
 };
 
 /**
@@ -41,9 +43,10 @@ export function ProspectingWizard({
   classId,
   simulationTitle,
   initialDiscoveryHandoff = false,
+  gateBypassEnabled = false,
 }: ProspectingWizardProps): React.ReactElement {
   const router = useRouter();
-  const wizard = useProspectingWizard({ attemptId });
+  const wizard = useProspectingWizard({ attemptId, gateBypassEnabled });
   const [postSubmitHandoff, setPostSubmitHandoff] = useState<TempoHandoffStageKey | null>(
     initialDiscoveryHandoff ? "discovery" : null
   );
@@ -54,6 +57,7 @@ export function ProspectingWizard({
   const prospectingMeta = TEMPO_HANDOFF_STAGE_META.prospecting;
   const discoveryMeta = TEMPO_HANDOFF_STAGE_META.discovery;
   const icpComplete = isIcpDefinitionComplete(state);
+  const showTestBypassBanner = wizard.gateBypassEnabled;
   const showProspectingHandoff =
     !wizard.isLoading &&
     !postSubmitHandoff &&
@@ -103,6 +107,15 @@ export function ProspectingWizard({
 
   return (
     <>
+      {showTestBypassBanner ? (
+        <div
+          className="fixed top-16 inset-x-0 z-[60] bg-amber-500 text-black px-4 py-2 text-center font-headline-md text-sm tracking-wide shadow-md"
+          role="status"
+        >
+          TEST MODE: gates bypassed — do not treat this run as real student work
+        </div>
+      ) : null}
+
       <TempoWizardTopBar
         attemptId={attemptId}
         simulationId={simulationId}
@@ -114,7 +127,11 @@ export function ProspectingWizard({
         }
       />
 
-      <div className="fixed inset-0 z-[45] flex flex-col pt-16 overflow-hidden bg-surface">
+      <div
+        className={`fixed inset-0 z-[45] flex flex-col overflow-hidden bg-surface ${
+          showTestBypassBanner ? "pt-28" : "pt-16"
+        }`}
+      >
         <div className="flex flex-1 min-h-0 overflow-hidden">
         <aside className="w-60 bg-primary-container text-on-primary-container flex flex-col h-full shrink-0 hidden lg:flex">
           <div className="px-lg h-12 flex items-center border-b border-white/10 shrink-0">

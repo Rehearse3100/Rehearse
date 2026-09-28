@@ -56,6 +56,7 @@ export function HandoffModal({
     openCrmForStage,
     openCrmHome,
     prospectingCrmComplete,
+    gateBypassEnabled,
   } = gate;
 
   useEffect(() => {
@@ -80,7 +81,8 @@ export function HandoffModal({
   const isGated = requiresLog && !crmLogExists;
   const showAccountNudge = !isGated && justCompleted === "prospecting";
   // Stage 2 gate: Account + primary Contact required fields must be complete.
-  const isProfileGated = showAccountNudge && !prospectingCrmComplete;
+  // gateBypassEnabled short-circuits only; existing prospectingCrmComplete check stays intact.
+  const isProfileGated = showAccountNudge && !prospectingCrmComplete && !gateBypassEnabled;
 
   useEffect(() => {
     if (isGated && justCompleted) {

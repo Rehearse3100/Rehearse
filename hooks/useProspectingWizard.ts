@@ -27,6 +27,8 @@ import type { ChatMessage } from "@/types";
 
 type UseProspectingWizardOptions = {
   attemptId: string;
+  /** Server-reported TEMPO_TEST_BYPASS_GATES — never read from client process.env. */
+  gateBypassEnabled?: boolean;
 };
 
 type UseProspectingWizardResult = {
@@ -50,6 +52,7 @@ type UseProspectingWizardResult = {
   canProceed: boolean;
   canSubmit: boolean;
   wordCount: number;
+  gateBypassEnabled: boolean;
   handleSaveDraft: () => Promise<void>;
   handleStepAdvance: (nextStep: number) => Promise<void>;
   /** Marks a CRM lead as selected and advances to Opening Message. */
@@ -66,6 +69,7 @@ type UseProspectingWizardResult = {
  */
 export function useProspectingWizard({
   attemptId,
+  gateBypassEnabled: gateBypassEnabledProp = false,
 }: UseProspectingWizardOptions): UseProspectingWizardResult {
   const [state, setState] = useState<ProspectingWizardState>(DEFAULT_PROSPECTING_WIZARD_STATE);
   const [isLoading, setIsLoading] = useState(true);
@@ -73,7 +77,12 @@ export function useProspectingWizard({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isAILoading, setIsAILoading] = useState(false);
   const [chatInput, setChatInput] = useState("");
+  const [gateBypassEnabled, setGateBypassEnabled] = useState(gateBypassEnabledProp);
   const directoryRef = useRef<ProspectDirectoryCompany[]>([]);
+
+  useEffect(() => {
+    setGateBypassEnabled(gateBypassEnabledProp);
+  }, [gateBypassEnabledProp]);
 
   const persistState = useCallback(
     async (next: ProspectingWizardState): Promise<void> => {
@@ -106,9 +115,15 @@ export function useProspectingWizard({
 
         let nextState = local ? normalizeProspectingWizardState(local) : DEFAULT_PROSPECTING_WIZARD_STATE;
         if (wizardRes.ok) {
-          const body = (await wizardRes.json()) as { state: ProspectingWizardState };
+          const body = (await wizardRes.json()) as {
+            state: ProspectingWizardState;
+            gateBypassEnabled?: boolean;
+          };
           nextState = normalizeProspectingWizardState(body.state);
           saveProspectingWizardToStorage(attemptId, nextState);
+          if (typeof body.gateBypassEnabled === "boolean") {
+            setGateBypassEnabled(body.gateBypassEnabled);
+          }
         }
 
         const icpFieldsDone = isIcpDefinitionComplete(nextState);
@@ -171,15 +186,15 @@ export function useProspectingWizard({
 
   const setCurrentStep = useCallback(
     (step: number): void => {
-      if (step > 0 && !state.onboardingComplete) {
+      if (!gateBypassEnabled && step > 0 && !state.onboardingComplete) {
         return;
       }
-      if (step > 1 && !isIcpDefinitionComplete(state)) {
+      if (!gateBypassEnabled && step > 1 && !isIcpDefinitionComplete(state)) {
         return;
       }
       updateField("currentStep", step);
     },
-    [state, updateField]
+    [gateBypassEnabled, state, updateField]
   );
 
   /**
@@ -376,7 +391,7 @@ export function useProspectingWizard({
   ]);
 
   const handleSubmit = useCallback(async (): Promise<void> => {
-    if (!canSubmitProspectingBrief(state)) {
+    if (!canSubmitProspectingBrief(state, gateBypassEnabled)) {
       return;
     }
 
@@ -407,7 +422,7 @@ export function useProspectingWizard({
     } finally {
       setIsSubmitting(false);
     }
-  }, [attemptId, state]);
+  }, [attemptId, gateBypassEnabled, state]);
 
   const dismissProspectingHandoff = useCallback((): void => {
     setState((prev) => {
@@ -424,8 +439,8 @@ export function useProspectingWizard({
   }, [persistState]);
 
   const wordCount = countWords(state.openingMessage);
-  const canProceed = canAdvanceProspectingStep(state.currentStep, state);
-  const canSubmit = canSubmitProspectingBrief(state);
+  const canProceed = canAdvanceProspectingStep(state.currentStep, state, gateBypassEnabled);
+  const canSubmit = canSubmitProspectingBrief(state, gateBypassEnabled);
 
   return {
     state,
@@ -444,6 +459,7 @@ export function useProspectingWizard({
     canProceed,
     canSubmit,
     wordCount,
+    gateBypassEnabled,
     handleSaveDraft,
     handleStepAdvance,
     completeLeadSelection,

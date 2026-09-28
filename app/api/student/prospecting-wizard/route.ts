@@ -10,6 +10,7 @@ import {
   normalizeProspectingWizardState,
   type ProspectingWizardState,
 } from "@/lib/tempo-prospecting";
+import { isGateBypassEnabled, prepareTempoTestBypass } from "@/lib/tempo-test-bypass";
 import { revalidateStudentAttemptSurfaces } from "@/lib/revalidate-student-progress";
 import { createServiceClient } from "@/lib/supabase/server";
 
@@ -20,7 +21,8 @@ type SaveBody = {
 
 /**
  * GET /api/student/prospecting-wizard?attemptId=...
- * Returns saved wizard state or defaults.
+ * Returns saved wizard state or defaults. When TEMPO_TEST_BYPASS_GATES=true,
+ * empty fields are auto-filled server-side and gateBypassEnabled is reported.
  */
 export async function GET(request: Request): Promise<NextResponse> {
   const auth = await requireStudentApi();
@@ -36,7 +38,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   const supabase = createServiceClient();
   const { data: attempt, error } = await supabase
     .from("attempts")
-    .select("id, student_id, stage_data")
+    .select("id, student_id, stage_data, simulation_id, class_id")
     .eq("id", attemptId)
     .eq("student_id", auth.session.studentId)
     .single();
@@ -45,10 +47,36 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "Attempt not found." }, { status: 404 });
   }
 
+  const gateBypassEnabled = isGateBypassEnabled();
   const saved = attempt.stage_data as ProspectingWizardState | null;
-  const state = normalizeProspectingWizardState(saved);
+  let state = normalizeProspectingWizardState(saved);
 
-  return NextResponse.json({ state });
+  if (gateBypassEnabled) {
+    const prepared = await prepareTempoTestBypass(
+      supabase,
+      attemptId,
+      String(attempt.simulation_id ?? ""),
+      state
+    );
+    state = prepared.state;
+    if (prepared.didPersist) {
+      const existing = (attempt.stage_data ?? {}) as Record<string, unknown>;
+      const { error: persistError } = await supabase
+        .from("attempts")
+        .update({ stage_data: { ...existing, ...state } })
+        .eq("id", attemptId);
+      if (persistError) {
+        console.error("[prospecting-wizard] bypass persist failed:", persistError);
+      } else {
+        revalidateStudentAttemptSurfaces({
+          classId: (attempt.class_id as string | null) ?? null,
+          simulationId: (attempt.simulation_id as string | null) ?? null,
+        });
+      }
+    }
+  }
+
+  return NextResponse.json({ state, gateBypassEnabled });
 }
 
 /**

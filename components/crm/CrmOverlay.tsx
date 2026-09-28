@@ -103,6 +103,8 @@ type CrmAccessProps = {
   completedStages: string[];
   /** CRM stages already logged (from server), used until client refresh. */
   initialLoggedStages?: string[];
+  /** Server-reported TEMPO_TEST_BYPASS_GATES — never from client env. */
+  gateBypassEnabled?: boolean;
   children: React.ReactNode;
 };
 
@@ -115,6 +117,8 @@ type TempoCrmGateContextValue = {
   hasConvertedLead: boolean;
   /** True when Account + primary Contact have every required field filled (Stage 2 gate). */
   prospectingCrmComplete: boolean;
+  /** Server-reported test bypass — short-circuits CRM profile gate in HandoffModal. */
+  gateBypassEnabled: boolean;
   refreshCrmLogs: () => Promise<void>;
   /** Registers a stage as completed for gate/blink (e.g. right after submit, before page reload). */
   noteCompletedStage: (stage: string) => void;
@@ -128,6 +132,7 @@ const TempoCrmGateContext = createContext<TempoCrmGateContextValue>({
   openCrmHome: () => undefined,
   hasConvertedLead: false,
   prospectingCrmComplete: false,
+  gateBypassEnabled: false,
   refreshCrmLogs: async () => undefined,
   noteCompletedStage: () => undefined,
 });
@@ -1082,6 +1087,7 @@ export function CrmAccess({
   displayName,
   completedStages,
   initialLoggedStages = [],
+  gateBypassEnabled = false,
   children,
 }: CrmAccessProps): React.ReactElement {
   const [isPageReady, setIsPageReady] = useState(false);
@@ -1240,6 +1246,7 @@ export function CrmAccess({
       openCrmHome,
       hasConvertedLead,
       prospectingCrmComplete,
+      gateBypassEnabled,
       refreshCrmLogs,
       noteCompletedStage,
     }),
@@ -1251,6 +1258,7 @@ export function CrmAccess({
       openCrmHome,
       hasConvertedLead,
       prospectingCrmComplete,
+      gateBypassEnabled,
       refreshCrmLogs,
       noteCompletedStage,
     ]
