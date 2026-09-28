@@ -17,6 +17,6 @@ COMMENT ON COLUMN public.simulations.anam_voice_ids IS
 -- Tempo / Summit Dental simulation — Dana (Discovery) + Dr. Kim (Objections)
 UPDATE public.simulations
 SET
-  anam_avatar_ids = '{"discovery":"071b0286-4cce-4808-bee2-e642f1062de3","objections":"cd5b5961-717d-4173-95bd-179631789874"}'::jsonb,
-  anam_voice_ids  = '{"discovery":"d338ed86-05e6-4ca0-a3fc-3d438ddb1a96","objections":"2e7fc41b-be40-49d8-a5ca-b26ab5775a33"}'::jsonb
+  anam_avatar_ids = '{"discovery":"071b0286-4cce-4808-bee2-e642f1062de3","objections":"ecfb2ddb-80ec-4526-88a7-299a4738957c"}'::jsonb,
+  anam_voice_ids  = '{"discovery":"d338ed86-05e6-4ca0-a3fc-3d438ddb1a96","objections":"e67be56c-ca90-4e19-8399-b8ecc04e3712"}'::jsonb
 WHERE id = '00000000-0000-0000-0000-000000000002';
