@@ -10,7 +10,7 @@ Add exactly this line to **`.env.local` only** (not committed):
 TEMPO_TEST_BYPASS_GATES=true
 ```
 
-Restart the Next.js dev server after changing the file.
+Restart the Next.js dev server after changing the file. Next only loads `.env.local` at process start — editing the file without a restart leaves the bypass off.
 
 ## How to disable
 
@@ -18,9 +18,24 @@ Delete that line from `.env.local` and restart the dev server. No code change an
 
 Any value other than the exact string `true` (including `false`, empty, or absent) leaves bypass **off**.
 
+## How the flag reaches the client (do not re-break this)
+
+`TEMPO_TEST_BYPASS_GATES` is **not** `NEXT_PUBLIC_`. Client code must never read `process.env.TEMPO_TEST_BYPASS_GATES` (Next strips non-public env in the browser, so it would always look “off”).
+
+Delivery path:
+
+1. **Server page** `app/student/simulation/[id]/page.tsx` calls `isGateBypassEnabled()` and passes the boolean as `gateBypassEnabled` into `ProspectingWizard` and `CrmAccess`.
+2. **API** `GET /api/student/prospecting-wizard` also calls `isGateBypassEnabled()`, runs autofill when on, and returns `{ state, gateBypassEnabled }`.
+3. **Client hook** `useProspectingWizard` stores that boolean (from the page prop, then refreshed from the API body) and passes it into `canAdvanceProspectingStep` / `canSubmitProspectingBrief`.
+4. **Banner** in `ProspectingWizard` reads `wizard.gateBypassEnabled` (the boolean), not the env var.
+5. **CRM Stage 2 gate** in `HandoffModal` reads `gateBypassEnabled` from `TempoCrmGate` context (set by `CrmAccess` from the page prop).
+6. **Lead identity** short-circuit runs only on the server inside `validateLeadIdentity` via `isGateBypassEnabled()`.
+
+If the amber banner is missing and gates still block, check `.env.local` first — the variable is often missing after an env rewrite.
+
 ## Never set this in production
 
-**Do not** put `TEMPO_TEST_BYPASS_GATES` in Vercel, any deployment environment, `.env.example`, committed env files, or deployment scripts. The variable is intentionally **not** `NEXT_PUBLIC_`, so it never ships to the browser. Client UI only sees a boolean the **server** reports.
+**Do not** put `TEMPO_TEST_BYPASS_GATES` in Vercel, any deployment environment, `.env.example`, committed env files, or deployment scripts.
 
 ## Gates affected
 
