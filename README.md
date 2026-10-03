@@ -21,6 +21,8 @@ npm install
 npm run dev
 ```
 
+Run tests (no secrets / network): `npm test`.
+
 ## Environment variables
 
 See `.env.example`. It has two sections:
