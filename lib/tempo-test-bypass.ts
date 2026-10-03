@@ -14,13 +14,14 @@ import {
   PROSPECTING_STEP_VERSION,
   type ProspectingWizardState,
 } from "@/lib/tempo-prospecting";
+import { TEST_BYPASS_PREFIX } from "@/lib/tempo-test-bypass-client";
+
+/** Re-export for server callers; single definition lives in tempo-test-bypass-client. */
+export { TEST_BYPASS_PREFIX };
 
 /** Known correct Tempo target — duplicated here to avoid circular imports with lead-conversion. */
 const CORRECT_COMPANY = "Summit Dental Group";
 const CORRECT_CONTACT = "Dana Reyes";
-
-/** Prefix embedded in every auto-filled string so bypassed rows are obvious in the DB. */
-export const TEST_BYPASS_PREFIX = "[TEST]";
 
 /**
  * True only when the exact string "true" is set. Absent / empty / other values are off.

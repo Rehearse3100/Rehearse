@@ -18,6 +18,7 @@ import { parseObjectionSummaryFromTranscript } from "@/lib/tempo-negotiation";
 import { parseProspectingIcpState } from "@/lib/tempo-icp-criteria";
 import { stripIcpFromStageData } from "@/lib/tempo-prospecting";
 import { isTempoDefaultSimulation } from "@/lib/tempo-simulation";
+import { isGateBypassEnabled } from "@/lib/tempo-test-bypass";
 import { getStudentSession } from "@/lib/student-session";
 import { createServiceClient } from "@/lib/supabase/server";
 import type { Attempt, Simulation, StageScore } from "@/types";
@@ -173,9 +174,9 @@ export default async function StudentSimulationPage({
     testStagePresentation ||
     testStageObjections ||
     testStageNegotiation;
-  // Local-dev Tempo gate bypass (all 5 stages) — read HERE on the server, pass as prop.
+  // Local-dev Tempo gate bypass (all 5 stages) — single helper, pass as prop.
   // Never NEXT_PUBLIC_; client code must never read this env var.
-  const testBypass = process.env.TEMPO_TEST_BYPASS_GATES === "true";
+  const testBypass = isGateBypassEnabled();
 
   // Ensure stale icpGateComplete flags never skip the ICP step.
   if (isTempoDefault) {
