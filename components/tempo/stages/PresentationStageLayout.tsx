@@ -43,6 +43,8 @@ type PresentationStageLayoutProps = {
   onToggleRef: (label: string) => void;
   onUpdateField: <K extends keyof PresentationForm>(key: K, value: PresentationForm[K]) => void;
   onSubmit: () => void;
+  /** Extra top padding when TEST MODE banner is visible (matches Prospecting). */
+  testBypass?: boolean;
 };
 
 /**
@@ -59,11 +61,16 @@ export function PresentationStageLayout({
   onToggleRef,
   onUpdateField,
   onSubmit,
+  testBypass = false,
 }: PresentationStageLayoutProps): React.ReactElement {
   const readyToSubmit = canSubmit;
 
   return (
-    <div className="fixed inset-0 z-[45] flex flex-col pt-16 overflow-hidden bg-surface">
+    <div
+      className={`fixed inset-0 z-[45] flex flex-col overflow-hidden bg-surface ${
+        testBypass ? "pt-28" : "pt-16"
+      }`}
+    >
       <main className="flex flex-1 min-h-0 overflow-hidden">
         {/* ── Left column: mission ─── */}
         <aside className="w-[280px] bg-[#1a1a2e] text-white flex flex-col p-6 overflow-y-auto border-r border-outline-variant shrink-0 hidden lg:flex">

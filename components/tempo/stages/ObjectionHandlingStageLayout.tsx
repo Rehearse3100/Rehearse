@@ -31,6 +31,8 @@ type ObjectionHandlingStageLayoutProps = {
   isSubmitting: boolean;
   nextStageName: string;
   onContinueAfterCall: () => void;
+  /** Extra top padding when TEST MODE banner is visible (matches Prospecting). */
+  testBypass?: boolean;
 };
 
 /**
@@ -49,11 +51,16 @@ export function ObjectionHandlingStageLayout({
   isSubmitting,
   nextStageName,
   onContinueAfterCall,
+  testBypass = false,
 }: ObjectionHandlingStageLayoutProps): React.ReactElement {
   const isCallPhase = phase === "connecting" || phase === "active";
 
   return (
-    <div className="fixed inset-0 z-[45] flex flex-col pt-16 overflow-hidden bg-surface">
+    <div
+      className={`fixed inset-0 z-[45] flex flex-col overflow-hidden bg-surface ${
+        testBypass ? "pt-28" : "pt-16"
+      }`}
+    >
       <main className="flex flex-1 min-h-0 overflow-hidden">
         {/* ── Left panel (matches Stage 2 Discovery mission briefing) ─── */}
         <aside className="w-60 xl:w-72 bg-primary-container text-on-primary p-lg flex flex-col gap-lg border-r border-white/5 shrink-0 hidden lg:flex overflow-y-auto">

@@ -230,6 +230,7 @@ export function DiscoveryStage({
             referenceCollapsed={referenceCollapsed}
             onToggleReference={() => setReferenceCollapsed((prev) => !prev)}
             transcript={transcript}
+            testBypass={testBypass}
             lobbySlot={
               phase === "prep" ? (
                 <DiscoveryPreCallPrep

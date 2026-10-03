@@ -123,6 +123,7 @@ export function PresentationStage({
           onToggleRef={handleToggleRef}
           onUpdateField={presentation.updateField}
           onSubmit={() => void handleSubmit()}
+          testBypass={testBypass}
         />
       </ErrorBoundary>
 

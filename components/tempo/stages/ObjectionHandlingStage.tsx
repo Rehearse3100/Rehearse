@@ -174,6 +174,7 @@ export function ObjectionHandlingStage({
           transcript={transcript}
           objectionTracker={objectionTracker}
           presentationSummary={presentationSummary}
+          testBypass={testBypass}
           lobbySlot={
             <ObjectionHandlingLobby
               connectError={connectError}
