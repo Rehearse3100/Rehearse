@@ -31,6 +31,11 @@ export type HandoffModalProps = {
   crmLogExists?: boolean;
   /** Override: open CRM deep-linked to the stage that needs logging. */
   onOpenCrmForStage?: (stage: string) => void;
+  /**
+   * Server page boolean from TEMPO_TEST_BYPASS_GATES — never from client process.env.
+   * Short-circuits the CRM Account/Contact Begin Stage 2 gate when true.
+   */
+  testBypass?: boolean;
 };
 
 /**
@@ -47,6 +52,7 @@ export function HandoffModal({
   justCompletedStage: justCompletedProp,
   crmLogExists: crmLogExistsProp,
   onOpenCrmForStage: onOpenCrmProp,
+  testBypass = false,
 }: HandoffModalProps): React.ReactElement {
   const [entered, setEntered] = useState(false);
   const gate = useTempoCrmGate();
@@ -56,8 +62,10 @@ export function HandoffModal({
     openCrmForStage,
     openCrmHome,
     prospectingCrmComplete,
-    gateBypassEnabled,
+    testBypass: contextTestBypass,
   } = gate;
+  // Prefer explicit prop from ProspectingWizard; fall back to CrmAccess context.
+  const bypassActive = testBypass || contextTestBypass;
 
   useEffect(() => {
     const timer = window.setTimeout(() => setEntered(true), 100);
@@ -81,8 +89,8 @@ export function HandoffModal({
   const isGated = requiresLog && !crmLogExists;
   const showAccountNudge = !isGated && justCompleted === "prospecting";
   // Stage 2 gate: Account + primary Contact required fields must be complete.
-  // gateBypassEnabled short-circuits only; existing prospectingCrmComplete check stays intact.
-  const isProfileGated = showAccountNudge && !prospectingCrmComplete && !gateBypassEnabled;
+  // bypassActive short-circuits only; existing prospectingCrmComplete check stays intact.
+  const isProfileGated = showAccountNudge && !prospectingCrmComplete && !bypassActive;
 
   useEffect(() => {
     if (isGated && justCompleted) {

@@ -30,8 +30,11 @@ type ProspectingWizardProps = {
   simulationTitle: string;
   /** Re-show the Stage 2 handoff over Stage 1 after returning mid-handoff. */
   initialDiscoveryHandoff?: boolean;
-  /** Server-reported TEMPO_TEST_BYPASS_GATES — never from client env. */
-  gateBypassEnabled?: boolean;
+  /**
+   * Server page boolean from TEMPO_TEST_BYPASS_GATES — never read process.env here.
+   * Drives the TEST MODE banner and every Prospecting gate short-circuit.
+   */
+  testBypass?: boolean;
 };
 
 /**
@@ -43,10 +46,10 @@ export function ProspectingWizard({
   classId,
   simulationTitle,
   initialDiscoveryHandoff = false,
-  gateBypassEnabled = false,
+  testBypass = false,
 }: ProspectingWizardProps): React.ReactElement {
   const router = useRouter();
-  const wizard = useProspectingWizard({ attemptId, gateBypassEnabled });
+  const wizard = useProspectingWizard({ attemptId, testBypass });
   const [postSubmitHandoff, setPostSubmitHandoff] = useState<TempoHandoffStageKey | null>(
     initialDiscoveryHandoff ? "discovery" : null
   );
@@ -57,17 +60,30 @@ export function ProspectingWizard({
   const prospectingMeta = TEMPO_HANDOFF_STAGE_META.prospecting;
   const discoveryMeta = TEMPO_HANDOFF_STAGE_META.discovery;
   const icpComplete = isIcpDefinitionComplete(state);
-  const showTestBypassBanner = wizard.gateBypassEnabled;
+  // Banner is driven by the SERVER PROP only — not by hook/API state.
+  const showTestBypassBanner = testBypass;
   const showProspectingHandoff =
     !wizard.isLoading &&
     !postSubmitHandoff &&
     (forceHandoffOpen || (!state.prospectingHandoffSeen && !icpComplete));
 
+  const testBypassBanner = showTestBypassBanner ? (
+    <div
+      className="fixed top-16 inset-x-0 z-[60] bg-amber-500 text-black px-4 py-2 text-center font-headline-md text-sm tracking-wide shadow-md"
+      role="status"
+    >
+      TEST MODE: gates bypassed — do not treat this run as real student work
+    </div>
+  ) : null;
+
   if (wizard.isLoading) {
     return (
-      <div className="fixed inset-x-0 bottom-0 top-16 z-30 flex items-center justify-center bg-surface">
-        <p className="text-on-surface-variant font-body-md">Loading your prospecting brief...</p>
-      </div>
+      <>
+        {testBypassBanner}
+        <div className="fixed inset-x-0 bottom-0 top-16 z-30 flex items-center justify-center bg-surface">
+          <p className="text-on-surface-variant font-body-md">Loading your prospecting brief...</p>
+        </div>
+      </>
     );
   }
 
@@ -107,14 +123,7 @@ export function ProspectingWizard({
 
   return (
     <>
-      {showTestBypassBanner ? (
-        <div
-          className="fixed top-16 inset-x-0 z-[60] bg-amber-500 text-black px-4 py-2 text-center font-headline-md text-sm tracking-wide shadow-md"
-          role="status"
-        >
-          TEST MODE: gates bypassed — do not treat this run as real student work
-        </div>
-      ) : null}
+      {testBypassBanner}
 
       <TempoWizardTopBar
         attemptId={attemptId}
@@ -301,6 +310,7 @@ export function ProspectingWizard({
               attemptId={attemptId}
               state={state}
               wordCount={wizard.wordCount}
+              testBypass={testBypass}
               onSelectCompany={wizard.selectDirectoryCompany}
               onShortlistChange={wizard.setShortlistedCompanyIds}
               onFieldChange={wizard.updateField}
@@ -403,6 +413,7 @@ export function ProspectingWizard({
           stageIcon={prospectingMeta.stageIcon}
           message={TEMPO_HANDOFF_MESSAGES.prospecting}
           hasAIRestriction={prospectingMeta.hasAIRestriction}
+          testBypass={testBypass}
           onBegin={() => {
             wizard.dismissProspectingHandoff();
             setForceHandoffOpen(false);
@@ -421,6 +432,7 @@ export function ProspectingWizard({
           stageIcon={discoveryMeta.stageIcon}
           message={TEMPO_HANDOFF_MESSAGES.discovery}
           hasAIRestriction={discoveryMeta.hasAIRestriction}
+          testBypass={testBypass}
           onBegin={handleDiscoveryBegin}
           onDismiss={() => setPostSubmitHandoff(null)}
         />

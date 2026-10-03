@@ -594,15 +594,15 @@ export function isIcpDefinitionComplete(state: ProspectingWizardState): boolean 
 /**
  * Returns whether the student can advance from the current wizard step.
  * Indices: Onboarding (0) → ICP (1) → Data Room (2) → Agent (3) → Lead (4) → Opening (5).
- * When gateBypassEnabled is true (server-reported only), all steps are allowed;
- * existing conditions below are unchanged and remain the fallback when bypass is off.
+ * testBypass is a boolean passed from the server page — this file never reads process.env.
+ * When true, short-circuits to allowed; existing conditions remain the fallback when false.
  */
 export function canAdvanceProspectingStep(
   stepIndex: number,
   state: ProspectingWizardState,
-  gateBypassEnabled = false
+  testBypass = false
 ): boolean {
-  if (gateBypassEnabled) {
+  if (testBypass) {
     return true;
   }
   switch (stepIndex) {
@@ -625,13 +625,14 @@ export function canAdvanceProspectingStep(
 
 /**
  * Returns whether Opening Message submit is enabled.
- * gateBypassEnabled short-circuits only; word-count rule is unchanged when bypass is off.
+ * testBypass short-circuits only; word-count rule is unchanged when bypass is off.
+ * Never reads process.env — caller passes the server-reported boolean.
  */
 export function canSubmitProspectingBrief(
   state: ProspectingWizardState,
-  gateBypassEnabled = false
+  testBypass = false
 ): boolean {
-  if (gateBypassEnabled) {
+  if (testBypass) {
     return true;
   }
   const words = countWords(state.openingMessage);

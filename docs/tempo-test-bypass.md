@@ -18,20 +18,37 @@ Delete that line from `.env.local` and restart the dev server. No code change an
 
 Any value other than the exact string `true` (including `false`, empty, or absent) leaves bypass **off**.
 
-## How the flag reaches the client (do not re-break this)
+## Prop chain (server → client) — do not re-break this
 
-`TEMPO_TEST_BYPASS_GATES` is **not** `NEXT_PUBLIC_`. Client code must never read `process.env.TEMPO_TEST_BYPASS_GATES` (Next strips non-public env in the browser, so it would always look “off”).
+`TEMPO_TEST_BYPASS_GATES` is **not** `NEXT_PUBLIC_`. Client bundles never see it. The flag is read once on the server and passed as ordinary data named `testBypass`:
 
-Delivery path:
+1. **`app/student/simulation/[id]/page.tsx`** (SERVER)
+   `const testBypass = process.env.TEMPO_TEST_BYPASS_GATES === "true"`
+   → `<ProspectingWizard testBypass={testBypass} />`
+   → `<CrmAccess testBypass={testBypass} />`
 
-1. **Server page** `app/student/simulation/[id]/page.tsx` calls `isGateBypassEnabled()` and passes the boolean as `gateBypassEnabled` into `ProspectingWizard` and `CrmAccess`.
-2. **API** `GET /api/student/prospecting-wizard` also calls `isGateBypassEnabled()`, runs autofill when on, and returns `{ state, gateBypassEnabled }`.
-3. **Client hook** `useProspectingWizard` stores that boolean (from the page prop, then refreshed from the API body) and passes it into `canAdvanceProspectingStep` / `canSubmitProspectingBrief`.
-4. **Banner** in `ProspectingWizard` reads `wizard.gateBypassEnabled` (the boolean), not the env var.
-5. **CRM Stage 2 gate** in `HandoffModal` reads `gateBypassEnabled` from `TempoCrmGate` context (set by `CrmAccess` from the page prop).
-6. **Lead identity** short-circuit runs only on the server inside `validateLeadIdentity` via `isGateBypassEnabled()`.
+2. **`components/tempo/stages/ProspectingWizard.tsx`** (CLIENT)
+   Accepts `testBypass`. Renders the amber TEST MODE banner from this prop.
+   Passes it to `useProspectingWizard({ testBypass })`, `ProspectingStepPanels`, and `HandoffModal`.
 
-If the amber banner is missing and gates still block, check `.env.local` first — the variable is often missing after an env rewrite.
+3. **`hooks/useProspectingWizard.ts`** (CLIENT)
+   Passes `testBypass` into `canAdvanceProspectingStep` / `canSubmitProspectingBrief`.
+   Does **not** read `process.env` and does **not** take the flag from the wizard API body.
+
+4. **`lib/tempo-prospecting.ts`** (shared, runs on client)
+   `canAdvanceProspectingStep(stepIndex, state, testBypass = false)` —
+   short-circuits when `testBypass` is true. **Never reads `process.env`.**
+
+5. **`components/tempo/stages/ProspectingStepPanels.tsx`** → onboarding panel
+   Forwards `testBypass` so the video-end gate can write `onboardingComplete` without waiting for `ended`.
+
+6. **`components/tempo/HandoffModal.tsx`**
+   Accepts `testBypass` and short-circuits the CRM Account/Contact Begin Stage 2 disable.
+   Also readable from `CrmAccess` context as a fallback.
+
+7. **Server-only autofill** — `GET /api/student/prospecting-wizard` calls `isGateBypassEnabled()` and seeds empty ICP / shortlist / lead / opening / CRM fields with `[TEST]` values. That does not drive the client banner or Next buttons; the page prop does.
+
+If the amber banner is missing and gates still block: confirm `.env.local` has the exact line, then **restart** the dev server.
 
 ## Never set this in production
 
@@ -41,10 +58,10 @@ If the amber banner is missing and gates still block, check `.env.local` first �
 
 | Gate | Bypass behavior |
 |------|-----------------|
-| Onboarding video end | Treated complete; `onboardingComplete` auto-set if needed |
+| Onboarding video end | Treated complete; `onboardingComplete` written without waiting for video |
 | ICP field completeness | Advance allowed; empty ICP fields auto-filled with `[TEST]` placeholders |
 | Data Room shortlist (3) | Advance allowed; empty shortlist seeded with first 3 Data Room companies alphabetically by `company_name` (no `class` / `fit_rank` / answer-key columns) |
-| Lead identity (Summit / Dana) | Select/convert validation short-circuited; Summit + Dana lead seeded when missing |
+| Lead identity (Summit / Dana) | Select/convert validation short-circuited server-side; Summit + Dana lead seeded when missing |
 | Opening message 20–120 words | Submit allowed; empty message auto-filled with a `[TEST]` draft in range |
 | CRM Account + Contact before Stage 2 | Begin Stage 2 unlocked; empty required CRM fields auto-filled with `[TEST]` values |
 | discoveryHandoffSeen | Still requires clicking **Begin Stage 2** (now unblocked by CRM bypass); acknowledgement is still persisted |
@@ -53,7 +70,7 @@ Auto-fill **never overwrites** non-empty student text.
 
 ## Visible indicator
 
-When the server reports bypass on, Prospecting shows a persistent amber banner: **TEST MODE: gates bypassed**.
+When the server page passes `testBypass={true}`, Prospecting shows a persistent amber banner: **TEST MODE: gates bypassed**.
 
 ## Related
 

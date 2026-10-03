@@ -22,6 +22,8 @@ type StepPanelsProps = {
   attemptId: string;
   state: ProspectingWizardState;
   wordCount: number;
+  /** Server page boolean — never from client process.env. */
+  testBypass?: boolean;
   onSelectCompany: (companyId: string) => void;
   onShortlistChange: (companyIds: string[]) => void;
   onFieldChange: <K extends keyof ProspectingWizardState>(
@@ -42,6 +44,7 @@ export function ProspectingStepPanels({
   attemptId,
   state,
   wordCount,
+  testBypass = false,
   onSelectCompany,
   onShortlistChange,
   onFieldChange,
@@ -56,6 +59,7 @@ export function ProspectingStepPanels({
         attemptId={attemptId}
         onboardingComplete={state.onboardingComplete}
         onOnboardingComplete={onOnboardingComplete}
+        testBypass={testBypass}
       />
     );
   }

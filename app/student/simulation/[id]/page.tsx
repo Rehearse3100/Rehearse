@@ -18,7 +18,6 @@ import { parseObjectionSummaryFromTranscript } from "@/lib/tempo-negotiation";
 import { parseProspectingIcpState } from "@/lib/tempo-icp-criteria";
 import { stripIcpFromStageData } from "@/lib/tempo-prospecting";
 import { isTempoDefaultSimulation } from "@/lib/tempo-simulation";
-import { isGateBypassEnabled } from "@/lib/tempo-test-bypass";
 import { getStudentSession } from "@/lib/student-session";
 import { createServiceClient } from "@/lib/supabase/server";
 import type { Attempt, Simulation, StageScore } from "@/types";
@@ -174,8 +173,9 @@ export default async function StudentSimulationPage({
     testStagePresentation ||
     testStageObjections ||
     testStageNegotiation;
-  // Local-dev Prospecting gate bypass — server env only; never NEXT_PUBLIC_.
-  const gateBypassEnabled = isGateBypassEnabled();
+  // Local-dev Prospecting gate bypass — read HERE on the server, pass as prop.
+  // Never NEXT_PUBLIC_; client code must never read this env var.
+  const testBypass = process.env.TEMPO_TEST_BYPASS_GATES === "true";
 
   // Ensure stale icpGateComplete flags never skip the ICP step.
   if (isTempoDefault) {
@@ -260,7 +260,7 @@ export default async function StudentSimulationPage({
         classId={classId}
         simulationTitle={simulation.title}
         initialDiscoveryHandoff={!hasTestStageJump && isDiscoveryHandoffPending}
-        gateBypassEnabled={gateBypassEnabled}
+        testBypass={testBypass}
       />
     );
   } else if (showTempoDiscovery) {
@@ -331,7 +331,7 @@ export default async function StudentSimulationPage({
       displayName={session.displayName}
       completedStages={completedStages}
       initialLoggedStages={initialLoggedStages}
-      gateBypassEnabled={gateBypassEnabled}
+      testBypass={testBypass}
     >
       {stageView}
     </CrmAccess>

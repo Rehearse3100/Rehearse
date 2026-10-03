@@ -22,7 +22,8 @@ type SaveBody = {
 /**
  * GET /api/student/prospecting-wizard?attemptId=...
  * Returns saved wizard state or defaults. When TEMPO_TEST_BYPASS_GATES=true,
- * empty fields are auto-filled server-side and gateBypassEnabled is reported.
+ * empty fields are auto-filled server-side. Client gate short-circuits use the
+ * testBypass prop from the server page — not this response field.
  */
 export async function GET(request: Request): Promise<NextResponse> {
   const auth = await requireStudentApi();
@@ -47,11 +48,11 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "Attempt not found." }, { status: 404 });
   }
 
-  const gateBypassEnabled = isGateBypassEnabled();
+  const testBypass = isGateBypassEnabled();
   const saved = attempt.stage_data as ProspectingWizardState | null;
   let state = normalizeProspectingWizardState(saved);
 
-  if (gateBypassEnabled) {
+  if (testBypass) {
     const prepared = await prepareTempoTestBypass(
       supabase,
       attemptId,
@@ -76,7 +77,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     }
   }
 
-  return NextResponse.json({ state, gateBypassEnabled });
+  return NextResponse.json({ state, testBypass });
 }
 
 /**

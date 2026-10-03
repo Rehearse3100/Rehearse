@@ -27,8 +27,11 @@ import type { ChatMessage } from "@/types";
 
 type UseProspectingWizardOptions = {
   attemptId: string;
-  /** Server-reported TEMPO_TEST_BYPASS_GATES — never read from client process.env. */
-  gateBypassEnabled?: boolean;
+  /**
+   * Server page prop from TEMPO_TEST_BYPASS_GATES — never read process.env here.
+   * This boolean is the sole client-side source of truth for gate short-circuits.
+   */
+  testBypass?: boolean;
 };
 
 type UseProspectingWizardResult = {
@@ -52,7 +55,7 @@ type UseProspectingWizardResult = {
   canProceed: boolean;
   canSubmit: boolean;
   wordCount: number;
-  gateBypassEnabled: boolean;
+  testBypass: boolean;
   handleSaveDraft: () => Promise<void>;
   handleStepAdvance: (nextStep: number) => Promise<void>;
   /** Marks a CRM lead as selected and advances to Opening Message. */
@@ -69,7 +72,7 @@ type UseProspectingWizardResult = {
  */
 export function useProspectingWizard({
   attemptId,
-  gateBypassEnabled: gateBypassEnabledProp = false,
+  testBypass = false,
 }: UseProspectingWizardOptions): UseProspectingWizardResult {
   const [state, setState] = useState<ProspectingWizardState>(DEFAULT_PROSPECTING_WIZARD_STATE);
   const [isLoading, setIsLoading] = useState(true);
@@ -77,12 +80,7 @@ export function useProspectingWizard({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isAILoading, setIsAILoading] = useState(false);
   const [chatInput, setChatInput] = useState("");
-  const [gateBypassEnabled, setGateBypassEnabled] = useState(gateBypassEnabledProp);
   const directoryRef = useRef<ProspectDirectoryCompany[]>([]);
-
-  useEffect(() => {
-    setGateBypassEnabled(gateBypassEnabledProp);
-  }, [gateBypassEnabledProp]);
 
   const persistState = useCallback(
     async (next: ProspectingWizardState): Promise<void> => {
@@ -117,13 +115,10 @@ export function useProspectingWizard({
         if (wizardRes.ok) {
           const body = (await wizardRes.json()) as {
             state: ProspectingWizardState;
-            gateBypassEnabled?: boolean;
           };
           nextState = normalizeProspectingWizardState(body.state);
           saveProspectingWizardToStorage(attemptId, nextState);
-          if (typeof body.gateBypassEnabled === "boolean") {
-            setGateBypassEnabled(body.gateBypassEnabled);
-          }
+          // testBypass comes only from the server page prop — never from this API body.
         }
 
         const icpFieldsDone = isIcpDefinitionComplete(nextState);
@@ -186,15 +181,15 @@ export function useProspectingWizard({
 
   const setCurrentStep = useCallback(
     (step: number): void => {
-      if (!gateBypassEnabled && step > 0 && !state.onboardingComplete) {
+      if (!testBypass && step > 0 && !state.onboardingComplete) {
         return;
       }
-      if (!gateBypassEnabled && step > 1 && !isIcpDefinitionComplete(state)) {
+      if (!testBypass && step > 1 && !isIcpDefinitionComplete(state)) {
         return;
       }
       updateField("currentStep", step);
     },
-    [gateBypassEnabled, state, updateField]
+    [testBypass, state, updateField]
   );
 
   /**
@@ -391,7 +386,7 @@ export function useProspectingWizard({
   ]);
 
   const handleSubmit = useCallback(async (): Promise<void> => {
-    if (!canSubmitProspectingBrief(state, gateBypassEnabled)) {
+    if (!canSubmitProspectingBrief(state, testBypass)) {
       return;
     }
 
@@ -422,7 +417,7 @@ export function useProspectingWizard({
     } finally {
       setIsSubmitting(false);
     }
-  }, [attemptId, gateBypassEnabled, state]);
+  }, [attemptId, testBypass, state]);
 
   const dismissProspectingHandoff = useCallback((): void => {
     setState((prev) => {
@@ -439,8 +434,8 @@ export function useProspectingWizard({
   }, [persistState]);
 
   const wordCount = countWords(state.openingMessage);
-  const canProceed = canAdvanceProspectingStep(state.currentStep, state, gateBypassEnabled);
-  const canSubmit = canSubmitProspectingBrief(state, gateBypassEnabled);
+  const canProceed = canAdvanceProspectingStep(state.currentStep, state, testBypass);
+  const canSubmit = canSubmitProspectingBrief(state, testBypass);
 
   return {
     state,
@@ -459,7 +454,7 @@ export function useProspectingWizard({
     canProceed,
     canSubmit,
     wordCount,
-    gateBypassEnabled,
+    testBypass,
     handleSaveDraft,
     handleStepAdvance,
     completeLeadSelection,

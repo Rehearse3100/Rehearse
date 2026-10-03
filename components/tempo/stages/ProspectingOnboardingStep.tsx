@@ -25,6 +25,8 @@ type ProspectingOnboardingStepProps = {
   attemptId: string;
   onboardingComplete: boolean;
   onOnboardingComplete: () => void;
+  /** Server page boolean — when true, marks onboarding complete without waiting for video end. */
+  testBypass?: boolean;
 };
 
 /**
@@ -34,11 +36,18 @@ export function ProspectingOnboardingStep({
   attemptId: _attemptId,
   onboardingComplete,
   onOnboardingComplete,
+  testBypass = false,
 }: ProspectingOnboardingStepProps): React.ReactElement {
   const videoHostRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (onboardingComplete) {
+      return;
+    }
+
+    // testBypass short-circuit: write the same onboardingComplete record a normal run writes.
+    if (testBypass) {
+      onOnboardingComplete();
       return;
     }
 
@@ -55,7 +64,7 @@ export function ProspectingOnboardingStep({
     return () => {
       video.removeEventListener("ended", handleEnded);
     };
-  }, [onboardingComplete, onOnboardingComplete]);
+  }, [onboardingComplete, onOnboardingComplete, testBypass]);
 
   return (
     <div className="bg-surface text-on-surface font-body-md min-h-full flex items-center justify-center px-md pt-lg pb-md">
