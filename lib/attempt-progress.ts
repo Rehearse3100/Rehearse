@@ -57,7 +57,11 @@ export function stageDataHasMeaningfulProgress(stageData: unknown): boolean {
   if (data.icpGateComplete === true) {
     return true;
   }
-  if (typeof data.currentStep === "number" && data.currentStep > 0) {
+  if (
+    typeof data.currentStepId === "string" &&
+    data.currentStepId.trim() !== "" &&
+    data.currentStepId !== "onboarding"
+  ) {
     return true;
   }
   if (typeof data.selectedLeadId === "string" && data.selectedLeadId.trim()) {

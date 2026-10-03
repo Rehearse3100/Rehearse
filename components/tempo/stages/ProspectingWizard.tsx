@@ -18,6 +18,9 @@ import { ProspectingStepPanels } from "@/components/tempo/stages/ProspectingStep
 import { useProspectingWizard } from "@/hooks/useProspectingWizard";
 import {
   isIcpDefinitionComplete,
+  nextProspectingStepId,
+  prevProspectingStepId,
+  prospectingStepIndex,
   PROSPECTING_STEPS,
   TEMPO_HANDOFF_MESSAGES,
   TEMPO_HANDOFF_STAGE_META,
@@ -57,10 +60,13 @@ export function ProspectingWizard({
   const [forceHandoffOpen, setForceHandoffOpen] = useState(false);
 
   const { state } = wizard;
-  const { currentStep } = state;
+  const { currentStepId } = state;
+  const currentStepIndex = prospectingStepIndex(currentStepId);
   const prospectingMeta = TEMPO_HANDOFF_STAGE_META.prospecting;
   const discoveryMeta = TEMPO_HANDOFF_STAGE_META.discovery;
   const icpComplete = isIcpDefinitionComplete(state);
+  const previousStepId = prevProspectingStepId(currentStepId);
+  const upcomingStepId = nextProspectingStepId(currentStepId);
   // Banner is driven by the SERVER PROP only — not by hook/API state.
   const showProspectingHandoff =
     !wizard.isLoading &&
@@ -79,10 +85,10 @@ export function ProspectingWizard({
   }
 
   const handleNext = async (): Promise<void> => {
-    if (!wizard.canProceed || currentStep >= PROSPECTING_STEPS.length - 1) {
+    if (!wizard.canProceed || !upcomingStepId) {
       return;
     }
-    await wizard.handleStepAdvance(currentStep + 1);
+    await wizard.handleStepAdvance(upcomingStepId);
   };
 
   const handleSubmit = async (): Promise<void> => {
@@ -153,8 +159,8 @@ export function ProspectingWizard({
 
           <nav className="flex-1 p-md mt-md overflow-y-auto">
             {PROSPECTING_STEPS.map((step, index) => {
-              const isCompleted = index < currentStep;
-              const isActive = index === currentStep;
+              const isCompleted = currentStepIndex >= 0 && index < currentStepIndex;
+              const isActive = step.id === currentStepId;
               return (
                 <div key={step.id} className="flex gap-md">
                   <div className="flex flex-col items-center shrink-0">
@@ -210,15 +216,17 @@ export function ProspectingWizard({
         <section className="flex-1 bg-surface-container-lowest flex flex-col min-w-0">
           <div className="h-12 bg-surface-container-low border-b border-outline-variant shrink-0 flex items-center justify-between px-4 lg:px-xl gap-4">
             <div className="flex items-center gap-md text-on-surface-variant min-w-0">
-              {currentStep > 0 ? (
+              {previousStepId ? (
                 <button
                   type="button"
-                  onClick={() => wizard.setCurrentStep(currentStep - 1)}
-                  disabled={currentStep === 2 && !icpComplete}
+                  onClick={() => wizard.setCurrentStepId(previousStepId)}
+                  disabled={currentStepId === "research" && !icpComplete}
                   className="inline-flex items-center gap-1 text-label-sm text-on-surface-variant hover:text-primary transition-colors shrink-0 disabled:opacity-40 disabled:pointer-events-none"
                 >
                   <MaterialIcon name="arrow_back" className="text-[16px]" />
-                  Back to {PROSPECTING_STEPS[currentStep - 1]?.label ?? "previous step"}
+                  Back to{" "}
+                  {PROSPECTING_STEPS.find((step) => step.id === previousStepId)?.label ??
+                    "previous step"}
                 </button>
               ) : null}
               <div className="flex items-center gap-sm shrink-0">
@@ -230,7 +238,7 @@ export function ProspectingWizard({
             </div>
 
             <div className="flex items-center gap-md shrink-0">
-                {currentStep === 0 ? (
+                {currentStepId === "onboarding" ? (
                   <span
                     className={`hidden sm:inline text-label-sm ${
                       state.onboardingComplete ? "text-green-600" : "text-on-surface-variant"
@@ -242,7 +250,7 @@ export function ProspectingWizard({
                   </span>
                 ) : null}
 
-                {currentStep > 0 && currentStep === PROSPECTING_STEPS.length - 1 ? (
+                {currentStepId === "opening" ? (
                   <button
                     type="button"
                     onClick={() => void wizard.handleSaveDraft()}
@@ -252,7 +260,7 @@ export function ProspectingWizard({
                   </button>
                 ) : null}
 
-                {currentStep < PROSPECTING_STEPS.length - 1 ? (
+                {upcomingStepId ? (
                   <button
                     type="button"
                     disabled={!wizard.canProceed}
@@ -264,7 +272,8 @@ export function ProspectingWizard({
                     }`}
                   >
                     <span className="hidden sm:inline">
-                      Next: {PROSPECTING_STEPS[currentStep + 1]?.label}
+                      Next:{" "}
+                      {PROSPECTING_STEPS.find((step) => step.id === upcomingStepId)?.label}
                     </span>
                     <span className="sm:hidden">Next</span>
                     <MaterialIcon name="arrow_forward" className="text-[18px]" />
@@ -289,15 +298,15 @@ export function ProspectingWizard({
 
           <div
             className={`flex-1 min-h-0 overflow-y-auto ${
-              currentStep === 0 || currentStep === 1
+              currentStepId === "onboarding" || currentStepId === "icp"
                 ? "p-0"
-                : currentStep === 2
+                : currentStepId === "research"
                   ? "p-2 lg:p-3"
                   : "p-4 lg:p-xl"
             }`}
           >
             <ProspectingStepPanels
-              currentStep={currentStep}
+              currentStepId={currentStepId}
               attemptId={attemptId}
               state={state}
               wordCount={wizard.wordCount}

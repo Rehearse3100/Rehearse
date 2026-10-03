@@ -10,10 +10,7 @@ import {
   emptyAccountFields,
 } from "@/lib/tempo-crm-account";
 import { emptyContactFields } from "@/lib/tempo-crm-contact";
-import {
-  PROSPECTING_STEP_VERSION,
-  type ProspectingWizardState,
-} from "@/lib/tempo-prospecting";
+import type { ProspectingWizardState } from "@/lib/tempo-prospecting";
 import { TEST_BYPASS_PREFIX } from "@/lib/tempo-test-bypass-client";
 
 /** Re-export for server callers; single definition lives in tempo-test-bypass-client. */
@@ -84,11 +81,9 @@ export function applyWizardAutofill(state: ProspectingWizardState): ProspectingW
   const next: ProspectingWizardState = { ...state, selfCheck: { ...state.selfCheck } };
 
   // Do NOT set onboardingComplete here — new sims must open on Welcome Briefing.
-  // Next on step 0 stays unlocked via the client testBypass prop (no full watch required).
-  // Stamp the current step version so normalize() does not migrate autofilled drafts as v1.
-  next.prospectingStepVersion = PROSPECTING_STEP_VERSION;
+  // Next on onboarding stays unlocked via the client testBypass prop (no full watch required).
   if (!next.onboardingComplete) {
-    next.currentStep = 0;
+    next.currentStepId = "onboarding";
   }
 
   if (!next.icpTargetVerticals.trim()) {

@@ -56,6 +56,12 @@ These are the rules most often violated — treat them as hard constraints.
 9. **Third-party shapes are verified** — Confirm Anam, OpenAI, ElevenLabs, Deepgram, Supabase, etc. against current docs; never assume from memory.
 10. **One DB setup file** — `supabase/FULL-SETUP.sql` is the only setup file. Any change applied to the live database must be written back into it. Archived SQL under `supabase/archive/` is historical and must not be run.
 
+## Prospecting wizard steps
+
+- Persist **stable step ids** (`currentStepId` from `PROSPECTING_STEPS`) in saved state — never rename or reuse an id.
+- Adding a step needs no migration; unknown ids fall back to the first step.
+- Removing a step is safe for the same reason. Do not reintroduce numeric `currentStep` or a version-migration chain.
+
 ## Live call stack (handle with care)
 
 Do not casually consolidate or rewrite:

@@ -1,6 +1,6 @@
 /**
  * step-migration.test.ts
- * Guards prospectingStepVersion → current step migration and idempotency.
+ * Id-based wizard step resolution — no version chain; idempotent normalize.
  */
 
 import { describe, expect, it } from "vitest";
@@ -8,12 +8,14 @@ import {
   DEFAULT_PROSPECTING_WIZARD_STATE,
   loadProspectingWizardFromStorage,
   normalizeProspectingWizardState,
-  PROSPECTING_STEP_VERSION,
+  PROSPECTING_STEPS,
+  resolveCurrentStepId,
   saveProspectingWizardToStorage,
+  type ProspectingStepDefinition,
+  type ProspectingStepId,
   type ProspectingWizardState,
 } from "@/lib/tempo-prospecting";
 
-/** ICP form that satisfies isIcpDefinitionComplete (avoids forced step reset). */
 const COMPLETE_ICP = {
   icpTargetVerticals: "Multi-location dental and specialty clinics",
   icpSizeMinLocations: "3",
@@ -24,173 +26,131 @@ const COMPLETE_ICP = {
   icpDisqualifier3: "Outside target metro territory",
 } as const;
 
-/**
- * Sibling stage_data.icp payload — parseProspectingIcpState requires result
- * affirmed/corrected before feedbackSeen counts as icpDone.
- */
-const ICP_DONE = {
-  result: "affirmed" as const,
-  feedbackSeen: true,
-  originalText: "dental multi-location",
-  displayText: "dental multi-location",
-  activeIcpText: "dental multi-location",
+const FILLED_DATA: Partial<ProspectingWizardState> = {
+  ...COMPLETE_ICP,
+  shortlistedCompanyIds: ["a", "b", "c"],
+  selectedLeadId: "lead-1",
+  openingMessage: "A filled opening message with enough words for context.",
+  onboardingComplete: true,
+  agentDesign: "my agent",
+  directoryCompanyIds: ["a", "b", "c"],
 };
 
 function baseDraft(
   overrides: Record<string, unknown> = {}
-): Partial<ProspectingWizardState> & { icp?: { feedbackSeen: boolean } } {
+): Partial<ProspectingWizardState> & Record<string, unknown> {
   return {
-    ...COMPLETE_ICP,
-    selectedLeadId: null,
-    shortlistedCompanyIds: [],
-    directoryCompanyIds: [],
-    openingMessage: "",
-    agentDesign: "",
-    agentCorrections: "",
-    prospectingHandoffSeen: false,
-    onboardingComplete: false,
-    icp: ICP_DONE,
+    ...FILLED_DATA,
+    currentStepId: "research",
     ...overrides,
   };
 }
 
-/**
- * Expected CURRENT step after migrating a saved version + step with icpDone.
- * Chain: v1→v2 (+1 ICP), v2→v3 (+1 if step≥2 agent), v3→v4 (+1 onboarding), v4→v5 (noop).
- */
-function expectedCurrentStep(savedVersion: number, savedStep: number): number {
-  let step = savedStep;
-  if (savedVersion < 2) {
-    step = Math.min(step + 1, 5);
-  }
-  if (savedVersion < 3 && step >= 2) {
-    step = Math.min(step + 1, 5);
-  }
-  if (savedVersion < 4) {
-    step = Math.min(step + 1, 5);
-  }
-  return step;
-}
-
-/** Max valid step index that existed before each version's layout change. */
-function maxStepForVersion(version: number): number {
-  if (version <= 1) return 3; // research / lead / opening-ish layout before ICP+agent+onboarding
-  if (version === 2) return 4; // after ICP insert, before agent
-  if (version === 3) return 4; // after agent, before onboarding (0..4)
-  return 5; // v4+ current 6-step indices 0..5
-}
-
-describe("normalizeProspectingWizardState — version → step mapping", () => {
-  it("maps every saved prospectingStepVersion and step index to the correct current step", () => {
-    for (let version = 1; version <= PROSPECTING_STEP_VERSION; version += 1) {
-      const maxStep = maxStepForVersion(version);
-      for (let step = 0; step <= maxStep; step += 1) {
-        const normalized = normalizeProspectingWizardState(
-          baseDraft({
-            prospectingStepVersion: version,
-            currentStep: step,
-            onboardingComplete: version >= 4 ? step > 0 : false,
-          })
-        );
-        expect(
-          normalized.currentStep,
-          `v${version} step ${step}`
-        ).toBe(expectedCurrentStep(version, step));
-      }
+describe("resolveCurrentStepId / normalizeProspectingWizardState", () => {
+  it("keeps a valid currentStepId", () => {
+    for (const step of PROSPECTING_STEPS) {
+      expect(resolveCurrentStepId({ currentStepId: step.id })).toBe(step.id);
+      const normalized = normalizeProspectingWizardState(
+        baseDraft({ currentStepId: step.id })
+      );
+      expect(normalized.currentStepId).toBe(step.id);
     }
   });
 
-  it("marks pre-v4 migrations as onboardingComplete so they are not re-gated", () => {
-    for (const version of [1, 2, 3]) {
-      const normalized = normalizeProspectingWizardState(
-        baseDraft({
-          prospectingStepVersion: version,
-          currentStep: 0,
-          onboardingComplete: false,
-        })
-      );
-      expect(normalized.onboardingComplete, `v${version}`).toBe(true);
-      expect(normalized.prospectingStepVersion).toBe(PROSPECTING_STEP_VERSION);
+  it("falls back to the first step for unknown ids", () => {
+    expect(resolveCurrentStepId({ currentStepId: "not_a_real_step" })).toBe(
+      "onboarding"
+    );
+    const normalized = normalizeProspectingWizardState(
+      baseDraft({ currentStepId: "ghost_step" })
+    );
+    expect(normalized.currentStepId).toBe("onboarding");
+  });
+
+  it("falls back to the first step for legacy numeric currentStep / any version", () => {
+    const legacySamples = [
+      { currentStep: 0, prospectingStepVersion: 1 },
+      { currentStep: 2, prospectingStepVersion: 3 },
+      { currentStep: 5, prospectingStepVersion: 5 },
+      { currentStep: 4 },
+      { prospectingStepVersion: 2 },
+    ];
+    for (const sample of legacySamples) {
+      // No currentStepId — only legacy numeric / version fields plus filled data.
+      const raw = { ...FILLED_DATA, ...sample };
+      const normalized = normalizeProspectingWizardState(raw);
+      expect(normalized.currentStepId, JSON.stringify(sample)).toBe("onboarding");
+      // All other filled data preserved — reset changes only step position.
+      expect(normalized.icpTargetVerticals).toBe(FILLED_DATA.icpTargetVerticals);
+      expect(normalized.shortlistedCompanyIds).toEqual(FILLED_DATA.shortlistedCompanyIds);
+      expect(normalized.selectedLeadId).toBe(FILLED_DATA.selectedLeadId);
+      expect(normalized.openingMessage).toBe(FILLED_DATA.openingMessage);
+      expect(normalized.onboardingComplete).toBe(true);
+      expect(normalized.agentDesign).toBe(FILLED_DATA.agentDesign);
+      expect(normalized).not.toHaveProperty("prospectingStepVersion");
+      expect(normalized).not.toHaveProperty("currentStep");
     }
   });
 
   it("is idempotent: normalize(normalize(x)) equals normalize(x)", () => {
-    const samples: Array<Partial<ProspectingWizardState> & { icp?: unknown }> = [
-      baseDraft({ prospectingStepVersion: 1, currentStep: 0 }),
-      baseDraft({ prospectingStepVersion: 1, currentStep: 2 }),
-      baseDraft({ prospectingStepVersion: 2, currentStep: 1 }),
-      baseDraft({ prospectingStepVersion: 2, currentStep: 3 }),
-      baseDraft({ prospectingStepVersion: 3, currentStep: 2 }),
-      baseDraft({ prospectingStepVersion: 4, currentStep: 0, onboardingComplete: true }),
-      baseDraft({
-        prospectingStepVersion: 5,
-        currentStep: 4,
-        onboardingComplete: true,
-        selectedLeadId: "lead-1",
-        shortlistedCompanyIds: ["a", "b", "c"],
-      }),
-      // Current-schema draft omitting version (must not be treated as v1)
-      {
-        ...COMPLETE_ICP,
-        currentStep: 2,
-        onboardingComplete: true,
-        selectedLeadId: null,
-        shortlistedCompanyIds: ["a", "b", "c"],
-        icpTargetVerticals: COMPLETE_ICP.icpTargetVerticals,
-      },
+    const samples: Array<Record<string, unknown>> = [
+      baseDraft({ currentStepId: "onboarding" }),
+      baseDraft({ currentStepId: "opening" }),
+      baseDraft({ currentStepId: "not_a_real_step" }),
+      baseDraft({ currentStep: 3, prospectingStepVersion: 1 }),
+      baseDraft({ currentStep: 5, prospectingStepVersion: 5 }),
       DEFAULT_PROSPECTING_WIZARD_STATE,
+      { ...COMPLETE_ICP, currentStepId: "icp", onboardingComplete: true },
     ];
-
     for (const sample of samples) {
       const once = normalizeProspectingWizardState(sample);
       const twice = normalizeProspectingWizardState(once);
-      expect(twice, `idempotent after ${JSON.stringify({
-        v: sample.prospectingStepVersion,
-        s: sample.currentStep,
-      })}`).toEqual(once);
+      expect(twice).toEqual(once);
     }
   });
-});
 
-describe("normalizeProspectingWizardState — load paths", () => {
-  it("produces the same result for stage_data-shaped input and localStorage of the same raw draft", () => {
-    const raw = baseDraft({
-      prospectingStepVersion: 2,
-      currentStep: 1,
-      shortlistedCompanyIds: ["c1", "c2", "c3"],
-    });
-
+  it("stage_data and localStorage load paths behave identically", () => {
+    const raw = baseDraft({ currentStepId: "select_lead" });
     const fromStageData = normalizeProspectingWizardState(raw);
 
     const store = new Map<string, string>();
-    const attemptId = "attempt-migration-test";
-    viStubLocalStorage(store);
+    const attemptId = "attempt-id-path";
+    stubLocalStorage(store);
     store.set(`rehearse-prospecting-wizard-${attemptId}`, JSON.stringify(raw));
     const fromStorage = loadProspectingWizardFromStorage(attemptId);
-
     expect(fromStorage).toEqual(fromStageData);
+
+    saveProspectingWizardToStorage(attemptId, fromStageData);
+    expect(loadProspectingWizardFromStorage(attemptId)).toEqual(fromStageData);
   });
 
-  it("localStorage reload of an already-normalized state is idempotent", () => {
-    const raw = baseDraft({
-      prospectingStepVersion: 2,
-      currentStep: 2,
-      shortlistedCompanyIds: ["c1", "c2", "c3"],
-    });
-    const normalized = normalizeProspectingWizardState(raw);
-    const store = new Map<string, string>();
-    const attemptId = "attempt-migration-idempotent";
-    viStubLocalStorage(store);
-    saveProspectingWizardToStorage(attemptId, normalized);
-    const reloaded = loadProspectingWizardFromStorage(attemptId);
-    expect(reloaded).toEqual(normalized);
+  it("keeps a saved id when an extra step is inserted into the step list", () => {
+    const stepsWithExtra: readonly ProspectingStepDefinition[] = [
+      PROSPECTING_STEPS[0]!,
+      PROSPECTING_STEPS[1]!,
+      {
+        id: "research" as ProspectingStepId,
+        label: "Data Room",
+        description: "…",
+      },
+      {
+        id: "bonus" as ProspectingStepId,
+        label: "Bonus",
+        description: "Inserted step",
+      },
+      ...PROSPECTING_STEPS.slice(3),
+    ];
+    // Saved id still points at research even though the list grew.
+    expect(
+      resolveCurrentStepId({ currentStepId: "research" }, stepsWithExtra)
+    ).toBe("research");
+    expect(
+      resolveCurrentStepId({ currentStepId: "select_lead" }, stepsWithExtra)
+    ).toBe("select_lead");
   });
 });
 
-/**
- * Minimal window.localStorage stub for Node vitest (load/save helpers need window).
- */
-function viStubLocalStorage(store: Map<string, string>): void {
+function stubLocalStorage(store: Map<string, string>): void {
   const localStorage = {
     getItem(key: string): string | null {
       return store.has(key) ? (store.get(key) as string) : null;

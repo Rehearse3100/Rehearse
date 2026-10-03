@@ -15,10 +15,7 @@ export type ProspectingStepId =
   | "select_lead"
   | "opening";
 
-/** Latest prospectingStepVersion — bump when PROSPECTING_STEPS layout changes. */
-export const PROSPECTING_STEP_VERSION = 5;
-
-/** Keys on ProspectingWizardState that belong to the ICP form (step 1). */
+/** Keys on ProspectingWizardState that belong to the ICP form. */
 export const ICP_FORM_FIELD_KEYS = [
   "icpTargetVerticals",
   "icpSizeMinLocations",
@@ -163,7 +160,8 @@ export const SELF_CHECK_ITEMS = [
 export const OPENING_MESSAGE_TIPS = SELF_CHECK_ITEMS.map((item) => item.label);
 
 export type ProspectingWizardState = {
-  currentStep: number;
+  /** Stable step id from PROSPECTING_STEPS — never rename persisted ids. */
+  currentStepId: ProspectingStepId;
   icpTargetVerticals: string;
   icpSizeMinLocations: string;
   icpSizeMaxLocations: string;
@@ -189,12 +187,7 @@ export type ProspectingWizardState = {
   prospectingHandoffSeen: boolean;
   /** CRM lead id marked as the Prospecting target (status selected). */
   selectedLeadId: string | null;
-  /**
-   * Bumped when PROSPECTING_STEPS layout changes (see PROSPECTING_STEP_VERSION).
-   * normalizeProspectingWizardState migrates older versions forward.
-   */
-  prospectingStepVersion?: number;
-  /** True after the onboarding briefing video has ended (step 0 gate). */
+  /** True after the onboarding briefing video has ended (onboarding gate). */
   onboardingComplete: boolean;
   /**
    * True after ICP pre-gate Continue. ICP payload itself lives at stage_data.icp
@@ -204,7 +197,7 @@ export type ProspectingWizardState = {
 };
 
 export const DEFAULT_PROSPECTING_WIZARD_STATE: ProspectingWizardState = {
-  currentStep: 0,
+  currentStepId: "onboarding",
   icpTargetVerticals: "",
   icpSizeMinLocations: "",
   icpSizeMaxLocations: "",
@@ -227,6 +220,61 @@ export const DEFAULT_PROSPECTING_WIZARD_STATE: ProspectingWizardState = {
   onboardingComplete: false,
   icpGateComplete: false,
 };
+
+/**
+ * Resolves the active wizard step id from saved state.
+ * Valid currentStepId → itself. Anything else (missing, unknown, old numeric
+ * currentStep, any prospectingStepVersion) → first step. Never infers from a number.
+ */
+export function resolveCurrentStepId(
+  saved: unknown,
+  steps: readonly ProspectingStepDefinition[] = PROSPECTING_STEPS
+): ProspectingStepId {
+  const raw = (saved ?? {}) as Record<string, unknown>;
+  const id = raw.currentStepId;
+  if (typeof id === "string" && steps.some((step) => step.id === id)) {
+    return id as ProspectingStepId;
+  }
+  return (steps[0]?.id ?? "onboarding") as ProspectingStepId;
+}
+
+/**
+ * Index of a step id in the step list, or -1 if unknown.
+ */
+export function prospectingStepIndex(
+  stepId: string,
+  steps: readonly ProspectingStepDefinition[] = PROSPECTING_STEPS
+): number {
+  return steps.findIndex((step) => step.id === stepId);
+}
+
+/**
+ * Next step id after the given id, or null at the end of the list.
+ */
+export function nextProspectingStepId(
+  stepId: ProspectingStepId,
+  steps: readonly ProspectingStepDefinition[] = PROSPECTING_STEPS
+): ProspectingStepId | null {
+  const index = prospectingStepIndex(stepId, steps);
+  if (index < 0 || index >= steps.length - 1) {
+    return null;
+  }
+  return steps[index + 1]!.id;
+}
+
+/**
+ * Previous step id before the given id, or null at the start.
+ */
+export function prevProspectingStepId(
+  stepId: ProspectingStepId,
+  steps: readonly ProspectingStepDefinition[] = PROSPECTING_STEPS
+): ProspectingStepId | null {
+  const index = prospectingStepIndex(stepId, steps);
+  if (index <= 0) {
+    return null;
+  }
+  return steps[index - 1]!.id;
+}
 
 /**
  * Parses a location-count input for the ICP size range (positive integer).
@@ -282,29 +330,14 @@ export function readIcpFormFields(
 }
 
 /**
- * Normalizes persisted wizard drafts (including pre-lead-selection 2-step saves).
+ * Normalizes persisted wizard drafts. Step position uses stable ids only —
+ * unknown / legacy numeric positions reset to the first step; all other fields
+ * are preserved.
  */
 export function normalizeProspectingWizardState(
   raw: Partial<ProspectingWizardState> | null | undefined
 ): ProspectingWizardState {
   const anyRaw = (raw ?? {}) as Record<string, unknown>;
-  const isLegacy =
-    "icpField1" in anyRaw ||
-    "triggerEvent" in anyRaw ||
-    "researchNotes" in anyRaw ||
-    "fitJustification" in anyRaw ||
-    (typeof anyRaw.currentStep === "number" && anyRaw.currentStep > 2);
-
-  let step = typeof anyRaw.currentStep === "number" ? anyRaw.currentStep : 0;
-  const hasSelectedLeadField = "selectedLeadId" in anyRaw;
-  if (isLegacy) {
-    step = step >= 4 ? 2 : 0;
-  } else if (!hasSelectedLeadField && step === 1) {
-    // Pre-select-lead 2-step drafts: Opening was index 1 → now index 2.
-    step = 2;
-  } else {
-    step = Math.min(Math.max(0, step), PROSPECTING_STEPS.length - 1);
-  }
 
   const selectedLeadId =
     typeof anyRaw.selectedLeadId === "string" && anyRaw.selectedLeadId.trim()
@@ -333,7 +366,7 @@ export function normalizeProspectingWizardState(
     ? (anyRaw.chatMessages as ChatMessage[])
     : [];
 
-  // Migrate pre-directory drafts that only stored a single chatMessages array.
+  // Pre-directory drafts that only stored a single chatMessages array.
   if (Object.keys(companyChats).length === 0 && legacyMessages.length > 0 && selectedCompanyId) {
     companyChats[selectedCompanyId] = legacyMessages;
   }
@@ -345,79 +378,7 @@ export function normalizeProspectingWizardState(
 
   const icpRecord = parseProspectingIcpState(anyRaw.icp);
   const icpDone = icpRecord?.feedbackSeen === true;
-
-  const hasRealWizardProgress =
-    (typeof anyRaw.currentStep === "number" && anyRaw.currentStep > 0) ||
-    (typeof anyRaw.selectedLeadId === "string" && anyRaw.selectedLeadId.trim() !== "") ||
-    (typeof anyRaw.icpTargetVerticals === "string" && anyRaw.icpTargetVerticals.trim() !== "") ||
-    (typeof anyRaw.icpOperationalSignals === "string" &&
-      anyRaw.icpOperationalSignals.trim() !== "") ||
-    (typeof anyRaw.icpField1 === "string" && anyRaw.icpField1.trim() !== "") ||
-    (typeof anyRaw.icpField2 === "string" && anyRaw.icpField2.trim() !== "") ||
-    (typeof anyRaw.fitJustification === "string" && anyRaw.fitJustification.trim() !== "") ||
-    (typeof anyRaw.triggerEvent === "string" && anyRaw.triggerEvent.trim() !== "") ||
-    (typeof anyRaw.dmName === "string" && anyRaw.dmName.trim() !== "") ||
-    shortlistedCompanyIds.length > 0 ||
-    directoryCompanyIds.length > 0 ||
-    Object.keys(companyChats).length > 0 ||
-    legacyMessages.length > 0 ||
-    (typeof anyRaw.openingMessage === "string" && anyRaw.openingMessage.trim() !== "") ||
-    icpDone;
-
-  const explicitVersion =
-    typeof anyRaw.prospectingStepVersion === "number" ? anyRaw.prospectingStepVersion : null;
-
-  // Current-schema drafts (incl. test-bypass autofill) often omit prospectingStepVersion.
-  // Do NOT treat those as v1 — that wrongly +1s currentStep and marks onboarding complete.
-  const looksLikeCurrentSchema =
-    "icpTargetVerticals" in anyRaw ||
-    "onboardingComplete" in anyRaw ||
-    "prospectingHandoffSeen" in anyRaw ||
-    "shortlistedCompanyIds" in anyRaw;
-
-  const savedVersion =
-    explicitVersion !== null
-      ? explicitVersion
-      : hasRealWizardProgress
-        ? looksLikeCurrentSchema
-          ? PROSPECTING_STEP_VERSION
-          : 1
-        : PROSPECTING_STEP_VERSION;
-
-  let resolvedStep = step;
-  let onboardingComplete = Boolean(anyRaw.onboardingComplete);
-
-  if (savedVersion < PROSPECTING_STEP_VERSION) {
-    if (icpDone) {
-      // v1 → v2: ICP row inserted at index 0 (unchanged behavior).
-      if (savedVersion < 2) {
-        resolvedStep = Math.min(resolvedStep + 1, PROSPECTING_STEPS.length - 1);
-      }
-      // v2 → v3: agent row inserted at index 2; steps 0–1 unchanged.
-      if (savedVersion < 3 && resolvedStep >= 2) {
-        resolvedStep = Math.min(resolvedStep + 1, PROSPECTING_STEPS.length - 1);
-      }
-    }
-    // v3 → v4: onboarding row inserted at index 0; uniform +1 on all saved steps.
-    if (savedVersion < 4) {
-      resolvedStep = Math.min(resolvedStep + 1, PROSPECTING_STEPS.length - 1);
-      onboardingComplete = true;
-    }
-    // v4 → v5: ICP field schema change only; step indices unchanged.
-  }
-
   const icpFields = readIcpFormFields(anyRaw);
-
-  if (!icpDone) {
-    const draftForIcp: ProspectingWizardState = {
-      ...DEFAULT_PROSPECTING_WIZARD_STATE,
-      ...icpFields,
-    };
-    if (!isIcpDefinitionComplete(draftForIcp)) {
-      resolvedStep = onboardingComplete ? 1 : 0;
-    }
-  }
-
   const icpStepComplete = isIcpDefinitionComplete({
     ...DEFAULT_PROSPECTING_WIZARD_STATE,
     ...icpFields,
@@ -441,14 +402,8 @@ export function normalizeProspectingWizardState(
     prospectingHandoffSeen: Boolean(anyRaw.prospectingHandoffSeen),
     selectedLeadId,
     ...icpFields,
-    currentStep: resolvedStep,
-    prospectingStepVersion:
-      savedVersion < PROSPECTING_STEP_VERSION
-        ? PROSPECTING_STEP_VERSION
-        : typeof anyRaw.prospectingStepVersion === "number"
-          ? anyRaw.prospectingStepVersion
-          : undefined,
-    onboardingComplete,
+    currentStepId: resolveCurrentStepId(anyRaw),
+    onboardingComplete: Boolean(anyRaw.onboardingComplete),
     icpGateComplete: icpStepComplete || icpDone,
   };
 }
@@ -602,31 +557,31 @@ export function isIcpDefinitionComplete(state: ProspectingWizardState): boolean 
 }
 
 /**
- * Returns whether the student can advance from the current wizard step.
- * Indices: Onboarding (0) → ICP (1) → Data Room (2) → Agent (3) → Lead (4) → Opening (5).
+ * Returns whether the student can advance from the current wizard step id.
+ * Order: onboarding → icp → research → agent → select_lead → opening.
  * testBypass is a boolean passed from the server page — this file never reads process.env.
  * When true, short-circuits to allowed; existing conditions remain the fallback when false.
  */
 export function canAdvanceProspectingStep(
-  stepIndex: number,
+  stepId: ProspectingStepId | string,
   state: ProspectingWizardState,
   testBypass = false
 ): boolean {
   if (testBypass) {
     return true;
   }
-  switch (stepIndex) {
-    case 0:
+  switch (stepId) {
+    case "onboarding":
       return state.onboardingComplete;
-    case 1:
+    case "icp":
       return isIcpDefinitionComplete(state);
-    case 2:
+    case "research":
       return state.shortlistedCompanyIds.length === 3;
-    case 3:
+    case "agent":
       return true;
-    case 4:
+    case "select_lead":
       return Boolean(state.selectedLeadId);
-    case 5:
+    case "opening":
       return canSubmitProspectingBrief(state);
     default:
       return false;

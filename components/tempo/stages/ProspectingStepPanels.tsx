@@ -14,11 +14,12 @@ import { ProspectingLeadSelectionStep } from "@/components/tempo/stages/Prospect
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import {
   OPENING_MESSAGE_TIPS,
+  type ProspectingStepId,
   type ProspectingWizardState,
 } from "@/lib/tempo-prospecting";
 
 type StepPanelsProps = {
-  currentStep: number;
+  currentStepId: ProspectingStepId;
   attemptId: string;
   state: ProspectingWizardState;
   wordCount: number;
@@ -40,7 +41,7 @@ type StepPanelsProps = {
  * Renders the active wizard step panel in the center column.
  */
 export function ProspectingStepPanels({
-  currentStep,
+  currentStepId,
   attemptId,
   state,
   wordCount,
@@ -53,7 +54,7 @@ export function ProspectingStepPanels({
   canResearchContinue = false,
   onOnboardingComplete,
 }: StepPanelsProps): React.ReactElement {
-  if (currentStep === 0) {
+  if (currentStepId === "onboarding") {
     return (
       <ProspectingOnboardingStep
         attemptId={attemptId}
@@ -64,13 +65,13 @@ export function ProspectingStepPanels({
     );
   }
 
-  if (currentStep === 1) {
+  if (currentStepId === "icp") {
     return (
       <ProspectingIcpStep attemptId={attemptId} state={state} onFieldChange={onFieldChange} />
     );
   }
 
-  if (currentStep === 2) {
+  if (currentStepId === "research") {
     return (
       <ProspectingDataRoom
         attemptId={attemptId}
@@ -83,11 +84,11 @@ export function ProspectingStepPanels({
     );
   }
 
-  if (currentStep === 3) {
+  if (currentStepId === "agent") {
     return <ProspectingAgentStep attemptId={attemptId} />;
   }
 
-  if (currentStep === 4) {
+  if (currentStepId === "select_lead") {
     return (
       <ProspectingLeadSelectionStep
         attemptId={attemptId}

@@ -1,12 +1,14 @@
 /**
  * gates.test.ts
  * Locks canAdvanceProspectingStep conditions — including test-bypass short-circuit.
+ * Signature is id-keyed; each gate's condition is unchanged from the index era.
  */
 
 import { describe, expect, it } from "vitest";
 import {
   canAdvanceProspectingStep,
   DEFAULT_PROSPECTING_WIZARD_STATE,
+  type ProspectingStepId,
   type ProspectingWizardState,
 } from "@/lib/tempo-prospecting";
 
@@ -31,65 +33,80 @@ const OPENING_OK =
   "to reach out about how Tempo helps multi-site dental groups reduce no-shows " +
   "and capture after-hours demand for operations teams.";
 
+const ALL_STEPS: ProspectingStepId[] = [
+  "onboarding",
+  "icp",
+  "research",
+  "agent",
+  "select_lead",
+  "opening",
+];
+
 describe("canAdvanceProspectingStep", () => {
-  it("step 0 (onboarding): blocks until onboardingComplete", () => {
-    expect(canAdvanceProspectingStep(0, withState({ onboardingComplete: false }))).toBe(
-      false
-    );
-    expect(canAdvanceProspectingStep(0, withState({ onboardingComplete: true }))).toBe(
-      true
-    );
-  });
-
-  it("step 1 (ICP): blocks until ICP definition is complete", () => {
-    expect(canAdvanceProspectingStep(1, withState({}))).toBe(false);
-    expect(canAdvanceProspectingStep(1, withState(COMPLETE_ICP))).toBe(true);
-  });
-
-  it("step 2 (Data Room): requires exactly three shortlisted companies", () => {
+  it("onboarding: blocks until onboardingComplete", () => {
     expect(
-      canAdvanceProspectingStep(2, withState({ shortlistedCompanyIds: ["a", "b"] }))
+      canAdvanceProspectingStep("onboarding", withState({ onboardingComplete: false }))
+    ).toBe(false);
+    expect(
+      canAdvanceProspectingStep("onboarding", withState({ onboardingComplete: true }))
+    ).toBe(true);
+  });
+
+  it("icp: blocks until ICP definition is complete", () => {
+    expect(canAdvanceProspectingStep("icp", withState({}))).toBe(false);
+    expect(canAdvanceProspectingStep("icp", withState(COMPLETE_ICP))).toBe(true);
+  });
+
+  it("research: requires exactly three shortlisted companies", () => {
+    expect(
+      canAdvanceProspectingStep(
+        "research",
+        withState({ shortlistedCompanyIds: ["a", "b"] })
+      )
     ).toBe(false);
     expect(
       canAdvanceProspectingStep(
-        2,
+        "research",
         withState({ shortlistedCompanyIds: ["a", "b", "c", "d"] })
       )
     ).toBe(false);
     expect(
-      canAdvanceProspectingStep(2, withState({ shortlistedCompanyIds: ["a", "b", "c"] }))
+      canAdvanceProspectingStep(
+        "research",
+        withState({ shortlistedCompanyIds: ["a", "b", "c"] })
+      )
     ).toBe(true);
   });
 
-  it("step 3 (Agent): always passes", () => {
-    expect(canAdvanceProspectingStep(3, withState({}))).toBe(true);
+  it("agent: always passes", () => {
+    expect(canAdvanceProspectingStep("agent", withState({}))).toBe(true);
   });
 
-  it("step 4 (Select Lead): requires selectedLeadId", () => {
-    expect(canAdvanceProspectingStep(4, withState({ selectedLeadId: null }))).toBe(
-      false
-    );
-    expect(canAdvanceProspectingStep(4, withState({ selectedLeadId: "lead-1" }))).toBe(
-      true
-    );
-  });
-
-  it("step 5 (Opening): requires 20–120 words", () => {
-    expect(canAdvanceProspectingStep(5, withState({ openingMessage: "Too short" }))).toBe(
-      false
-    );
+  it("select_lead: requires selectedLeadId", () => {
     expect(
-      canAdvanceProspectingStep(5, withState({ openingMessage: OPENING_OK }))
+      canAdvanceProspectingStep("select_lead", withState({ selectedLeadId: null }))
+    ).toBe(false);
+    expect(
+      canAdvanceProspectingStep("select_lead", withState({ selectedLeadId: "lead-1" }))
     ).toBe(true);
   });
 
-  it("unknown step index blocks", () => {
-    expect(canAdvanceProspectingStep(99, withState({}))).toBe(false);
+  it("opening: requires 20–120 words", () => {
+    expect(
+      canAdvanceProspectingStep("opening", withState({ openingMessage: "Too short" }))
+    ).toBe(false);
+    expect(
+      canAdvanceProspectingStep("opening", withState({ openingMessage: OPENING_OK }))
+    ).toBe(true);
+  });
+
+  it("unknown step id blocks", () => {
+    expect(canAdvanceProspectingStep("not_a_step", withState({}))).toBe(false);
   });
 
   it("testBypass true: every step passes", () => {
     const empty = withState({});
-    for (const step of [0, 1, 2, 3, 4, 5]) {
+    for (const step of ALL_STEPS) {
       expect(canAdvanceProspectingStep(step, empty, true)).toBe(true);
     }
   });
@@ -97,15 +114,15 @@ describe("canAdvanceProspectingStep", () => {
   it("testBypass false or omitted: identical to normal gating", () => {
     const unmet = withState({});
     const metOnboarding = withState({ onboardingComplete: true });
-    expect(canAdvanceProspectingStep(0, unmet, false)).toBe(
-      canAdvanceProspectingStep(0, unmet)
+    expect(canAdvanceProspectingStep("onboarding", unmet, false)).toBe(
+      canAdvanceProspectingStep("onboarding", unmet)
     );
-    expect(canAdvanceProspectingStep(0, metOnboarding, false)).toBe(
-      canAdvanceProspectingStep(0, metOnboarding)
+    expect(canAdvanceProspectingStep("onboarding", metOnboarding, false)).toBe(
+      canAdvanceProspectingStep("onboarding", metOnboarding)
     );
-    expect(canAdvanceProspectingStep(1, unmet, false)).toBe(false);
-    expect(canAdvanceProspectingStep(2, unmet, false)).toBe(false);
-    expect(canAdvanceProspectingStep(4, unmet, false)).toBe(false);
-    expect(canAdvanceProspectingStep(5, unmet, false)).toBe(false);
+    expect(canAdvanceProspectingStep("icp", unmet, false)).toBe(false);
+    expect(canAdvanceProspectingStep("research", unmet, false)).toBe(false);
+    expect(canAdvanceProspectingStep("select_lead", unmet, false)).toBe(false);
+    expect(canAdvanceProspectingStep("opening", unmet, false)).toBe(false);
   });
 });

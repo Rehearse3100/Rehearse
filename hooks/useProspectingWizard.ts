@@ -17,10 +17,11 @@ import {
   ICP_FORM_FIELD_KEYS,
   isIcpDefinitionComplete,
   loadProspectingWizardFromStorage,
-  PROSPECTING_STEP_VERSION,
+  normalizeProspectingWizardState,
+  prospectingStepIndex,
   saveProspectingWizardToStorage,
   sanitizeAiResearchReply,
-  normalizeProspectingWizardState,
+  type ProspectingStepId,
   type ProspectingWizardState,
 } from "@/lib/tempo-prospecting";
 import type { ChatMessage } from "@/types";
@@ -42,7 +43,7 @@ type UseProspectingWizardResult = {
   isAILoading: boolean;
   chatInput: string;
   setChatInput: (value: string) => void;
-  setCurrentStep: (step: number) => void;
+  setCurrentStepId: (stepId: ProspectingStepId) => void;
   updateField: <K extends keyof ProspectingWizardState>(
     key: K,
     value: ProspectingWizardState[K]
@@ -57,7 +58,7 @@ type UseProspectingWizardResult = {
   wordCount: number;
   testBypass: boolean;
   handleSaveDraft: () => Promise<void>;
-  handleStepAdvance: (nextStep: number) => Promise<void>;
+  handleStepAdvance: (nextStepId: ProspectingStepId) => Promise<void>;
   /** Marks a CRM lead as selected and advances to Opening Message. */
   completeLeadSelection: (leadId: string) => Promise<void>;
   handleSendMessage: () => Promise<void>;
@@ -123,16 +124,17 @@ export function useProspectingWizard({
 
         const icpFieldsDone = isIcpDefinitionComplete(nextState);
         // Keep Welcome first until onboarding is marked complete (video end or Next under
-        // testBypass). Autofill must not skip step 0; canAdvance still unlocks Next.
+        // testBypass). Autofill must not skip onboarding; canAdvance still unlocks Next.
+        const pastIcp =
+          nextState.currentStepId !== "onboarding" && nextState.currentStepId !== "icp";
         nextState = {
           ...nextState,
           icpGateComplete: icpFieldsDone,
-          currentStep: !nextState.onboardingComplete
-            ? 0
-            : !icpFieldsDone && nextState.currentStep > 1
-              ? 1
-              : nextState.currentStep,
-          prospectingStepVersion: nextState.prospectingStepVersion ?? PROSPECTING_STEP_VERSION,
+          currentStepId: !nextState.onboardingComplete
+            ? "onboarding"
+            : !icpFieldsDone && pastIcp
+              ? "icp"
+              : nextState.currentStepId,
         };
         saveProspectingWizardToStorage(attemptId, nextState);
 
@@ -181,15 +183,19 @@ export function useProspectingWizard({
     });
   }, [persistState]);
 
-  const setCurrentStep = useCallback(
-    (step: number): void => {
-      if (!testBypass && step > 0 && !state.onboardingComplete) {
+  const setCurrentStepId = useCallback(
+    (stepId: ProspectingStepId): void => {
+      const targetIndex = prospectingStepIndex(stepId);
+      if (targetIndex < 0) {
         return;
       }
-      if (!testBypass && step > 1 && !isIcpDefinitionComplete(state)) {
+      if (!testBypass && targetIndex > 0 && !state.onboardingComplete) {
         return;
       }
-      updateField("currentStep", step);
+      if (!testBypass && targetIndex > 1 && !isIcpDefinitionComplete(state)) {
+        return;
+      }
+      updateField("currentStepId", stepId);
     },
     [testBypass, state, updateField]
   );
@@ -278,14 +284,16 @@ export function useProspectingWizard({
   }, [persistState, state]);
 
   const handleStepAdvance = useCallback(
-    async (nextStep: number): Promise<void> => {
+    async (nextStepId: ProspectingStepId): Promise<void> => {
       // Leaving Welcome Briefing counts as onboarding complete (video end OR Next
       // under testBypass, which unlocks Next without waiting for ended).
       const next = {
         ...state,
-        currentStep: nextStep,
+        currentStepId: nextStepId,
         onboardingComplete:
-          state.currentStep === 0 && nextStep > 0 ? true : state.onboardingComplete,
+          state.currentStepId === "onboarding" && nextStepId !== "onboarding"
+            ? true
+            : state.onboardingComplete,
       };
       setState(next);
       await persistState(next);
@@ -302,8 +310,7 @@ export function useProspectingWizard({
         const next = {
           ...prev,
           selectedLeadId: leadId,
-          currentStep: 5,
-          prospectingStepVersion: PROSPECTING_STEP_VERSION,
+          currentStepId: "opening" as const,
         };
         void persistState(next);
         return next;
@@ -434,8 +441,7 @@ export function useProspectingWizard({
         ...prev,
         prospectingHandoffSeen: true,
         onboardingComplete: false,
-        currentStep: 0,
-        prospectingStepVersion: PROSPECTING_STEP_VERSION,
+        currentStepId: "onboarding" as const,
       };
       void persistState(next);
       return next;
@@ -443,7 +449,7 @@ export function useProspectingWizard({
   }, [persistState]);
 
   const wordCount = countWords(state.openingMessage);
-  const canProceed = canAdvanceProspectingStep(state.currentStep, state, testBypass);
+  const canProceed = canAdvanceProspectingStep(state.currentStepId, state, testBypass);
   const canSubmit = canSubmitProspectingBrief(state, testBypass);
 
   return {
@@ -454,7 +460,7 @@ export function useProspectingWizard({
     isAILoading,
     chatInput,
     setChatInput,
-    setCurrentStep,
+    setCurrentStepId,
     updateField,
     selectDirectoryCompany,
     setDirectoryCompanies,
