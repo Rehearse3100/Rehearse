@@ -12,7 +12,7 @@ Rehearse is a full-stack sales training app. Students complete a 6-stage simulat
 
 ## Setup
 
-1. Run `supabase/schema.sql` in your Supabase SQL editor.
+1. Run `supabase/FULL-SETUP.sql` in your Supabase SQL editor (only setup file; see `supabase/archive/` for historical migrations).
 2. Copy `.env.example` → `.env.local` and fill all keys (including Supabase).
 3. Install and run:
 

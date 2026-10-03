@@ -6,6 +6,7 @@ Ordered checklist after creating a brand-new Supabase project. The old project i
 
 1. Open **SQL Editor** in the new project.
 2. Paste the entire contents of [`supabase/FULL-SETUP.sql`](../supabase/FULL-SETUP.sql).
+   Historical incremental migrations live in [`supabase/archive/`](../supabase/archive/) and must not be run.
 3. Run once. The last result should be **one summary row** with:
    - `expected_tables_present` = **15**
    - `tempo_row_exists` = **true**
@@ -94,7 +95,7 @@ SELECT COUNT(*) FROM public.crm_prospect_documents;
 
 ## 5. Anam IDs
 
-Recovered from `supabase/anam-ids-migration.sql` and already seeded into the Tempo row by `FULL-SETUP.sql`:
+Recovered from `supabase/archive/anam-ids-migration.sql` and already seeded into the Tempo row by `FULL-SETUP.sql`:
 
 ```json
 anam_avatar_ids: {"discovery":"071b0286-4cce-4808-bee2-e642f1062de3","objections":"ecfb2ddb-80ec-4526-88a7-299a4738957c"}
@@ -182,7 +183,7 @@ None. No `.rpc("...")` calls in app/lib/hooks/components/scripts.
 
 ### b. Anam avatar / voice IDs
 
-**Recovered** from `supabase/anam-ids-migration.sql` (also present in later `FULL-SETUP.sql` history):
+**Recovered** from `supabase/archive/anam-ids-migration.sql` (also present in later `FULL-SETUP.sql` history):
 
 - discovery avatar `071b0286-4cce-4808-bee2-e642f1062de3`
 - objections avatar `ecfb2ddb-80ec-4526-88a7-299a4738957c`
@@ -199,7 +200,8 @@ Resolved at runtime from `simulations.anam_avatar_ids` / `anam_voice_ids` via `a
 | `is_published` | `true` |
 | `title` | Sell Tempo to Summit Dental Group |
 | `persona_name` / `persona_role` | Dana Reyes / Director of Operations |
-| `persona_system_prompt` / `product_context` | Non-empty seed text (see FULL-SETUP) |
+| `persona_system_prompt` | Scrubbed placeholder (no scenario details; live prompts in `lib/constants.ts`) |
+| `product_context` | Non-empty seed text (see FULL-SETUP) |
 | `anam_*` | Recovered maps above |
 | Class link | Essentials class `…0001` via `class_simulations` |
 

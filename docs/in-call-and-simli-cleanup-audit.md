@@ -244,10 +244,10 @@ Below is every match outside `node_modules` as of this audit. Line numbers refer
 
 | File | Line(s) | Match |
 |------|---------|-------|
-| `supabase/schema.sql` | 21 | `simli_face_id text not null` |
+| `supabase/archive/schema.sql` | 21 | `simli_face_id text not null` |
 | `supabase/FULL-SETUP.sql` | 51, 410 | `simli_face_id` column and seed |
 | `supabase/default-class-migration.sql` | 70 | `simli_face_id` in insert |
-| `supabase/tempo-simulation-seed.sql` | 19 | `simli_face_id` in insert |
+| `supabase/archive/tempo-simulation-seed.sql` | 19 | `simli_face_id` in insert |
 
 #### Documentation
 
@@ -348,7 +348,7 @@ Grouped by category for a future cleanup task. **Do not perform these changes as
 
 #### SQL seeds (if column removed)
 
-- `supabase/schema.sql`, `supabase/FULL-SETUP.sql`, `supabase/default-class-migration.sql`, `supabase/tempo-simulation-seed.sql`
+- `supabase/archive/schema.sql`, `supabase/FULL-SETUP.sql`, `supabase/default-class-migration.sql`, `supabase/archive/tempo-simulation-seed.sql`
 
 **Estimated minimum for "no Simli at runtime":** remove `simli-client` from `package.json`, delete env vars, rename constants/comments — **without** DB column removal, teachers would still see `simli_face_id` in forms but it would be unused for Tempo/legacy video calls (Anam IDs drive avatars).
 

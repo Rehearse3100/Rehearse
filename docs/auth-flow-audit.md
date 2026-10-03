@@ -148,7 +148,7 @@ CREATE TRIGGER on_auth_user_created
   FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
 ```
 
-(Same pattern also appears in `supabase/schema.sql` lines 105–121.)
+(Same pattern also appears in `supabase/archive/schema.sql` lines 105–121.)
 
 ---
 

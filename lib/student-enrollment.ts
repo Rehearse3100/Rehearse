@@ -47,7 +47,7 @@ export function enrollmentErrorMessage(error: PostgrestError): { ok: false } & E
       ok: false as const,
       status: 503,
       message:
-        "Class enrollment is not set up yet. Run supabase/RUN-THIS-MIGRATION.sql in the Supabase SQL editor.",
+        "Class enrollment is not set up yet. Run supabase/FULL-SETUP.sql in the Supabase SQL editor.",
       code: error.code,
     };
   }

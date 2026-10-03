@@ -147,5 +147,5 @@ No trap has the disqualifier at index 0. All seven disqualifier sentences are di
 
 ## Before running the generator
 
-1. Run `supabase/data-room-v2-migration.sql` if schema not yet applied.
+1. Run `supabase/archive/data-room-v2-migration.sql` if schema not yet applied.
 2. Run: `npx tsx scripts/generate-prospect-directory.ts`

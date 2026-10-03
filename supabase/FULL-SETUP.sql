@@ -358,7 +358,9 @@ CREATE POLICY "professors_read_profiles_for_sim_attempts" ON public.profiles
 
 DROP POLICY IF EXISTS "Teachers manage own simulations" ON public.simulations;
 CREATE POLICY "Teachers manage own simulations" ON public.simulations
-  FOR ALL USING (auth.uid() = teacher_id OR teacher_id IS NULL);
+  FOR ALL TO authenticated
+  USING (auth.uid() = teacher_id)
+  WITH CHECK (auth.uid() = teacher_id);
 
 DROP POLICY IF EXISTS "Students read published simulations" ON public.simulations;
 CREATE POLICY "Students read published simulations" ON public.simulations
@@ -366,7 +368,9 @@ CREATE POLICY "Students read published simulations" ON public.simulations
 
 DROP POLICY IF EXISTS "professors_manage_own_classes" ON public.classes;
 CREATE POLICY "professors_manage_own_classes" ON public.classes
-  FOR ALL USING (professor_id = auth.uid() OR professor_id IS NULL);
+  FOR ALL TO authenticated
+  USING (professor_id = auth.uid())
+  WITH CHECK (professor_id = auth.uid());
 
 DROP POLICY IF EXISTS "anyone_read_classes" ON public.classes;
 CREATE POLICY "anyone_read_classes" ON public.classes
@@ -399,11 +403,12 @@ CREATE POLICY "professors_read_their_student_classes" ON public.student_classes
 
 DROP POLICY IF EXISTS "professors_manage_class_simulations" ON public.class_simulations;
 CREATE POLICY "professors_manage_class_simulations" ON public.class_simulations
-  FOR ALL USING (
-    class_id IN (
-      SELECT id FROM public.classes WHERE professor_id = auth.uid()
-    )
-    OR class_id = '00000000-0000-0000-0000-000000000001'
+  FOR ALL TO authenticated
+  USING (
+    class_id IN (SELECT id FROM public.classes WHERE professor_id = auth.uid())
+  )
+  WITH CHECK (
+    class_id IN (SELECT id FROM public.classes WHERE professor_id = auth.uid())
   );
 
 DROP POLICY IF EXISTS "anyone_read_class_simulations" ON public.class_simulations;
@@ -467,6 +472,10 @@ GRANT SELECT ON public.classes TO anon;
 GRANT SELECT ON public.class_simulations TO anon;
 GRANT SELECT ON public.simulations TO anon;
 
+-- Must follow GRANT SELECT ON ALL TABLES so authenticated cannot read password_hash.
+REVOKE SELECT ON public.students FROM anon, authenticated;
+GRANT SELECT (id, username, display_name, joined_at) ON public.students TO authenticated;
+
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
 
 -- ── Storage: onboarding videos (public bucket) ───────────────────────────────
@@ -503,7 +512,7 @@ ON CONFLICT (id) DO NOTHING;
 -- Live Discovery / Objection prompts are read from lib/constants.ts at runtime
 -- (DANA_REYES_SYSTEM_PROMPT / DR_KIM_SYSTEM_PROMPT), not from this row.
 -- persona_system_prompt / product_context must still be non-empty (NOT NULL).
--- Anam IDs recovered from supabase/anam-ids-migration.sql (also previously in FULL-SETUP).
+-- persona_system_prompt intentionally holds NO scenario details (security).
 INSERT INTO public.simulations (
   id,
   teacher_id,
@@ -525,13 +534,7 @@ INSERT INTO public.simulations (
   'Work a full-cycle B2B deal selling Tempo AI scheduling to Summit Dental Group — from prospecting through close.',
   'Dana Reyes',
   'Director of Operations',
-  $$You are Dana Reyes, Director of Operations at Summit Dental Group, a multi-location dental practice network in Denver with 8 locations.
-
-You are practical, data-driven, and skeptical of vendor hype. You care about front-desk burnout, patient no-shows (currently ~20%), and integration with Dentrix. You do NOT make purchasing decisions alone — Dr. Saul Kim (owner) signs off on major software spend.
-
-On discovery calls: answer questions honestly but do not volunteer pain points until the rep earns trust with good questions. Push back on vague ROI claims. You have 15 minutes max.
-
-Stay in character. Short, realistic responses — 2-3 sentences max. Never break character or mention that this is a simulation.$$,
+  'Runtime persona prompt is defined in application code. This row intentionally contains no scenario details.',
   $$Tempo AI is an AI-powered patient scheduling platform for dental practices. It integrates with Dentrix and OpenDental, sends automated multi-channel reminders, handles routine re-bookings, and reduces no-shows by up to 40%. Pricing starts around $800/month per location with volume discounts for multi-site groups.$$,
   '',
   '{"discovery":"071b0286-4cce-4808-bee2-e642f1062de3","objections":"ecfb2ddb-80ec-4526-88a7-299a4738957c"}'::jsonb,
@@ -540,6 +543,14 @@ Stay in character. Short, realistic responses — 2-3 sentences max. Never break
   now()
 )
 ON CONFLICT (id) DO NOTHING;
+
+-- Scrub scenario details if an older seed already inserted a full persona prompt.
+UPDATE public.simulations
+SET persona_system_prompt =
+  'Runtime persona prompt is defined in application code. This row intentionally contains no scenario details.'
+WHERE id = '00000000-0000-0000-0000-000000000002'
+  AND persona_system_prompt IS DISTINCT FROM
+    'Runtime persona prompt is defined in application code. This row intentionally contains no scenario details.';
 
 INSERT INTO public.class_simulations (class_id, simulation_id)
 VALUES (
@@ -621,4 +632,37 @@ SELECT
     WHERE table_schema = 'public'
       AND table_name = 'crm_prospect_directory'
       AND column_name = 'vertical'
-  ) AS data_room_v2_columns_present;
+  ) AS data_room_v2_columns_present,
+  (
+    EXISTS (
+      SELECT 1 FROM pg_policies
+      WHERE schemaname = 'public' AND tablename = 'simulations'
+        AND policyname = 'Teachers manage own simulations'
+        AND with_check IS NOT NULL
+        AND qual NOT ILIKE '%IS NULL%'
+    )
+    AND EXISTS (
+      SELECT 1 FROM pg_policies
+      WHERE schemaname = 'public' AND tablename = 'classes'
+        AND policyname = 'professors_manage_own_classes'
+        AND with_check IS NOT NULL
+        AND qual NOT ILIKE '%IS NULL%'
+    )
+    AND EXISTS (
+      SELECT 1 FROM pg_policies
+      WHERE schemaname = 'public' AND tablename = 'class_simulations'
+        AND policyname = 'professors_manage_class_simulations'
+        AND with_check IS NOT NULL
+        AND qual NOT ILIKE '%00000000-0000-0000-0000-000000000001%'
+    )
+  ) AS ownerless_rows_protected,
+  EXISTS (
+    SELECT 1
+    FROM public.simulations
+    WHERE id = '00000000-0000-0000-0000-000000000002'
+      AND persona_system_prompt =
+        'Runtime persona prompt is defined in application code. This row intentionally contains no scenario details.'
+  ) AS tempo_prompt_scrubbed,
+  (
+    NOT has_column_privilege('authenticated', 'public.students', 'password_hash', 'SELECT')
+  ) AS password_hash_hidden;

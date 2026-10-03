@@ -211,7 +211,7 @@ Wizard draft stores mirror flag only: `icpGateComplete` (`lib/tempo-prospecting.
 
 ### 3.1 Columns
 
-**`crm_prospect_directory`** (`supabase/FULL-SETUP.sql:191-203`, `supabase/crm-data-room-migration.sql:5-6`):
+**`crm_prospect_directory`** (`supabase/FULL-SETUP.sql:191-203`, `supabase/archive/crm-data-room-migration.sql:5-6`):
 
 | Column | Type |
 |--------|------|
@@ -242,7 +242,7 @@ Wizard draft stores mirror flag only: `icpGateComplete` (`lib/tempo-prospecting.
 | `weaker_axis` | `text` nullable |
 | `created_at` | `timestamptz` |
 
-**Related:** `crm_prospect_documents` (`supabase/crm-data-room-migration.sql:8-16`) — `company_id`, `doc_type`, `title`, `content`.
+**Related:** `crm_prospect_documents` (`supabase/archive/crm-data-room-migration.sql:8-16`) — `company_id`, `doc_type`, `title`, `content`.
 
 ### 3.2 Live row counts (Tempo, read-only query 2026-08-29)
 

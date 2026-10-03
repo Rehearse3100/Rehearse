@@ -91,7 +91,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       return NextResponse.json(
         {
           error: needsMigration
-            ? "Anam columns missing on simulations table. Run supabase/anam-ids-migration.sql in Supabase SQL Editor."
+            ? "Anam columns missing on simulations table. Run supabase/FULL-SETUP.sql in Supabase SQL Editor."
             : `Simulation lookup failed: ${message}`,
         },
         { status: needsMigration ? 500 : 500 }
