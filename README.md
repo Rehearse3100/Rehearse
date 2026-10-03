@@ -1,6 +1,6 @@
 # Rehearse — AI Sales Training Platform
 
-Rehearse is a full-stack sales training app. Students complete a 6-stage simulation (lead gen → close); teachers create and publish scenarios.
+Rehearse is a full-stack sales training app. Students complete a 5-stage Tempo simulation (Prospecting → Negotiation); teachers create and publish scenarios.
 
 ## Stack
 
@@ -8,7 +8,7 @@ Rehearse is a full-stack sales training app. Students complete a 6-stage simulat
 - **Supabase** — Postgres + Auth
 - **Anam** — WebRTC avatar for Discovery and Objection Handling (`Avatar.tsx`)
 - **OpenAI GPT-4o** — Persona replies + stage scoring
-- **ElevenLabs** + **Deepgram** — TTS / STT (Prospecting and legacy voice paths)
+- Prospecting is structured/text — no voice stack. The legacy phone path (ElevenLabs + Deepgram via `/api/tts`) is dormant; see `docs/legacy-simulation-path-status.md`.
 
 ## Setup
 
@@ -23,11 +23,15 @@ npm run dev
 
 ## Environment variables
 
-See `.env.example` for OpenAI, ElevenLabs, Deepgram, Anam, and Supabase keys.
+See `.env.example`. It has two sections:
+
+- **App** — required locally and in Vercel (OpenAI, Anam, Supabase, student session secret)
+- **Local scripts only** — never set in Vercel (e.g. HeyGen for onboarding video scripts)
 
 ## Deploy (Vercel)
 
-- Add all env vars from `.env.local`
+- Add only the **App** section from `.env.example` to Vercel
+- Do not add local-script keys (HeyGen, onboarding presenter path) to Vercel
 - `npm run build` must pass before deploy
 
 ```bash
