@@ -2,7 +2,7 @@
 
 Read-only audit of the Tempo Prospecting stage as implemented in the repository and on Supabase project `visuvrjmcoanndndimfw`. **No application code was modified.** The only file written is this report.
 
-**Stale reference checked:** `docs/prospecting-stage-reference.md` (no `docs/prospecting-reference.md` exists).
+**Stale reference checked:** `docs/archive/prospecting-stage-reference.md` (no `docs/prospecting-reference.md` exists).
 
 **Tempo simulation ID (code):** `00000000-0000-0000-0000-000000000002` (`lib/constants.ts:160`).
 
@@ -554,7 +554,7 @@ CRM-dependent badges excluded when no converted lead fields at detection time (`
 
 ## SECTION 9 — Stale-doc reconciliation
 
-`docs/prospecting-stage-reference.md` vs code today (code is truth):
+`docs/archive/prospecting-stage-reference.md` vs code today (code is truth):
 
 1. **§1.1** — Documents **3 steps** (`research`, `select_lead`, `opening`); code has **4** with `icp` first.
 2. **§1.1 quoted `canAdvanceProspectingStep`** — step 0 gate was `hasProspectingResearchActivity`; now `icpGateComplete`.

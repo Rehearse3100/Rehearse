@@ -2,8 +2,8 @@
 
 > **HISTORICAL — NOT CURRENT ARCHITECTURE**  
 > Rehearse migrated Discovery and Objection Handling to **Anam** in August 2026. This document summarizes how the **old Simli-based system** worked, for reference or a possible future revert.  
-> For the full pre-migration audit (with code citations), see [`docs/simli-integration-audit.md`](./simli-integration-audit.md).  
-> For post-migration cleanup notes, see [`docs/in-call-and-simli-cleanup-audit.md`](./in-call-and-simli-cleanup-audit.md).
+> For the full pre-migration audit (with code citations), see [`simli-integration-audit.md`](./simli-integration-audit.md).  
+> For post-migration cleanup notes, see [`in-call-and-simli-cleanup-audit.md`](./in-call-and-simli-cleanup-audit.md).
 
 ---
 
@@ -152,4 +152,4 @@ See `components/Avatar.tsx` and `hooks/useSimulationVoiceSession.ts` for the cur
 2. Revert `Avatar.tsx` to Simli WebRTC + PCM upload path  
 3. Revert `useSimulationVoiceSession.ts` to Deepgram + ElevenLabs orchestration for video stages  
 4. Re-enable teacher `simli_face_id` configuration  
-5. Consult [`docs/simli-integration-audit.md`](./simli-integration-audit.md) for file-level detail and code citations from the pre-migration codebase
+5. Consult [`simli-integration-audit.md`](./simli-integration-audit.md) for file-level detail and code citations from the pre-migration codebase

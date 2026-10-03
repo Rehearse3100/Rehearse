@@ -413,6 +413,6 @@ These are **not** imported by `SimulationRunner` but are required to **enter** t
 
 ## 6. Related docs (may be outdated on Simli)
 
-- `docs/simli-integration-audit.md` — pre-Anam Simli architecture.
-- `docs/simli-info.md` — historical reference.
-- `docs/in-call-and-simli-cleanup-audit.md` — cleanup notes; verify against this file for current Anam behavior.
+- `docs/archive/simli-integration-audit.md` — pre-Anam Simli architecture.
+- `docs/archive/simli-info.md` — historical reference.
+- `docs/archive/in-call-and-simli-cleanup-audit.md` — cleanup notes; verify against this file for current Anam behavior.

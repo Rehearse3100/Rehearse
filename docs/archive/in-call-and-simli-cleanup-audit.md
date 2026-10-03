@@ -253,7 +253,7 @@ Below is every match outside `node_modules` as of this audit. Line numbers refer
 
 | File | Notes |
 |------|-------|
-| `docs/simli-integration-audit.md` | Entire pre-migration audit (~675 lines) |
+| `docs/archive/simli-integration-audit.md` | Entire pre-migration audit (~675 lines) |
 | `docs/structure-audit.md` | Multiple `SimliCallStage` references |
 | `docs/tempo-backend-audit.md` | 359: `SimliCallStage` in legacy stage list |
 | `docs/student-class-detail-audit.md` | 111: `simli_face_id` in select |
@@ -295,9 +295,9 @@ Stale: lines 64–66 still say "Simli-powered simulation stages."
 
 ---
 
-### 3. `docs/simli-integration-audit.md` — historical reference
+### 3. `docs/archive/simli-integration-audit.md` — historical reference
 
-**File exists** at `docs/simli-integration-audit.md` (dated 2026-08-28, purpose: "Document the end-to-end audio/video pipeline **before** a planned Anam migration").
+**File exists** at `docs/archive/simli-integration-audit.md` (dated 2026-08-28, purpose: "Document the end-to-end audio/video pipeline **before** a planned Anam migration").
 
 **It accurately describes the OLD pre-migration system** (Deepgram → GPT → ElevenLabs → Simli lip-sync, `simli-client`, `NEXT_PUBLIC_SIMLI_*`, muted Simli audio, `mountSimli`, etc.). Several details are now **out of date** relative to production code:
 
@@ -306,7 +306,7 @@ Stale: lines 64–66 still say "Simli-powered simulation stages."
 - Objection Handling double-mount issue was fixed (single Avatar mount)
 - `SimliCallStage` uses `mountAvatar` and Anam session config
 
-**Recommendation for readers:** Treat `docs/simli-integration-audit.md` as a **historical baseline**, not current architecture. This document (`in-call-and-simli-cleanup-audit.md`) reflects post-migration state.
+**Recommendation for readers:** Treat `docs/archive/simli-integration-audit.md` as a **historical baseline**, not current architecture. This document (`in-call-and-simli-cleanup-audit.md`) reflects post-migration state.
 
 ---
 
@@ -343,7 +343,7 @@ Grouped by category for a future cleanup task. **Do not perform these changes as
 - `components/tempo/stages/ObjectionHandlingStage.tsx` — header comment
 - `components/stages/DiscoveryStage.tsx`, `ObjectionsStage.tsx` — header comments
 - `CODE_GUIDELINES.md`, `README.md` — architecture description
-- `docs/simli-integration-audit.md` — add banner "SUPERSEDED" or archive; optional
+- `docs/archive/simli-integration-audit.md` — add banner "SUPERSEDED" or archive; optional
 - `docs/structure-audit.md`, `docs/tempo-backend-audit.md`, `docs/student-class-detail-audit.md` — update references if renaming files
 
 #### SQL seeds (if column removed)
@@ -362,4 +362,4 @@ Grouped by category for a future cleanup task. **Do not perform these changes as
 | **Side panels** | `DiscoveryStageLayout` vs `ObjectionHandlingStageLayout` — both show live transcript; Objections adds playbook tab and strategy hints |
 | **Simli at runtime** | **Removed** from call pipeline; `simli-client` is an unused npm dependency |
 | **Simli naming** | Extensive leftovers in file names, constants, props, comments, DB column, teacher forms, and README |
-| **Historical doc** | `docs/simli-integration-audit.md` exists and correctly documents the **old** system; partially stale post-migration |
+| **Historical doc** | `docs/archive/simli-integration-audit.md` exists and correctly documents the **old** system; partially stale post-migration |
