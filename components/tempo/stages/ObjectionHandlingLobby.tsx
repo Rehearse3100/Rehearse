@@ -18,6 +18,9 @@ export type ObjectionJoinStreams = {
 type ObjectionHandlingLobbyProps = {
   connectError: string;
   onJoin: (streams: ObjectionJoinStreams) => void;
+  /** Server page boolean — shows Skip Call (test) without touching Anam. */
+  testBypass?: boolean;
+  onSkipCall?: () => void;
 };
 
 /**
@@ -26,6 +29,8 @@ type ObjectionHandlingLobbyProps = {
 export function ObjectionHandlingLobby({
   connectError,
   onJoin,
+  testBypass = false,
+  onSkipCall,
 }: ObjectionHandlingLobbyProps): React.ReactElement {
   const [micOn, setMicOn] = useState(false);
   const [cameraOn, setCameraOn] = useState(false);
@@ -217,6 +222,16 @@ export function ObjectionHandlingLobby({
               <MaterialIcon name="video_call" filled className="group-hover:scale-105 transition-transform" />
               {micOn ? "Join Call" : "Enable mic to join"}
             </button>
+
+            {testBypass && onSkipCall ? (
+              <button
+                type="button"
+                onClick={onSkipCall}
+                className="w-full h-11 rounded-xl border-2 border-amber-500 bg-amber-50 text-amber-950 font-label-md text-label-md hover:bg-amber-100 transition-colors"
+              >
+                Skip Call (test)
+              </button>
+            ) : null}
 
             <p className="text-center text-body-md text-on-surface-variant/60">Estimated duration: 15 minutes</p>
           </div>

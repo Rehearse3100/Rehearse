@@ -12,6 +12,7 @@ import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { HandoffModal } from "@/components/tempo/HandoffModal";
+import { TempoTestBypassBanner } from "@/components/tempo/TempoTestBypassBanner";
 import {
   ObjectionHandlingCallSession,
 } from "@/components/tempo/stages/ObjectionHandlingCallSession";
@@ -41,6 +42,8 @@ type ObjectionHandlingStageProps = {
   classId: string;
   simulationTitle: string;
   presentationSummary: PresentationForm | null;
+  /** Server page boolean from TEMPO_TEST_BYPASS_GATES — never from client env. */
+  testBypass?: boolean;
 };
 
 /**
@@ -52,6 +55,7 @@ export function ObjectionHandlingStage({
   classId,
   simulationTitle,
   presentationSummary,
+  testBypass = false,
 }: ObjectionHandlingStageProps): React.ReactElement {
   const router = useRouter();
   const [phase, setPhase] = useState<ObjectionHandlingPhase>("lobby");
@@ -143,8 +147,13 @@ export function ObjectionHandlingStage({
     );
   };
 
+  const handleSkipCall = useCallback((): void => {
+    void handleCallEnded("[TEST] Skipped objections call", 0, [], EMPTY_TRACKER);
+  }, [handleCallEnded]);
+
   return (
     <>
+      <TempoTestBypassBanner testBypass={testBypass} />
       <ObjectionHandlingTopBar
         attemptId={attemptId}
         simulationId={simulationId}
@@ -166,7 +175,12 @@ export function ObjectionHandlingStage({
           objectionTracker={objectionTracker}
           presentationSummary={presentationSummary}
           lobbySlot={
-            <ObjectionHandlingLobby connectError={connectError} onJoin={handleJoinCall} />
+            <ObjectionHandlingLobby
+              connectError={connectError}
+              onJoin={handleJoinCall}
+              testBypass={testBypass}
+              onSkipCall={handleSkipCall}
+            />
           }
           callSlot={
             (phase === "connecting" || phase === "active") && audioStream ? (
@@ -200,6 +214,7 @@ export function ObjectionHandlingStage({
           hasAIRestriction={negotiationMeta.hasAIRestriction}
           onBegin={handleNegotiationBegin}
           onDismiss={() => setShowNegotiationHandoff(false)}
+          testBypass={testBypass}
         />
       )}
 
@@ -212,6 +227,7 @@ export function ObjectionHandlingStage({
           hasAIRestriction={objectionsMeta.hasAIRestriction}
           onBegin={() => setShowHandoff(false)}
           onDismiss={() => setShowHandoff(false)}
+          testBypass={testBypass}
         />
       )}
     </>

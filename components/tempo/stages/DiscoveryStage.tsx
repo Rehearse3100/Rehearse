@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { HandoffModal } from "@/components/tempo/HandoffModal";
+import { TempoTestBypassBanner } from "@/components/tempo/TempoTestBypassBanner";
 import { DiscoveryCallSession } from "@/components/tempo/stages/DiscoveryCallSession";
 import { DiscoveryLobby, type DiscoveryJoinStreams } from "@/components/tempo/stages/DiscoveryLobby";
 import { DiscoveryPreCallPrep } from "@/components/tempo/stages/DiscoveryPreCallPrep";
@@ -21,7 +22,6 @@ import { DiscoveryTopBar } from "@/components/tempo/stages/DiscoveryTopBar";
 import { resumePlaybackContext } from "@/lib/audio-playback";
 import { completeStage } from "@/lib/attempt-actions";
 import {
-  EMPTY_DISCOVERY_PRE_CALL_PREP,
   clearDiscoveryPrepFromStorage,
   loadDiscoveryPrepFromStorage,
   saveDiscoveryPrepToStorage,
@@ -33,6 +33,7 @@ import {
   TEMPO_HANDOFF_MESSAGES,
   TEMPO_HANDOFF_STAGE_META,
 } from "@/lib/tempo-prospecting";
+import { applyDiscoveryPrepAutofill } from "@/lib/tempo-test-bypass-client";
 
 type DiscoveryStageProps = {
   attemptId: string;
@@ -43,6 +44,8 @@ type DiscoveryStageProps = {
   initialShowHandoff?: boolean;
   /** Skip restoring local prep (Test → Discovery jumps). */
   resetStoredPrep?: boolean;
+  /** Server page boolean from TEMPO_TEST_BYPASS_GATES — never from client env. */
+  testBypass?: boolean;
 };
 
 /**
@@ -55,12 +58,14 @@ export function DiscoveryStage({
   simulationTitle,
   initialShowHandoff = false,
   resetStoredPrep = false,
+  testBypass = false,
 }: DiscoveryStageProps): React.ReactElement {
   const router = useRouter();
   const [phase, setPhase] = useState<DiscoveryPhase>("prep");
   const [prepForm, setPrepForm] = useState<DiscoveryPreCallPrepForm>(() => ({
-    ...EMPTY_DISCOVERY_PRE_CALL_PREP,
     openQuestions: ["", "", ""],
+    anticipatedProbe: "",
+    anticipatedConfirm: "",
   }));
   const [prepReady, setPrepReady] = useState(false);
   const [connectError, setConnectError] = useState("");
@@ -80,28 +85,32 @@ export function DiscoveryStage({
   const presentationMeta = TEMPO_HANDOFF_STAGE_META.presentation;
 
   useEffect(() => {
+    let nextForm: DiscoveryPreCallPrepForm = {
+      openQuestions: ["", "", ""],
+      anticipatedProbe: "",
+      anticipatedConfirm: "",
+    };
+
     if (resetStoredPrep) {
       clearDiscoveryPrepFromStorage(attemptId);
-      const empty: DiscoveryPreCallPrepForm = {
-        openQuestions: ["", "", ""],
-        anticipatedProbe: "",
-        anticipatedConfirm: "",
-      };
-      setPrepForm(empty);
-      prepFormRef.current = empty;
     } else {
       const stored = loadDiscoveryPrepFromStorage(attemptId);
       if (stored) {
-        setPrepForm(stored.form);
-        prepFormRef.current = stored.form;
-        // Rewrite scrubbed form so HTML-corrupted drafts don't come back.
-        saveDiscoveryPrepToStorage(attemptId, stored.form, false);
+        nextForm = stored.form;
       }
     }
+
+    if (testBypass) {
+      nextForm = applyDiscoveryPrepAutofill(nextForm);
+    }
+
+    setPrepForm(nextForm);
+    prepFormRef.current = nextForm;
+    saveDiscoveryPrepToStorage(attemptId, nextForm, false);
     // Always land on the prep form when entering Discovery (restore draft fields).
     setPhase("prep");
     setPrepReady(true);
-  }, [attemptId, resetStoredPrep]);
+  }, [attemptId, resetStoredPrep, testBypass]);
 
   const handlePrepChange = useCallback(
     (next: DiscoveryPreCallPrepForm): void => {
@@ -113,9 +122,15 @@ export function DiscoveryStage({
   );
 
   const handlePrepBegin = useCallback((): void => {
-    saveDiscoveryPrepToStorage(attemptId, prepFormRef.current, true);
+    let next = prepFormRef.current;
+    if (testBypass) {
+      next = applyDiscoveryPrepAutofill(next);
+      setPrepForm(next);
+      prepFormRef.current = next;
+    }
+    saveDiscoveryPrepToStorage(attemptId, next, true);
     setPhase("lobby");
-  }, [attemptId]);
+  }, [attemptId, testBypass]);
 
   const handleJoinCall = useCallback((streams: DiscoveryJoinStreams): void => {
     setConnectError("");
@@ -185,8 +200,13 @@ export function DiscoveryStage({
     );
   };
 
+  const handleSkipCall = useCallback((): void => {
+    void handleCallEnded("[TEST] Skipped discovery call", 0, []);
+  }, [handleCallEnded]);
+
   return (
     <>
+      <TempoTestBypassBanner testBypass={testBypass} />
       <DiscoveryTopBar
         attemptId={attemptId}
         simulationId={simulationId}
@@ -217,12 +237,15 @@ export function DiscoveryStage({
                   form={prepForm}
                   onChange={handlePrepChange}
                   onBegin={handlePrepBegin}
+                  testBypass={testBypass}
                 />
               ) : (
                 <DiscoveryLobby
                   key="discovery-lobby"
                   connectError={connectError}
                   onJoin={handleJoinCall}
+                  testBypass={testBypass}
+                  onSkipCall={handleSkipCall}
                 />
               )
             }
@@ -258,6 +281,7 @@ export function DiscoveryStage({
           hasAIRestriction={presentationMeta.hasAIRestriction}
           onBegin={handlePresentationBegin}
           onDismiss={() => setShowPresentationHandoff(false)}
+          testBypass={testBypass}
         />
       )}
 
@@ -277,6 +301,7 @@ export function DiscoveryStage({
             }).catch(() => undefined);
           }}
           onDismiss={() => setShowHandoff(false)}
+          testBypass={testBypass}
         />
       )}
     </>

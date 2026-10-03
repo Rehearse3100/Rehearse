@@ -268,7 +268,17 @@ export function parseObjectionSummaryFromTranscript(
   }
 }
 
-export function canSubmitNegotiation(data: NegotiationStageData): boolean {
+/**
+ * True when both scenarios and AI-work fields meet submit requirements.
+ * testBypass is a server-passed boolean — this file never reads process.env.
+ */
+export function canSubmitNegotiation(
+  data: NegotiationStageData,
+  testBypass = false
+): boolean {
+  if (testBypass) {
+    return true;
+  }
   return (
     data.scenarioAState === "complete" &&
     data.scenarioBState === "complete" &&

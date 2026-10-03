@@ -86,10 +86,10 @@ export function HandoffModal({
         ? loggedStages.has(justCompleted)
         : true;
 
-  const isGated = requiresLog && !crmLogExists;
+  // bypassActive short-circuits CRM log + profile gates; existing conditions stay intact when off.
+  const isGated = requiresLog && !crmLogExists && !bypassActive;
   const showAccountNudge = !isGated && justCompleted === "prospecting";
   // Stage 2 gate: Account + primary Contact required fields must be complete.
-  // bypassActive short-circuits only; existing prospectingCrmComplete check stays intact.
   const isProfileGated = showAccountNudge && !prospectingCrmComplete && !bypassActive;
 
   useEffect(() => {

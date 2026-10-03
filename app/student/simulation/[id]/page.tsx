@@ -173,7 +173,7 @@ export default async function StudentSimulationPage({
     testStagePresentation ||
     testStageObjections ||
     testStageNegotiation;
-  // Local-dev Prospecting gate bypass — read HERE on the server, pass as prop.
+  // Local-dev Tempo gate bypass (all 5 stages) — read HERE on the server, pass as prop.
   // Never NEXT_PUBLIC_; client code must never read this env var.
   const testBypass = process.env.TEMPO_TEST_BYPASS_GATES === "true";
 
@@ -272,6 +272,7 @@ export default async function StudentSimulationPage({
         simulationTitle={simulation.title}
         initialShowHandoff={!discoveryHandoffSeen}
         resetStoredPrep={testStageDiscovery}
+        testBypass={testBypass}
       />
     );
   } else if (showTempoPresentation) {
@@ -282,6 +283,7 @@ export default async function StudentSimulationPage({
         classId={classId}
         simulationTitle={simulation.title}
         discoverySummary={discoverySummary}
+        testBypass={testBypass}
       />
     );
   } else if (showTempoObjections) {
@@ -292,6 +294,7 @@ export default async function StudentSimulationPage({
         classId={classId}
         simulationTitle={simulation.title}
         presentationSummary={presentationSummary}
+        testBypass={testBypass}
       />
     );
   } else if (showTempoNegotiation) {
@@ -304,6 +307,7 @@ export default async function StudentSimulationPage({
         discoverySummary={discoverySummary}
         presentationSummary={presentationSummary}
         objectionSummary={objectionSummary}
+        testBypass={testBypass}
       />
     );
   } else {

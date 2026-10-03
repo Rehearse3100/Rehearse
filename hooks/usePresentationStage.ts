@@ -18,9 +18,12 @@ import {
   savePresentationToStorage,
   type PresentationForm,
 } from "@/lib/tempo-presentation";
+import { applyPresentationAutofill } from "@/lib/tempo-test-bypass-client";
 
 type UsePresentationStageOptions = {
   attemptId: string;
+  /** Server page boolean from TEMPO_TEST_BYPASS_GATES — never from client env. */
+  testBypass?: boolean;
 };
 
 type UsePresentationStageResult = {
@@ -39,6 +42,7 @@ type UsePresentationStageResult = {
  */
 export function usePresentationStage({
   attemptId,
+  testBypass = false,
 }: UsePresentationStageOptions): UsePresentationStageResult {
   const [form, setForm] = useState<PresentationForm>(EMPTY_PRESENTATION_FORM);
   const [isLoading, setIsLoading] = useState(true);
@@ -77,19 +81,34 @@ export function usePresentationStage({
           const body = (await res.json()) as { form: PresentationForm };
           if (!cancelled) {
             const raw = body.form as unknown as Record<string, unknown>;
-            const normalized = normalizePresentationForm(raw);
+            let normalized = normalizePresentationForm(raw);
+            if (testBypass) {
+              normalized = applyPresentationAutofill(normalized);
+            }
             setForm(normalized);
             savePresentationToStorage(attemptId, normalized);
-            if (presentationDraftHasHtmlCorruption(raw)) {
+            if (presentationDraftHasHtmlCorruption(raw) || testBypass) {
               void persistForm(normalized);
             }
           }
-        } else if (local && !cancelled) {
-          setForm(local);
+        } else if (!cancelled) {
+          const next = testBypass
+            ? applyPresentationAutofill(local ?? EMPTY_PRESENTATION_FORM)
+            : local ?? EMPTY_PRESENTATION_FORM;
+          setForm(next);
+          if (testBypass) {
+            void persistForm(next);
+          }
         }
       } catch {
-        if (local && !cancelled) {
-          setForm(local);
+        if (!cancelled) {
+          const next = testBypass
+            ? applyPresentationAutofill(local ?? EMPTY_PRESENTATION_FORM)
+            : local ?? EMPTY_PRESENTATION_FORM;
+          setForm(next);
+          if (testBypass) {
+            void persistForm(next);
+          }
         }
       } finally {
         if (!cancelled) {
@@ -102,7 +121,7 @@ export function usePresentationStage({
     return () => {
       cancelled = true;
     };
-  }, [attemptId]);
+  }, [attemptId, persistForm, testBypass]);
 
   const updateField = useCallback(
     <K extends keyof PresentationForm>(key: K, value: PresentationForm[K]): void => {
@@ -116,14 +135,20 @@ export function usePresentationStage({
   );
 
   const handleSubmit = useCallback(async (): Promise<void> => {
-    if (!canSubmitPresentation(form) || isSubmitting) {
+    let submitForm = form;
+    if (testBypass) {
+      submitForm = applyPresentationAutofill(form);
+      setForm(submitForm);
+      void persistForm(submitForm);
+    }
+    if (!canSubmitPresentation(submitForm, testBypass) || isSubmitting) {
       return;
     }
 
     setIsSubmitting(true);
     try {
       const payload = JSON.stringify({
-        form,
+        form: submitForm,
         submittedAt: new Date().toISOString(),
       });
       await completeStage(
@@ -136,7 +161,7 @@ export function usePresentationStage({
     } finally {
       setIsSubmitting(false);
     }
-  }, [form, isSubmitting, attemptId]);
+  }, [form, isSubmitting, attemptId, testBypass, persistForm]);
 
   return {
     form,
@@ -145,7 +170,7 @@ export function usePresentationStage({
     isSubmitting,
     updateField,
     completedSections: countCompletedPresentationSections(form),
-    canSubmit: canSubmitPresentation(form),
+    canSubmit: canSubmitPresentation(form, testBypass),
     handleSubmit,
   };
 }

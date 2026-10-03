@@ -13,6 +13,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { HandoffModal } from "@/components/tempo/HandoffModal";
+import { TempoTestBypassBanner } from "@/components/tempo/TempoTestBypassBanner";
 import { NegotiationStageLayout } from "@/components/tempo/stages/NegotiationStageLayout";
 import { NegotiationTopBar } from "@/components/tempo/stages/NegotiationTopBar";
 import { useNegotiationStage } from "@/hooks/useNegotiationStage";
@@ -29,6 +30,8 @@ type NegotiationStageProps = {
   discoverySummary: Partial<DiscoverySummaryForm> | null;
   presentationSummary: Partial<PresentationForm> | null;
   objectionSummary: Partial<ObjectionSummaryForm> | null;
+  /** Server page boolean from TEMPO_TEST_BYPASS_GATES — never from client env. */
+  testBypass?: boolean;
 };
 
 /**
@@ -42,15 +45,22 @@ export function NegotiationStage({
   discoverySummary,
   presentationSummary,
   objectionSummary,
+  testBypass = false,
 }: NegotiationStageProps): React.ReactElement {
   const router = useRouter();
   const [showHandoff, setShowHandoff] = useState(false);
-  const negotiation = useNegotiationStage({ attemptId, simulationId, classId });
+  const negotiation = useNegotiationStage({
+    attemptId,
+    simulationId,
+    classId,
+    testBypass,
+  });
   const negotiationMeta = TEMPO_HANDOFF_STAGE_META.negotiation;
 
   if (negotiation.isLoading) {
     return (
       <>
+        <TempoTestBypassBanner testBypass={testBypass} />
         <NegotiationTopBar
           attemptId={attemptId}
           simulationId={simulationId}
@@ -70,6 +80,7 @@ export function NegotiationStage({
 
   return (
     <>
+      <TempoTestBypassBanner testBypass={testBypass} />
       <NegotiationTopBar
         attemptId={attemptId}
         simulationId={simulationId}
@@ -99,6 +110,7 @@ export function NegotiationStage({
           discoverySummary={discoverySummary}
           presentationSummary={presentationSummary}
           objectionSummary={objectionSummary}
+          testBypass={testBypass}
           onOpenHandoff={() => setShowHandoff(true)}
           onScenarioChange={negotiation.setActiveScenario}
           onResponseChange={negotiation.setCurrentResponse}
@@ -121,6 +133,7 @@ export function NegotiationStage({
           hasAIRestriction={negotiationMeta.hasAIRestriction}
           onBegin={() => setShowHandoff(false)}
           onDismiss={() => setShowHandoff(false)}
+          testBypass={testBypass}
         />
       )}
     </>

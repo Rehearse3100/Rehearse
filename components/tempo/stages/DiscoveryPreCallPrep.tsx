@@ -14,6 +14,8 @@ type DiscoveryPreCallPrepProps = {
   form: DiscoveryPreCallPrep;
   onChange: (next: DiscoveryPreCallPrep) => void;
   onBegin: () => void;
+  /** Server page boolean from TEMPO_TEST_BYPASS_GATES — never from client env. */
+  testBypass?: boolean;
 };
 
 const FIELD_INPUT =
@@ -29,8 +31,9 @@ export function DiscoveryPreCallPrep({
   form,
   onChange,
   onBegin,
+  testBypass = false,
 }: DiscoveryPreCallPrepProps): React.ReactElement {
-  const canBegin = canBeginDiscoveryCall(form);
+  const canBegin = canBeginDiscoveryCall(form, testBypass);
 
   const updateOpenQuestion = (index: 0 | 1 | 2, value: string): void => {
     const openQuestions: [string, string, string] = [

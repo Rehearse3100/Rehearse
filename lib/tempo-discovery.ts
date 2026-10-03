@@ -132,8 +132,15 @@ function sanitizeFieldText(value: string): string {
 /**
  * True when prep has enough content to enable Begin Discovery Call.
  * Requires ≥1 open question, plus non-empty probe and confirm fields.
+ * testBypass is a server-passed boolean — this file never reads process.env.
  */
-export function canBeginDiscoveryCall(form: DiscoveryPreCallPrep): boolean {
+export function canBeginDiscoveryCall(
+  form: DiscoveryPreCallPrep,
+  testBypass = false
+): boolean {
+  if (testBypass) {
+    return true;
+  }
   const hasOpen = form.openQuestions.some((q) => q.trim().length > 0);
   return (
     hasOpen &&

@@ -21,12 +21,20 @@ export type DiscoveryJoinStreams = {
 type DiscoveryLobbyProps = {
   connectError: string;
   onJoin: (streams: DiscoveryJoinStreams) => void;
+  /** Server page boolean — shows Skip Call (test) without touching Anam. */
+  testBypass?: boolean;
+  onSkipCall?: () => void;
 };
 
 /**
  * Center-column device setup + Join Call panel for the lobby phase.
  */
-export function DiscoveryLobby({ connectError, onJoin }: DiscoveryLobbyProps): React.ReactElement {
+export function DiscoveryLobby({
+  connectError,
+  onJoin,
+  testBypass = false,
+  onSkipCall,
+}: DiscoveryLobbyProps): React.ReactElement {
   const [micOn, setMicOn] = useState(false);
   const [cameraOn, setCameraOn] = useState(false);
   const [deviceError, setDeviceError] = useState("");
@@ -184,6 +192,16 @@ export function DiscoveryLobby({ connectError, onJoin }: DiscoveryLobbyProps): R
           <MaterialIcon name="call" className="group-hover:translate-x-1 transition-transform" />
           {micOn ? "Join Call" : "Enable mic to join"}
         </button>
+
+        {testBypass && onSkipCall ? (
+          <button
+            type="button"
+            onClick={onSkipCall}
+            className="w-full h-11 mt-2 rounded-lg border-2 border-amber-500 bg-amber-50 text-amber-950 font-label-md text-label-md hover:bg-amber-100 transition-colors"
+          >
+            Skip Call (test)
+          </button>
+        ) : null}
       </div>
     </section>
   );

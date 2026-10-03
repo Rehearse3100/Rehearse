@@ -51,6 +51,8 @@ type NegotiationStageLayoutProps = {
   onRightTabChange: (tab: number) => void;
   onSaveDraft: () => void;
   onSubmit: () => void;
+  /** Server page boolean — short-circuits word-min Send gate only. */
+  testBypass?: boolean;
 };
 
 function TurnExchange({
@@ -182,10 +184,12 @@ export function NegotiationStageLayout({
   onRightTabChange,
   onSaveDraft,
   onSubmit,
+  testBypass = false,
 }: NegotiationStageLayoutProps): React.ReactElement {
   const activeData = activeScenario === "A" ? scenarioAData : scenarioBData;
   const activeComplete = activeScenario === "A" ? scenarioAState === "complete" : scenarioBState === "complete";
   const responseWords = wordCount(currentResponse);
+  const canSendTurn = testBypass || responseWords >= NEGOTIATION_MIN_WORDS;
   const showFloatingStatus =
     !activeComplete && currentTurnIndex >= 0 && (activeScenario === "A" ? scenarioAState === "active" : scenarioBState === "active");
   const priorContextSections = buildNegotiationPriorContext(
@@ -477,10 +481,10 @@ export function NegotiationStageLayout({
                           </span>
                           <button
                             type="button"
-                            disabled={responseWords < NEGOTIATION_MIN_WORDS || isLoadingTurn}
+                            disabled={!canSendTurn || isLoadingTurn}
                             onClick={onSendTurn}
                             className={`px-6 py-2 font-bold rounded-lg text-body-md shadow-md transition-all ${
-                              responseWords >= NEGOTIATION_MIN_WORDS && !isLoadingTurn
+                              canSendTurn && !isLoadingTurn
                                 ? "bg-primary text-on-primary hover:-translate-y-[1px] active:translate-y-0"
                                 : "bg-surface-variant text-on-surface-variant/40 cursor-not-allowed opacity-50"
                             }`}

@@ -22,12 +22,18 @@ import {
   type NegotiationTurn,
   type ScenarioState,
 } from "@/lib/tempo-negotiation";
+import {
+  applyNegotiationAutofill,
+  TEST_BYPASS_PREFIX,
+} from "@/lib/tempo-test-bypass-client";
 import type { ChatMessage } from "@/types";
 
 type UseNegotiationStageOptions = {
   attemptId: string;
   simulationId: string;
   classId: string;
+  /** Server page boolean from TEMPO_TEST_BYPASS_GATES — never from client env. */
+  testBypass?: boolean;
 };
 
 type UseNegotiationStageResult = {
@@ -88,6 +94,7 @@ export function useNegotiationStage({
   attemptId,
   simulationId,
   classId: _classId,
+  testBypass = false,
 }: UseNegotiationStageOptions): UseNegotiationStageResult {
   const router = useRouter();
   const [data, setData] = useState<NegotiationStageData>(createInitialNegotiationData);
@@ -110,11 +117,14 @@ export function useNegotiationStage({
 
   useEffect(() => {
     const stored = loadNegotiationFromStorage(attemptId);
-    if (stored) {
-      setData(stored);
+    const base = stored ?? createInitialNegotiationData();
+    const next = testBypass ? applyNegotiationAutofill(base) : base;
+    setData(next);
+    if (testBypass) {
+      persistData(next);
     }
     setIsLoading(false);
-  }, [attemptId]);
+  }, [attemptId, persistData, testBypass]);
 
   useEffect(() => {
     if (
@@ -176,7 +186,13 @@ export function useNegotiationStage({
   }, [data, persistData]);
 
   const handleSendTurn = useCallback(async (): Promise<void> => {
-    if (isLoadingTurn || wordCount(currentResponse) < 40) {
+    const responseText = currentResponse.trim()
+      ? currentResponse.trim()
+      : testBypass
+        ? `${TEST_BYPASS_PREFIX} Holding price and reframing ROI against the cheaper alternative.`
+        : "";
+
+    if (isLoadingTurn || (!testBypass && wordCount(responseText) < 40)) {
       return;
     }
 
@@ -198,7 +214,7 @@ export function useNegotiationStage({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages,
-          newMessage: currentResponse.trim(),
+          newMessage: responseText,
           systemPrompt,
         }),
       });
@@ -212,7 +228,7 @@ export function useNegotiationStage({
       const updatedTurns = [...scenarioData.turns] as NegotiationScenarioData["turns"];
       updatedTurns[turnIndex] = {
         ...updatedTurns[turnIndex],
-        studentResponse: currentResponse.trim(),
+        studentResponse: responseText,
         state: "submitted",
       };
 
@@ -259,19 +275,25 @@ export function useNegotiationStage({
     } finally {
       setIsLoadingTurn(false);
     }
-  }, [currentResponse, data, isLoadingTurn, persistData]);
+  }, [currentResponse, data, isLoadingTurn, persistData, testBypass]);
 
   const handleSubmit = useCallback(async (): Promise<void> => {
-    if (!canSubmitNegotiation(data) || isSubmitting) {
+    let submitData = data;
+    if (testBypass) {
+      submitData = applyNegotiationAutofill(data);
+      setData(submitData);
+      persistData(submitData);
+    }
+    if (!canSubmitNegotiation(submitData, testBypass) || isSubmitting) {
       return;
     }
 
     setIsSubmitting(true);
     try {
       const payload = JSON.stringify({
-        scenarioA: data.scenarioA,
-        scenarioB: data.scenarioB,
-        aiWork: data.aiWork,
+        scenarioA: submitData.scenarioA,
+        scenarioB: submitData.scenarioB,
+        aiWork: submitData.aiWork,
         submittedAt: new Date().toISOString(),
       });
 
@@ -280,7 +302,7 @@ export function useNegotiationStage({
     } finally {
       setIsSubmitting(false);
     }
-  }, [attemptId, data, isSubmitting, router, simulationId]);
+  }, [attemptId, data, isSubmitting, persistData, router, simulationId, testBypass]);
 
   const scenarioAData = data.scenarioA;
   const scenarioBData = data.scenarioB;
@@ -305,7 +327,7 @@ export function useNegotiationStage({
     scenarioAData,
     scenarioBData,
     currentTurnIndex,
-    canSubmit: canSubmitNegotiation(data),
+    canSubmit: canSubmitNegotiation(data, testBypass),
     setActiveScenario,
     setAiWork,
     handleSendTurn,

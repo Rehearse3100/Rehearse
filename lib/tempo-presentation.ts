@@ -151,8 +151,15 @@ export function countCompletedPresentationSections(form: PresentationForm): numb
 
 /**
  * True when all six presentation fields are filled.
+ * testBypass is a server-passed boolean — this file never reads process.env.
  */
-export function canSubmitPresentation(form: PresentationForm): boolean {
+export function canSubmitPresentation(
+  form: PresentationForm,
+  testBypass = false
+): boolean {
+  if (testBypass) {
+    return true;
+  }
   return countCompletedPresentationSections(form) === 6;
 }
 

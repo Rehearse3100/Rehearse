@@ -12,6 +12,7 @@ import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { HandoffModal } from "@/components/tempo/HandoffModal";
+import { TempoTestBypassBanner } from "@/components/tempo/TempoTestBypassBanner";
 import { PresentationStageLayout } from "@/components/tempo/stages/PresentationStageLayout";
 import { PresentationTopBar } from "@/components/tempo/stages/PresentationTopBar";
 import { usePresentationStage } from "@/hooks/usePresentationStage";
@@ -27,6 +28,8 @@ type PresentationStageProps = {
   classId: string;
   simulationTitle: string;
   discoverySummary: Partial<DiscoverySummaryForm>;
+  /** Server page boolean from TEMPO_TEST_BYPASS_GATES — never from client env. */
+  testBypass?: boolean;
 };
 
 /**
@@ -38,13 +41,14 @@ export function PresentationStage({
   classId,
   simulationTitle,
   discoverySummary,
+  testBypass = false,
 }: PresentationStageProps): React.ReactElement {
   const router = useRouter();
   const [showHandoff, setShowHandoff] = useState(false);
   const [showObjectionsHandoff, setShowObjectionsHandoff] = useState(false);
   const [openRefs, setOpenRefs] = useState<Set<string>>(() => new Set());
 
-  const presentation = usePresentationStage({ attemptId });
+  const presentation = usePresentationStage({ attemptId, testBypass });
 
   const presentationMeta = TEMPO_HANDOFF_STAGE_META.presentation;
   const objectionsMeta = TEMPO_HANDOFF_STAGE_META.objections;
@@ -75,6 +79,7 @@ export function PresentationStage({
   if (presentation.isLoading) {
     return (
       <>
+        <TempoTestBypassBanner testBypass={testBypass} />
         <PresentationTopBar
           attemptId={attemptId}
           simulationId={simulationId}
@@ -94,6 +99,7 @@ export function PresentationStage({
 
   return (
     <>
+      <TempoTestBypassBanner testBypass={testBypass} />
       <PresentationTopBar
         attemptId={attemptId}
         simulationId={simulationId}
@@ -129,6 +135,7 @@ export function PresentationStage({
           hasAIRestriction={objectionsMeta.hasAIRestriction}
           onBegin={handleObjectionsBegin}
           onDismiss={() => setShowObjectionsHandoff(false)}
+          testBypass={testBypass}
         />
       )}
 
@@ -141,6 +148,7 @@ export function PresentationStage({
           hasAIRestriction={presentationMeta.hasAIRestriction}
           onBegin={() => setShowHandoff(false)}
           onDismiss={() => setShowHandoff(false)}
+          testBypass={testBypass}
         />
       )}
     </>

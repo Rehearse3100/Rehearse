@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { HandoffModal } from "@/components/tempo/HandoffModal";
 import { TempoExitSimulation } from "@/components/tempo/TempoExitSimulation";
+import { TempoTestBypassBanner } from "@/components/tempo/TempoTestBypassBanner";
 import { TempoWizardTopBar } from "@/components/tempo/TempoWizardTopBar";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import { ProspectingStepPanels } from "@/components/tempo/stages/ProspectingStepPanels";
@@ -61,25 +62,15 @@ export function ProspectingWizard({
   const discoveryMeta = TEMPO_HANDOFF_STAGE_META.discovery;
   const icpComplete = isIcpDefinitionComplete(state);
   // Banner is driven by the SERVER PROP only — not by hook/API state.
-  const showTestBypassBanner = testBypass;
   const showProspectingHandoff =
     !wizard.isLoading &&
     !postSubmitHandoff &&
     (forceHandoffOpen || (!state.prospectingHandoffSeen && !icpComplete));
 
-  const testBypassBanner = showTestBypassBanner ? (
-    <div
-      className="fixed top-16 inset-x-0 z-[60] bg-amber-500 text-black px-4 py-2 text-center font-headline-md text-sm tracking-wide shadow-md"
-      role="status"
-    >
-      TEST MODE: gates bypassed — do not treat this run as real student work
-    </div>
-  ) : null;
-
   if (wizard.isLoading) {
     return (
       <>
-        {testBypassBanner}
+        <TempoTestBypassBanner testBypass={testBypass} />
         <div className="fixed inset-x-0 bottom-0 top-16 z-30 flex items-center justify-center bg-surface">
           <p className="text-on-surface-variant font-body-md">Loading your prospecting brief...</p>
         </div>
@@ -123,7 +114,7 @@ export function ProspectingWizard({
 
   return (
     <>
-      {testBypassBanner}
+      <TempoTestBypassBanner testBypass={testBypass} />
 
       <TempoWizardTopBar
         attemptId={attemptId}
@@ -138,7 +129,7 @@ export function ProspectingWizard({
 
       <div
         className={`fixed inset-0 z-[45] flex flex-col overflow-hidden bg-surface ${
-          showTestBypassBanner ? "pt-28" : "pt-16"
+          testBypass ? "pt-28" : "pt-16"
         }`}
       >
         <div className="flex flex-1 min-h-0 overflow-hidden">
