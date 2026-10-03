@@ -122,6 +122,8 @@ export function useProspectingWizard({
         }
 
         const icpFieldsDone = isIcpDefinitionComplete(nextState);
+        // Keep Welcome first until onboarding is marked complete (video end or Next under
+        // testBypass). Autofill must not skip step 0; canAdvance still unlocks Next.
         nextState = {
           ...nextState,
           icpGateComplete: icpFieldsDone,
@@ -152,7 +154,7 @@ export function useProspectingWizard({
     return () => {
       cancelled = true;
     };
-  }, [attemptId]);
+  }, [attemptId, testBypass]);
 
   const updateField = useCallback(
     <K extends keyof ProspectingWizardState>(key: K, value: ProspectingWizardState[K]): void => {

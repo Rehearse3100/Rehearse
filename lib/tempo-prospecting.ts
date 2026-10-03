@@ -367,11 +367,21 @@ export function normalizeProspectingWizardState(
   const explicitVersion =
     typeof anyRaw.prospectingStepVersion === "number" ? anyRaw.prospectingStepVersion : null;
 
+  // Current-schema drafts (incl. test-bypass autofill) often omit prospectingStepVersion.
+  // Do NOT treat those as v1 — that wrongly +1s currentStep and marks onboarding complete.
+  const looksLikeCurrentSchema =
+    "icpTargetVerticals" in anyRaw ||
+    "onboardingComplete" in anyRaw ||
+    "prospectingHandoffSeen" in anyRaw ||
+    "shortlistedCompanyIds" in anyRaw;
+
   const savedVersion =
     explicitVersion !== null
       ? explicitVersion
       : hasRealWizardProgress
-        ? 1
+        ? looksLikeCurrentSchema
+          ? PROSPECTING_STEP_VERSION
+          : 1
         : PROSPECTING_STEP_VERSION;
 
   let resolvedStep = step;

@@ -53,7 +53,7 @@ If the amber banner is missing and gates still block: confirm `.env.local` has t
 
 | Stage | Gate | Bypass behavior |
 |-------|------|-----------------|
-| Prospecting | Welcome Briefing | Still opens first on a new sim; Next unlocked without watching (marks complete on advance) |
+| Prospecting | Welcome Briefing | Opens first on a new sim (autofill must not skip it); Next unlocked without watching |
 | Prospecting | ICP / shortlist / opening / CRM profile | Advance/submit allowed; empty fields auto-filled with `[TEST]` |
 | Prospecting | Select Target Lead | Summit/Dana pre-seeded; **wrong company/contact still shows manager-note modal** (identity check is never bypassed) |
 | Prospecting → Discovery | CRM Account + Contact before Stage 2 | Begin Stage 2 unlocked |

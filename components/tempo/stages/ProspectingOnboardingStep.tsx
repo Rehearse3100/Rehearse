@@ -1,7 +1,8 @@
 /**
  * ProspectingOnboardingStep.tsx
  * Wizard step 0 — onboarding briefing video and reading list.
- * Next unlocks when the video fires `ended` (scrubbing to the end counts).
+ * Next unlocks when the video fires `ended` (scrubbing to the end counts),
+ * or immediately under testBypass via canAdvanceProspectingStep.
  */
 
 "use client";
@@ -39,7 +40,7 @@ export function ProspectingOnboardingStep({
   attemptId: _attemptId,
   onboardingComplete,
   onOnboardingComplete,
-  testBypass: _testBypass = false,
+  testBypass = false,
 }: ProspectingOnboardingStepProps): React.ReactElement {
   const videoHostRef = useRef<HTMLDivElement>(null);
 
@@ -69,7 +70,9 @@ export function ProspectingOnboardingStep({
         <header className="flex flex-col gap-sm">
           <h1 className="font-headline-lg text-headline-lg text-primary">Welcome Briefing</h1>
           <p className="font-body-md text-body-md text-on-surface-variant max-w-prose">
-            Watch the briefing below, then review the reading list before you start prospecting.
+            {testBypass
+              ? "Watch if you want — in TEST MODE you can press Next without finishing the video."
+              : "Watch the briefing below, then review the reading list before you start prospecting."}
           </p>
         </header>
 
