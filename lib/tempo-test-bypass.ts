@@ -79,9 +79,8 @@ type ContactPick = {
 export function applyWizardAutofill(state: ProspectingWizardState): ProspectingWizardState {
   const next: ProspectingWizardState = { ...state, selfCheck: { ...state.selfCheck } };
 
-  if (!next.onboardingComplete) {
-    next.onboardingComplete = true;
-  }
+  // Do NOT set onboardingComplete here — new sims must open on Welcome Briefing
+  // and advance in order. Next on step 0 is unlocked by the client testBypass prop.
 
   if (!next.icpTargetVerticals.trim()) {
     next.icpTargetVerticals = TEST_BYPASS_ICP.icpTargetVerticals;
@@ -298,6 +297,8 @@ async function fillEmptyCrmProfile(
 
 /**
  * Ensures a Summit / Dana lead exists and is marked selected. Returns its id.
+ * Prefers the correct target even if a wrong lead was previously selected, so
+ * bypass preselect stays on Summit while wrong picks can still fail validation.
  */
 async function ensureTargetLead(
   supabase: SupabaseClient,
@@ -310,11 +311,6 @@ async function ensureTargetLead(
     .order("created_at", { ascending: true });
 
   const rows = leads ?? [];
-  const alreadySelected = rows.find((row) => String(row.status ?? "") === "selected");
-  if (alreadySelected) {
-    await fillEmptyCrmProfile(supabase, attemptId);
-    return String(alreadySelected.id);
-  }
 
   let target =
     rows.find(
@@ -322,6 +318,13 @@ async function ensureTargetLead(
         String(row.company_name ?? "").toLowerCase().includes("summit") &&
         String(row.contact_name ?? "").toLowerCase().includes("dana")
     ) ?? null;
+
+  const alreadySelectedCorrect =
+    target && String(target.status ?? "") === "selected" ? target : null;
+  if (alreadySelectedCorrect) {
+    await fillEmptyCrmProfile(supabase, attemptId);
+    return String(alreadySelectedCorrect.id);
+  }
 
   const now = new Date().toISOString();
 
@@ -333,7 +336,7 @@ async function ensureTargetLead(
         company_name: CORRECT_COMPANY,
         contact_name: CORRECT_CONTACT,
         contact_title: "Director of Operations",
-        why_fit: `${TEST_BYPASS_PREFIX} Correct target for bypassed identity gate`,
+        why_fit: `${TEST_BYPASS_PREFIX} Correct target pre-seeded for faster testing`,
         trigger_event: `${TEST_BYPASS_PREFIX} Eighth location opening`,
         next_step: `${TEST_BYPASS_PREFIX} Book discovery`,
         decision_maker_rationale: `${TEST_BYPASS_PREFIX} Dana owns operations`,
@@ -352,6 +355,14 @@ async function ensureTargetLead(
   }
 
   const leadId = String(target.id);
+
+  // Clear any wrong previously-selected lead so Summit is the only selected target.
+  await supabase
+    .from("crm_leads")
+    .update({ status: "new", updated_at: now })
+    .eq("attempt_id", attemptId)
+    .eq("status", "selected")
+    .neq("id", leadId);
 
   const { error: selectError } = await supabase
     .from("crm_leads")

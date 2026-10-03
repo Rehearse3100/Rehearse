@@ -6,7 +6,6 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isCloseMatch } from "@/lib/string-similarity";
-import { isGateBypassEnabled } from "@/lib/tempo-test-bypass";
 
 export const CORRECT_COMPANY = "Summit Dental Group";
 export const CORRECT_CONTACT = "Dana Reyes";
@@ -20,15 +19,13 @@ export type ConvertLeadResult = LeadValidationResult;
 
 /**
  * Validates company + contact against the known correct Tempo path (fuzzy).
- * Server-only TEMPO_TEST_BYPASS_GATES=true short-circuits; match rules unchanged when off.
+ * Always enforced — TEMPO_TEST_BYPASS_GATES must not skip manager-note feedback
+ * for a wrong company/contact (Summit/Dana can still be pre-seeded for convenience).
  */
 export function validateLeadIdentity(
   companyName: string,
   contactName: string
 ): LeadValidationResult {
-  if (isGateBypassEnabled()) {
-    return { success: true };
-  }
   if (!isCloseMatch(companyName, CORRECT_COMPANY)) {
     return { success: false, reason: "company" };
   }

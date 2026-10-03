@@ -277,7 +277,14 @@ export function useProspectingWizard({
 
   const handleStepAdvance = useCallback(
     async (nextStep: number): Promise<void> => {
-      const next = { ...state, currentStep: nextStep };
+      // Leaving Welcome Briefing counts as onboarding complete (video end OR Next
+      // under testBypass, which unlocks Next without waiting for ended).
+      const next = {
+        ...state,
+        currentStep: nextStep,
+        onboardingComplete:
+          state.currentStep === 0 && nextStep > 0 ? true : state.onboardingComplete,
+      };
       setState(next);
       await persistState(next);
     },
