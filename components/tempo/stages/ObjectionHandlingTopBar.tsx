@@ -12,6 +12,8 @@ type ObjectionHandlingTopBarProps = {
   simulationTitle: string;
   onOpenHandoff: () => void;
   onBackToDashboard: () => void;
+  onOpenReferenceLibrary?: () => void;
+  isReferenceLibraryOpen?: boolean;
 };
 
 /**
@@ -24,6 +26,8 @@ export function ObjectionHandlingTopBar({
   simulationTitle,
   onOpenHandoff,
   onBackToDashboard,
+  onOpenReferenceLibrary,
+  isReferenceLibraryOpen,
 }: ObjectionHandlingTopBarProps): React.ReactElement {
   return (
     <TempoStageTopBar
@@ -34,6 +38,8 @@ export function ObjectionHandlingTopBar({
       flowIndex={3}
       onOpenHandoff={onOpenHandoff}
       onBackToDashboard={onBackToDashboard}
+      onOpenReferenceLibrary={onOpenReferenceLibrary}
+      isReferenceLibraryOpen={isReferenceLibraryOpen}
     />
   );
 }

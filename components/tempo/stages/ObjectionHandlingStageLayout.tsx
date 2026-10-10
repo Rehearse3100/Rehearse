@@ -1,18 +1,18 @@
 /**
  * ObjectionHandlingStageLayout.tsx
- * Presentational 3-column shell for Tempo Stage 4 Objection Handling.
- * Lobby, active video call, and post-call submit share the same side panels.
+ * Presentational shell for Tempo Stage 4 Objection Handling.
+ * Lobby, active video call, and post-call submit share the left briefing rail.
+ * Transcript docks beside the call; playbook content lives in the Reference Library.
  * Objection tracker stays visible as live in-call feedback (not a post-call form).
  */
 
+import { CallTranscriptPanel } from "@/components/tempo/CallTranscriptPanel";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import { PostCallCompletePanel } from "@/components/tempo/PostCallCompletePanel";
 import { TempoExitSimulation } from "@/components/tempo/TempoExitSimulation";
 import { TempoStageForwardNav } from "@/components/tempo/TempoStageForwardNav";
-import type { PresentationForm } from "@/lib/tempo-presentation";
 import {
   OBJECTION_TIPS,
-  TEMPO_OBJECTION_FACTS,
   formatObjectionTime,
   type ObjectionHandlingPhase,
   type ObjectionTracker,
@@ -22,11 +22,8 @@ import {
 type ObjectionHandlingStageLayoutProps = {
   phase: ObjectionHandlingPhase;
   callSeconds: number;
-  activeTab: number;
-  onTabChange: (index: number) => void;
   transcript: ObjectionTranscriptEntry[];
   objectionTracker: ObjectionTracker;
-  presentationSummary: PresentationForm | null;
   lobbySlot: React.ReactNode;
   callSlot: React.ReactNode;
   isSubmitting: boolean;
@@ -37,16 +34,43 @@ type ObjectionHandlingStageLayoutProps = {
 };
 
 /**
+ * Maps Objection transcript roles to the shared panel entry shape.
+ */
+function mapObjectionTranscript(
+  transcript: ObjectionTranscriptEntry[]
+): { speaker: "persona" | "student"; name: string; timestamp: string; content: string }[] {
+  return transcript.map((msg) => ({
+    speaker: msg.role === "student" ? "student" : "persona",
+    name: msg.role === "student" ? "You" : "Dr. Saul Kim",
+    timestamp: msg.timestamp,
+    content: msg.content,
+  }));
+}
+
+/**
+ * Strategy hint copy — same conditionals as the former Transcript tab footer.
+ */
+function strategyHintText(objectionTracker: ObjectionTracker): string {
+  if (objectionTracker.price && !objectionTracker.priceHandled) {
+    return "Acknowledge the expansion costs, then pivot to how no-show recovery dwarfs the monthly cost.";
+  }
+  if (objectionTracker.adoption && !objectionTracker.adoptionHandled) {
+    return "Reassure Dr. Kim on training and onboarding — most teams are live in days, not weeks.";
+  }
+  if (objectionTracker.statusQuo && !objectionTracker.statusQuoHandled) {
+    return "Make the cost of inaction visible — no-show revenue leak and front desk turnover risk.";
+  }
+  return "Acknowledge the concern first — then reconnect to the business issue.";
+}
+
+/**
  * Renders the Objection Handling chrome; center panel swaps by phase.
  */
 export function ObjectionHandlingStageLayout({
   phase,
   callSeconds,
-  activeTab,
-  onTabChange,
   transcript,
   objectionTracker,
-  presentationSummary,
   lobbySlot,
   callSlot,
   isSubmitting,
@@ -55,6 +79,21 @@ export function ObjectionHandlingStageLayout({
   testBypass = false,
 }: ObjectionHandlingStageLayoutProps): React.ReactElement {
   const isCallPhase = phase === "connecting" || phase === "active";
+  const panelEntries = mapObjectionTranscript(transcript);
+  const durationLabel = formatObjectionTime(callSeconds);
+
+  const strategyFooter =
+    phase === "active" ? (
+      <div className="p-4 border-t border-white/10 bg-white/[0.02]">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-tertiary-container mb-2 flex items-center gap-1">
+          <MaterialIcon name="lightbulb" className="text-[16px]" />
+          Strategy Hint
+        </p>
+        <div className="p-3 rounded-lg bg-white/[0.06] border border-white/10 text-sm italic text-white/80">
+          {strategyHintText(objectionTracker)}
+        </div>
+      </div>
+    ) : null;
 
   return (
     <div
@@ -179,157 +218,31 @@ export function ObjectionHandlingStageLayout({
         {/* ── Center panel ─── */}
         {phase === "lobby" && lobbySlot}
 
-        {isCallPhase && callSlot}
-
-        {phase === "summary" && (
-          <PostCallCompletePanel
-            callLengthLabel={formatObjectionTime(callSeconds)}
-            nextStageName={nextStageName}
-            isSubmitting={isSubmitting}
-          />
+        {isCallPhase && (
+          <div className="flex flex-1 min-w-0 min-h-0">
+            <div className="flex-1 min-w-0 min-h-0 flex flex-col">{callSlot}</div>
+            <CallTranscriptPanel
+              entries={panelEntries}
+              variant="live"
+              footer={strategyFooter}
+            />
+          </div>
         )}
 
-        {/* ── Right panel ─── */}
-        <aside className="w-[320px] bg-surface-container flex flex-col border-l border-outline-variant z-30 shrink-0 hidden lg:flex min-h-0">
-          <div className="flex border-b border-outline-variant h-12 shrink-0">
-            {[
-              { label: "Transcript", icon: "description" },
-              { label: "Playbook", icon: "menu_book" },
-            ].map((tab, i) => (
-              <button
-                key={tab.label}
-                type="button"
-                onClick={() => onTabChange(i)}
-                className={`flex-1 text-body-md flex items-center justify-center gap-2 ${
-                  activeTab === i
-                    ? "text-primary font-bold border-b-2 border-primary"
-                    : "text-on-secondary-container opacity-70 hover:bg-surface-variant/50"
-                }`}
-              >
-                <MaterialIcon name={tab.icon} className="text-[18px]" />
-                {tab.label}
-              </button>
-            ))}
+        {phase === "summary" && (
+          <div className="flex flex-1 min-w-0 min-h-0">
+            <PostCallCompletePanel
+              callLengthLabel={durationLabel}
+              nextStageName={nextStageName}
+              isSubmitting={isSubmitting}
+            />
+            <CallTranscriptPanel
+              entries={panelEntries}
+              variant="ended"
+              durationLabel={durationLabel}
+            />
           </div>
-
-          {activeTab === 0 && (
-            <div className="flex-1 overflow-y-auto p-4 space-y-6 min-h-0 flex flex-col">
-              {phase === "active" && (
-                <div className="flex items-center gap-2 mb-4 shrink-0">
-                  <div className="w-2 h-2 rounded-full bg-error animate-pulse" />
-                  <span className="text-mono-label font-mono-label text-error uppercase font-bold tracking-tighter">
-                    Live Transcript
-                  </span>
-                </div>
-              )}
-
-              {phase === "lobby" ? (
-                <div className="h-32 border-2 border-dashed border-outline-variant rounded-xl flex flex-col items-center justify-center text-center p-4">
-                  <MaterialIcon name="graphic_eq" className="text-outline-variant mb-2" />
-                  <p className="text-body-md text-on-surface-variant/40">
-                    Transcript will appear here during the call
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-6 flex-1 min-h-0 overflow-y-auto">
-                  {transcript.map((msg, i) => (
-                    <div
-                      key={`${msg.role}-${i}`}
-                      className={`flex flex-col gap-1 ${
-                        msg.role === "student" ? "items-end" : "items-start"
-                      }`}
-                    >
-                      <span
-                        className={`text-[11px] font-bold uppercase ${
-                          msg.role === "student" ? "text-primary" : "text-on-surface-variant"
-                        }`}
-                      >
-                        {msg.role === "student" ? "You" : "Dr. Saul Kim"} · {msg.timestamp}
-                      </span>
-                      <div
-                        className={`p-3 rounded-2xl max-w-[85%] text-body-md ${
-                          msg.role === "student"
-                            ? "bg-primary-container text-on-primary-container rounded-tr-none"
-                            : "bg-surface-container-highest border border-outline-variant/30 rounded-tl-none text-on-surface"
-                        }`}
-                      >
-                        {msg.content}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {phase === "active" && (
-                <div className="p-4 bg-surface-container-low border-t border-outline-variant shrink-0 -mx-4 -mb-4">
-                  <p className="text-mono-label font-mono-label text-primary-container font-bold mb-2 flex items-center gap-1">
-                    <MaterialIcon name="lightbulb" className="text-[16px]" />
-                    STRATEGY HINT
-                  </p>
-                  <div className="p-3 bg-white rounded-lg border border-outline-variant/30 text-body-md italic text-on-surface-variant">
-                    {objectionTracker.price && !objectionTracker.priceHandled
-                      ? "Acknowledge the expansion costs, then pivot to how no-show recovery dwarfs the monthly cost."
-                      : objectionTracker.adoption && !objectionTracker.adoptionHandled
-                        ? "Reassure Dr. Kim on training and onboarding — most teams are live in days, not weeks."
-                        : objectionTracker.statusQuo && !objectionTracker.statusQuoHandled
-                          ? "Make the cost of inaction visible — no-show revenue leak and front desk turnover risk."
-                          : "Acknowledge the concern first — then reconnect to the business issue."}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {activeTab === 1 && (
-            <div className="flex-1 overflow-y-auto p-6 space-y-8 min-h-0">
-              <section>
-                <h4 className="text-body-md font-bold text-on-surface mb-3 flex items-center gap-2">
-                  <MaterialIcon name="history" className="text-[16px] text-secondary" />
-                  Stage 3 Pitch Summary
-                </h4>
-                <div className="bg-surface-container-lowest p-4 rounded-xl border border-outline-variant text-body-md space-y-3 text-on-surface-variant">
-                  {presentationSummary ? (
-                    <>
-                      <p>
-                        • Business case:{" "}
-                        {presentationSummary.businessCase?.slice(0, 80) || "—"}
-                        {(presentationSummary.businessCase?.length ?? 0) > 80 ? "…" : ""}
-                      </p>
-                      <p>
-                        • Proof point: {presentationSummary.proofPoint?.slice(0, 80) || "—"}
-                        {(presentationSummary.proofPoint?.length ?? 0) > 80 ? "…" : ""}
-                      </p>
-                      <p>
-                        • Next step asked: {presentationSummary.nextStep?.slice(0, 80) || "—"}
-                        {(presentationSummary.nextStep?.length ?? 0) > 80 ? "…" : ""}
-                      </p>
-                    </>
-                  ) : (
-                    <p className="italic">Stage 3 pitch summary not available.</p>
-                  )}
-                </div>
-              </section>
-
-              <section>
-                <h4 className="text-body-md font-bold text-on-surface mb-3 flex items-center gap-2">
-                  <MaterialIcon name="database" className="text-[16px] text-secondary" />
-                  Tempo Core Facts
-                </h4>
-                <div className="space-y-2">
-                  {TEMPO_OBJECTION_FACTS.map((fact) => (
-                    <div
-                      key={fact.label}
-                      className="flex justify-between p-3 bg-surface-container-lowest rounded-lg border border-outline-variant"
-                    >
-                      <span className="text-body-md text-on-surface-variant">{fact.label}</span>
-                      <span className="text-body-md font-bold">{fact.value}</span>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            </div>
-          )}
-        </aside>
+        )}
       </main>
     </div>
   );

@@ -12,6 +12,10 @@ import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { HandoffModal } from "@/components/tempo/HandoffModal";
+import {
+  ReferenceLibraryDrawer,
+  ReferenceLibrarySectionLabel,
+} from "@/components/tempo/ReferenceLibraryDrawer";
 import { TempoTestBypassBanner } from "@/components/tempo/TempoTestBypassBanner";
 import {
   ObjectionHandlingCallSession,
@@ -27,6 +31,7 @@ import { completeStage } from "@/lib/attempt-actions";
 import type { PresentationForm } from "@/lib/tempo-presentation";
 import {
   EMPTY_TRACKER,
+  TEMPO_OBJECTION_FACTS,
   type ObjectionHandlingPhase,
   type ObjectionTracker,
   type ObjectionTranscriptEntry,
@@ -61,7 +66,6 @@ export function ObjectionHandlingStage({
   const [phase, setPhase] = useState<ObjectionHandlingPhase>("lobby");
   const [connectError, setConnectError] = useState("");
   const [callSeconds, setCallSeconds] = useState(0);
-  const [activeTab, setActiveTab] = useState(0);
   const [transcript, setTranscript] = useState<ObjectionTranscriptEntry[]>([]);
   const [objectionTracker, setObjectionTracker] = useState<ObjectionTracker>(EMPTY_TRACKER);
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
@@ -69,6 +73,7 @@ export function ObjectionHandlingStage({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showHandoff, setShowHandoff] = useState(false);
   const [showNegotiationHandoff, setShowNegotiationHandoff] = useState(false);
+  const [referenceLibraryOpen, setReferenceLibraryOpen] = useState(false);
 
   const submittingRef = useRef(false);
 
@@ -163,17 +168,16 @@ export function ObjectionHandlingStage({
         onBackToDashboard={() =>
           router.push(`/student/simulation/${simulationId}/entry?classId=${classId}`)
         }
+        onOpenReferenceLibrary={() => setReferenceLibraryOpen(true)}
+        isReferenceLibraryOpen={referenceLibraryOpen}
       />
 
       <ErrorBoundary stageName="objections">
         <ObjectionHandlingStageLayout
           phase={phase}
           callSeconds={callSeconds}
-          activeTab={activeTab}
-          onTabChange={setActiveTab}
           transcript={transcript}
           objectionTracker={objectionTracker}
-          presentationSummary={presentationSummary}
           testBypass={testBypass}
           lobbySlot={
             <ObjectionHandlingLobby
@@ -231,6 +235,53 @@ export function ObjectionHandlingStage({
           testBypass={testBypass}
         />
       )}
+
+      <ReferenceLibraryDrawer
+        open={referenceLibraryOpen}
+        onClose={() => setReferenceLibraryOpen(false)}
+        stageLabel="Stage 4: Objection Handling"
+        testBypass={testBypass}
+      >
+        <section>
+          <ReferenceLibrarySectionLabel>Your Pitch Summary</ReferenceLibrarySectionLabel>
+          <div className="bg-surface-container-lowest p-4 rounded-xl border border-outline-variant text-body-md space-y-3 text-on-surface-variant">
+            {presentationSummary ? (
+              <>
+                <p>
+                  • Business case:{" "}
+                  {presentationSummary.businessCase?.slice(0, 80) || "—"}
+                  {(presentationSummary.businessCase?.length ?? 0) > 80 ? "…" : ""}
+                </p>
+                <p>
+                  • Proof point: {presentationSummary.proofPoint?.slice(0, 80) || "—"}
+                  {(presentationSummary.proofPoint?.length ?? 0) > 80 ? "…" : ""}
+                </p>
+                <p>
+                  • Next step asked: {presentationSummary.nextStep?.slice(0, 80) || "—"}
+                  {(presentationSummary.nextStep?.length ?? 0) > 80 ? "…" : ""}
+                </p>
+              </>
+            ) : (
+              <p className="italic">Stage 3 pitch summary not available.</p>
+            )}
+          </div>
+        </section>
+
+        <section>
+          <ReferenceLibrarySectionLabel>Tempo Core Facts</ReferenceLibrarySectionLabel>
+          <div className="space-y-2">
+            {TEMPO_OBJECTION_FACTS.map((fact) => (
+              <div
+                key={fact.label}
+                className="flex justify-between p-3 bg-surface-container-lowest rounded-lg border border-outline-variant"
+              >
+                <span className="text-body-md text-on-surface-variant">{fact.label}</span>
+                <span className="text-body-md font-bold">{fact.value}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      </ReferenceLibraryDrawer>
     </>
   );
 }
