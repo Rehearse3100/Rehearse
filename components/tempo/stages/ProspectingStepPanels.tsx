@@ -1,7 +1,7 @@
 /**
  * ProspectingStepPanels.tsx
  * Step content panels for the Tempo Stage 1 Prospecting wizard.
- * Steps: Welcome Briefing → ICP → Data Room → Build Your Agent → Select Lead → Opening.
+ * Steps: Welcome Briefing → ICP → Data Room → Select Lead → Opening → Build Your Agent.
  */
 
 "use client";
@@ -32,8 +32,6 @@ type StepPanelsProps = {
     value: ProspectingWizardState[K]
   ) => void;
   onLeadSelected: (leadId: string) => Promise<void>;
-  onResearchContinue?: () => void;
-  canResearchContinue?: boolean;
   onOnboardingComplete: () => void;
 };
 
@@ -50,8 +48,6 @@ export function ProspectingStepPanels({
   onShortlistChange,
   onFieldChange,
   onLeadSelected,
-  onResearchContinue,
-  canResearchContinue = false,
   onOnboardingComplete,
 }: StepPanelsProps): React.ReactElement {
   if (currentStepId === "onboarding") {
@@ -78,8 +74,6 @@ export function ProspectingStepPanels({
         selectedCompanyId={state.selectedCompanyId}
         onSelectCompany={onSelectCompany}
         onShortlistChange={onShortlistChange}
-        onContinue={onResearchContinue}
-        canContinue={canResearchContinue}
       />
     );
   }

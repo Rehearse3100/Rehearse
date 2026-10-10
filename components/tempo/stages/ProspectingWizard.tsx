@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { HandoffModal } from "@/components/tempo/HandoffModal";
 import { TempoExitSimulation } from "@/components/tempo/TempoExitSimulation";
+import { TempoStageForwardNav } from "@/components/tempo/TempoStageForwardNav";
 import { TempoTestBypassBanner } from "@/components/tempo/TempoTestBypassBanner";
 import { TempoWizardTopBar } from "@/components/tempo/TempoWizardTopBar";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
@@ -215,42 +216,49 @@ export function ProspectingWizard({
 
         <section className="flex-1 bg-surface-container-lowest flex flex-col min-w-0">
           <div className="h-12 bg-surface-container-low border-b border-outline-variant shrink-0 flex items-center justify-between px-4 lg:px-xl gap-4">
-            <div className="flex items-center gap-md text-on-surface-variant min-w-0">
-              {previousStepId ? (
-                <button
-                  type="button"
-                  onClick={() => wizard.setCurrentStepId(previousStepId)}
-                  disabled={currentStepId === "research" && !icpComplete}
-                  className="inline-flex items-center gap-1 text-label-sm text-on-surface-variant hover:text-primary transition-colors shrink-0 disabled:opacity-40 disabled:pointer-events-none"
-                >
-                  <MaterialIcon name="arrow_back" className="text-[16px]" />
-                  Back to{" "}
-                  {PROSPECTING_STEPS.find((step) => step.id === previousStepId)?.label ??
-                    "previous step"}
-                </button>
-              ) : null}
-              <div className="flex items-center gap-sm shrink-0">
-                <MaterialIcon name="cloud_done" className="text-green-500" />
-                <span className="text-label-sm">
-                  {wizard.isSaving ? "Saving..." : "Auto-saved"}
-                </span>
-              </div>
+            <div className="flex items-center gap-sm text-on-surface-variant min-w-0 shrink-0">
+              <MaterialIcon name="cloud_done" className="text-green-500" />
+              <span className="text-label-sm">
+                {wizard.isSaving ? "Saving..." : "Auto-saved"}
+              </span>
             </div>
 
-            <div className="flex items-center gap-md shrink-0">
-                {currentStepId === "onboarding" ? (
-                  <span
-                    className={`hidden sm:inline text-label-sm ${
-                      state.onboardingComplete ? "text-green-600" : "text-on-surface-variant"
-                    }`}
-                  >
-                    {state.onboardingComplete
-                      ? "Briefing complete, you can continue"
-                      : "Watch the briefing to unlock Next"}
-                  </span>
-                ) : null}
-
-                {currentStepId === "opening" ? (
+            <TempoStageForwardNav
+              forwardLabel={upcomingStepId ? "Next" : "Submit"}
+              forwardDisabled={
+                upcomingStepId ? !wizard.canProceed : !wizard.canSubmit || wizard.isSubmitting
+              }
+              isForwardLoading={!upcomingStepId && wizard.isSubmitting}
+              onForward={() => {
+                if (upcomingStepId) {
+                  void handleNext();
+                  return;
+                }
+                void handleSubmit();
+              }}
+              forwardHint={
+                currentStepId === "onboarding"
+                  ? state.onboardingComplete
+                    ? "Briefing complete, you can continue"
+                    : "Watch the briefing to unlock Next"
+                  : null
+              }
+              onBack={
+                previousStepId
+                  ? () => wizard.setCurrentStepId(previousStepId)
+                  : undefined
+              }
+              backDisabled={currentStepId === "research" && !icpComplete}
+              backLabel={
+                previousStepId
+                  ? `Back to ${
+                      PROSPECTING_STEPS.find((step) => step.id === previousStepId)?.label ??
+                      "previous step"
+                    }`
+                  : "Back"
+              }
+              actions={
+                currentStepId === "opening" ? (
                   <button
                     type="button"
                     onClick={() => void wizard.handleSaveDraft()}
@@ -258,42 +266,9 @@ export function ProspectingWizard({
                   >
                     Save Draft
                   </button>
-                ) : null}
-
-                {upcomingStepId ? (
-                  <button
-                    type="button"
-                    disabled={!wizard.canProceed}
-                    onClick={() => void handleNext()}
-                    className={`px-lg py-sm rounded-lg font-bold text-label-md flex items-center gap-xs transition-all ${
-                      wizard.canProceed
-                        ? "bg-primary-container text-white hover:bg-primary shadow-md cursor-pointer"
-                        : "bg-surface-container-highest text-on-surface-variant/40 cursor-not-allowed"
-                    }`}
-                  >
-                    <span className="hidden sm:inline">
-                      Next:{" "}
-                      {PROSPECTING_STEPS.find((step) => step.id === upcomingStepId)?.label}
-                    </span>
-                    <span className="sm:hidden">Next</span>
-                    <MaterialIcon name="arrow_forward" className="text-[18px]" />
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={!wizard.canSubmit || wizard.isSubmitting}
-                    onClick={() => void handleSubmit()}
-                    className={`px-lg py-sm rounded-lg text-label-md font-extrabold flex items-center gap-xs shadow-md transition-all ${
-                      wizard.canSubmit && !wizard.isSubmitting
-                        ? "bg-tertiary-fixed text-on-tertiary-fixed hover:brightness-95 active:scale-95 cursor-pointer"
-                        : "bg-surface-container-highest text-on-surface-variant/40 cursor-not-allowed"
-                    }`}
-                  >
-                    {wizard.isSubmitting ? "Submitting..." : "Submit"}
-                    <MaterialIcon name="send" className="text-[18px]" />
-                  </button>
-                )}
-              </div>
+                ) : null
+              }
+            />
           </div>
 
           <div
@@ -315,8 +290,6 @@ export function ProspectingWizard({
               onShortlistChange={wizard.setShortlistedCompanyIds}
               onFieldChange={wizard.updateField}
               onLeadSelected={(leadId) => wizard.completeLeadSelection(leadId)}
-              onResearchContinue={() => void handleNext()}
-              canResearchContinue={wizard.canProceed}
               onOnboardingComplete={wizard.completeOnboarding}
             />
           </div>

@@ -6,6 +6,7 @@
 
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import { TempoExitSimulation } from "@/components/tempo/TempoExitSimulation";
+import { TempoStageForwardNav } from "@/components/tempo/TempoStageForwardNav";
 import type { DiscoverySummaryForm } from "@/lib/tempo-discovery";
 import {
   isPresentationSectionComplete,
@@ -71,6 +72,25 @@ export function PresentationStageLayout({
         testBypass ? "pt-28" : "pt-16"
       }`}
     >
+      <div className="h-12 bg-surface-container-low border-b border-outline-variant shrink-0 flex items-center justify-end px-4 lg:px-xl">
+        <TempoStageForwardNav
+          forwardLabel="Submit"
+          forwardDisabled={!canSubmit || isSubmitting}
+          isForwardLoading={isSubmitting}
+          onForward={onSubmit}
+          forwardHint={
+            readyToSubmit ? null : "Finish all sections to submit."
+          }
+          actions={
+            isSaving ? (
+              <span className="text-[12px] text-on-surface-variant hidden sm:inline">
+                Saving...
+              </span>
+            ) : null
+          }
+        />
+      </div>
+
       <main className="flex flex-1 min-h-0 overflow-hidden">
         {/* ── Left column: mission ─── */}
         <aside className="w-[280px] bg-[#1a1a2e] text-white flex flex-col p-6 overflow-y-auto border-r border-outline-variant shrink-0 hidden lg:flex">
@@ -339,27 +359,6 @@ export function PresentationStageLayout({
                   ? "Great! You're ready to submit."
                   : "Finish all sections to submit."}
               </span>
-            </div>
-
-            <div className="flex items-center gap-3 shrink-0">
-              {isSaving && (
-                <span className="text-[12px] text-on-surface-variant hidden sm:inline">
-                  Saving...
-                </span>
-              )}
-              <button
-                type="button"
-                disabled={!canSubmit || isSubmitting}
-                onClick={onSubmit}
-                className={`h-11 px-5 rounded-md font-label-md text-label-md flex items-center justify-center gap-2 ${
-                  canSubmit && !isSubmitting
-                    ? "bg-primary-container text-on-primary hover:bg-primary transition-colors"
-                    : "bg-outline-variant text-white opacity-50 cursor-not-allowed"
-                }`}
-              >
-                {isSubmitting ? "Submitting..." : "Submit Presentation"}
-                <MaterialIcon name="arrow_forward" className="text-[18px]" />
-              </button>
             </div>
           </footer>
         </section>

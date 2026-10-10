@@ -303,7 +303,7 @@ export function useProspectingWizard({
   );
 
   /**
-   * Persists the validated target lead and advances to the Opening Message step.
+   * Persists the validated target lead. Does not advance the step — Next uses the gate.
    */
   const completeLeadSelection = useCallback(
     async (leadId: string): Promise<void> => {
@@ -311,7 +311,6 @@ export function useProspectingWizard({
         const next = {
           ...prev,
           selectedLeadId: leadId,
-          currentStepId: "opening" as const,
         };
         void persistState(next);
         return next;

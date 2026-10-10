@@ -139,6 +139,12 @@ Remove commented-out blocks, unused imports, and verified-orphan files — but d
 - Deliberately kept Tempo helpers (e.g. Prospecting directory/chat modules kept for future use)
 - Archived docs/SQL (move to `archive/`, never delete)
 
+## Tempo stage navigation and form copy
+
+- Each step or screen has exactly one page-level forward button, top right, via `TempoStageForwardNav`.
+- Label it **Next**, except the control that completes a stage, which is labeled **Submit**.
+- Placeholders in student-facing simulation fields must never contain example answers or sample questions (use "Type your answer" or "Type a message" for chat).
+
 ## Hard rules
 
 - Do not commit `.env.local` or secrets.

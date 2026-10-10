@@ -6,6 +6,7 @@
 
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import { TempoExitSimulation } from "@/components/tempo/TempoExitSimulation";
+import { TempoStageForwardNav } from "@/components/tempo/TempoStageForwardNav";
 import type { DiscoverySummaryForm } from "@/lib/tempo-discovery";
 import type { ObjectionSummaryForm } from "@/lib/tempo-objections";
 import type { PresentationForm } from "@/lib/tempo-presentation";
@@ -88,11 +89,9 @@ function TurnExchange({
 function OutcomeCard({
   scenario,
   outcome,
-  onContinueToScenarioB,
 }: {
   scenario: NegotiationScenario;
   outcome: NegotiationOutcome;
-  onContinueToScenarioB: () => void;
 }): React.ReactElement {
   return (
     <div className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden mt-8">
@@ -141,15 +140,11 @@ function OutcomeCard({
                   : "Partial agreement reached"}
             </h4>
             <p className="text-body-lg text-on-surface-variant leading-relaxed">{outcome.message}</p>
-            {scenario === "A" && (
-              <button
-                type="button"
-                onClick={onContinueToScenarioB}
-                className="mt-4 px-6 py-3 bg-tertiary-fixed text-on-tertiary-fixed font-bold rounded-lg hover:brightness-95 active:scale-95 transition-all flex items-center gap-2"
-              >
-                Continue to Scenario B →
-              </button>
-            )}
+            {scenario === "A" ? (
+              <p className="mt-4 text-body-md text-on-surface-variant">
+                Use Next (top right) when you are ready for Scenario B.
+              </p>
+            ) : null}
           </div>
         </div>
       </div>
@@ -202,13 +197,47 @@ export function NegotiationStageLayout({
   );
 
   const topOffsetClass = testBypass ? "pt-28" : "pt-16";
-  const railTopClass = testBypass ? "top-28" : "top-16";
-  const railHeightClass = testBypass ? "h-[calc(100vh-7rem)]" : "h-[calc(100vh-64px)]";
+  const railTopClass = testBypass ? "top-40" : "top-28";
+  const railHeightClass = testBypass ? "h-[calc(100vh-10rem)]" : "h-[calc(100vh-7rem)]";
+  const needsScenarioBUnlock =
+    scenarioAState === "complete" && scenarioBState === "locked";
 
   return (
     <div
       className={`fixed inset-0 z-[45] flex flex-col overflow-hidden bg-surface ${topOffsetClass}`}
     >
+      <div className="h-12 bg-surface-container-low border-b border-outline-variant shrink-0 flex items-center justify-end px-4 lg:px-xl z-50 relative">
+        <TempoStageForwardNav
+          forwardLabel={needsScenarioBUnlock ? "Next" : "Submit"}
+          forwardDisabled={
+            needsScenarioBUnlock ? false : !canSubmit || isSubmitting
+          }
+          isForwardLoading={!needsScenarioBUnlock && isSubmitting}
+          onForward={() => {
+            if (needsScenarioBUnlock) {
+              onContinueToScenarioB();
+              return;
+            }
+            onSubmit();
+          }}
+          forwardHint={
+            needsScenarioBUnlock
+              ? "Scenario A complete — continue to Scenario B"
+              : canSubmit
+                ? null
+                : "Complete both scenarios and AI work to submit."
+          }
+          actions={
+            <button
+              type="button"
+              onClick={onSaveDraft}
+              className="hidden sm:inline px-md py-sm rounded-lg text-on-surface-variant font-bold text-label-md hover:text-primary transition-colors"
+            >
+              Save Draft
+            </button>
+          }
+        />
+      </div>
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* ── Left panel (matches Stages 2–4 mission briefing) ─── */}
         <aside
@@ -529,11 +558,7 @@ export function NegotiationStageLayout({
             </div>
 
             {activeComplete && activeData.outcome && (
-              <OutcomeCard
-                scenario={activeScenario}
-                outcome={activeData.outcome}
-                onContinueToScenarioB={onContinueToScenarioB}
-              />
+              <OutcomeCard scenario={activeScenario} outcome={activeData.outcome} />
             )}
 
             {(scenarioAState === "complete" || scenarioBState === "complete") && (
@@ -781,7 +806,7 @@ export function NegotiationStageLayout({
         </aside>
       </div>
 
-      <footer className="fixed bottom-0 left-[280px] right-[320px] h-24 bg-surface border-t border-outline-variant px-8 flex items-center justify-between z-40">
+      <footer className="fixed bottom-0 left-[280px] right-[320px] h-24 bg-surface border-t border-outline-variant px-8 flex items-center z-40">
         <div className="flex items-center gap-4">
           <div
             className={`w-12 h-12 rounded-full flex items-center justify-center ${
@@ -806,38 +831,6 @@ export function NegotiationStageLayout({
                 : "Complete all requirements before submitting."}
             </p>
           </div>
-        </div>
-
-        <div className="flex gap-4">
-          <button
-            type="button"
-            onClick={onSaveDraft}
-            className="px-6 py-3 border border-outline-variant text-on-surface-variant font-bold rounded-lg hover:bg-surface-container-low transition-colors"
-          >
-            Save Draft
-          </button>
-          <button
-            type="button"
-            disabled={!canSubmit || isSubmitting}
-            onClick={onSubmit}
-            className={`px-8 py-3 font-bold rounded-lg shadow-lg transition-all flex items-center gap-2 ${
-              canSubmit && !isSubmitting
-                ? "bg-tertiary text-on-tertiary hover:brightness-110 active:scale-95"
-                : "bg-outline-variant text-white opacity-50 cursor-not-allowed"
-            }`}
-          >
-            {isSubmitting ? (
-              <>
-                <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                Submitting...
-              </>
-            ) : (
-              <>
-                Submit Negotiation
-                <MaterialIcon name="send" />
-              </>
-            )}
-          </button>
         </div>
       </footer>
     </div>

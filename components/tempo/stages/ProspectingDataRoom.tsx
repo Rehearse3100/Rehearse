@@ -37,8 +37,6 @@ type ProspectingDataRoomProps = {
   onSelectCompany: (companyId: string) => void;
   /** Syncs shortlisted company ids into wizard advance logic. */
   onShortlistChange: (companyIds: string[]) => void;
-  onContinue?: () => void;
-  canContinue?: boolean;
 };
 
 /**
@@ -49,8 +47,6 @@ export function ProspectingDataRoom({
   selectedCompanyId,
   onSelectCompany,
   onShortlistChange,
-  onContinue,
-  canContinue = false,
 }: ProspectingDataRoomProps): React.ReactElement {
   const [companies, setCompanies] = useState<DataRoomCompany[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -256,20 +252,6 @@ export function ProspectingDataRoom({
                 ))
               )}
             </div>
-            {onContinue ? (
-              <button
-                type="button"
-                disabled={!canContinue}
-                onClick={onContinue}
-                className={`h-9 px-4 rounded-lg font-bold text-label-md shrink-0 transition-colors ${
-                  canContinue
-                    ? "bg-primary-container text-on-primary hover:bg-primary"
-                    : "bg-surface-container-highest text-on-surface-variant/40 cursor-not-allowed"
-                }`}
-              >
-                Continue
-              </button>
-            ) : null}
           </div>
         </div>
       </div>
