@@ -10,11 +10,16 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { HandoffModal } from "@/components/tempo/HandoffModal";
+import {
+  ReferenceLibraryDrawer,
+  ReferenceLibrarySectionLabel,
+} from "@/components/tempo/ReferenceLibraryDrawer";
 import { TempoExitSimulation } from "@/components/tempo/TempoExitSimulation";
 import { TempoStageForwardNav } from "@/components/tempo/TempoStageForwardNav";
 import { TempoTestBypassBanner } from "@/components/tempo/TempoTestBypassBanner";
 import { TempoWizardTopBar } from "@/components/tempo/TempoWizardTopBar";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
+import { ProspectingReadingList } from "@/components/tempo/stages/ProspectingOnboardingStep";
 import { ProspectingStepPanels } from "@/components/tempo/stages/ProspectingStepPanels";
 import type { ProspectingLeadSelectionHandle } from "@/components/tempo/stages/ProspectingLeadSelectionStep";
 import { useProspectingWizard } from "@/hooks/useProspectingWizard";
@@ -60,6 +65,7 @@ export function ProspectingWizard({
     initialDiscoveryHandoff ? "discovery" : null
   );
   const [forceHandoffOpen, setForceHandoffOpen] = useState(false);
+  const [referenceLibraryOpen, setReferenceLibraryOpen] = useState(false);
   const [pickedLeadId, setPickedLeadId] = useState<string | null>(null);
   const [isConfirmingLead, setIsConfirmingLead] = useState(false);
   const leadSelectionRef = useRef<ProspectingLeadSelectionHandle>(null);
@@ -182,6 +188,8 @@ export function ProspectingWizard({
         onBackToDashboard={() =>
           router.push(`/student/simulation/${simulationId}/entry?classId=${classId}`)
         }
+        onOpenReferenceLibrary={() => setReferenceLibraryOpen(true)}
+        isReferenceLibraryOpen={referenceLibraryOpen}
       />
 
       <div
@@ -346,90 +354,128 @@ export function ProspectingWizard({
             />
           </div>
         </section>
-
-        <aside className="w-64 bg-surface-container border-l border-outline-variant overflow-y-auto p-md hidden xl:block shrink-0">
-          <div className="flex items-center justify-between mb-lg">
-            <h3 className="font-headline-md text-headline-md">Reference Library</h3>
-            <MaterialIcon name="library_books" className="text-on-surface-variant" />
-          </div>
-          <div className="space-y-lg">
-            <div className="p-md bg-secondary-fixed rounded-xl border border-secondary-container/20">
-              <div className="flex items-center gap-sm mb-xs text-on-secondary-fixed">
-                <MaterialIcon name="lightbulb" className="text-[18px]" />
-                <span className="font-bold text-label-sm">Rehearse Tips</span>
-              </div>
-              <p className="text-label-sm text-on-secondary-fixed/90 leading-relaxed">
-                Focus on pain points rather than demographics. A customer&apos;s industry matters
-                less than the specific problem they are trying to solve right now.
-              </p>
-            </div>
-            <div>
-              <h4 className="font-label-sm text-on-surface-variant uppercase tracking-tighter mb-sm">
-                Tempo Product
-              </h4>
-              <div className="bg-white rounded-lg border border-outline-variant p-md shadow-sm">
-                <p className="text-label-sm leading-relaxed text-on-surface">
-                  Scheduling software for appointment-based businesses. Core value: keep calendars
-                  full and stop losing money to no-shows.
-                </p>
-              </div>
-            </div>
-            <div>
-              <h4 className="font-label-sm text-on-surface-variant uppercase tracking-tighter mb-sm">
-                Value Drivers
-              </h4>
-              {[
-                { icon: "trending_down", text: "Cut no-shows" },
-                { icon: "desktop_windows", text: "Free the front desk" },
-                { icon: "nightlight", text: "Capture after-hours demand" },
-                { icon: "replay", text: "Drive repeat visits" },
-              ].map((driver) => (
-                <div
-                  key={driver.text}
-                  className="flex items-center gap-sm p-sm hover:bg-surface-container-low rounded-lg transition-colors"
-                >
-                  <MaterialIcon name={driver.icon} className="text-secondary text-[18px]" />
-                  <span className="text-label-md text-on-surface">{driver.text}</span>
-                </div>
-              ))}
-            </div>
-            <div>
-              <h4 className="font-label-sm text-on-surface-variant uppercase tracking-tighter mb-sm">
-                Pricing
-              </h4>
-              <div className="bg-white rounded-lg border border-outline-variant p-md space-y-xs text-label-sm">
-                <div className="flex justify-between">
-                  <span className="text-on-surface-variant">Starter</span>
-                  <span className="font-bold text-on-surface">$99/location/mo</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-on-surface-variant">Pro</span>
-                  <span className="font-bold text-on-surface">$179/location/mo</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-on-surface-variant">Annual</span>
-                  <span className="font-bold text-on-surface">~15% off</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-on-surface-variant">Onboarding</span>
-                  <span className="font-bold text-on-surface">$500/location</span>
-                </div>
-              </div>
-            </div>
-            <div className="p-md bg-tertiary-fixed rounded-xl border border-tertiary-container/20">
-              <div className="flex items-center gap-sm mb-xs text-on-tertiary-fixed">
-                <MaterialIcon name="lightbulb" className="text-[18px]" />
-                <span className="font-bold text-label-sm">Rehearse Tips</span>
-              </div>
-              <p className="text-label-sm text-[#584400] leading-relaxed">
-                Keep the opening message under 120 words. Lead with their business issue and a
-                specific trigger to ensure a higher response rate.
-              </p>
-            </div>
-          </div>
-        </aside>
         </div>
       </div>
+
+      <ReferenceLibraryDrawer
+        open={referenceLibraryOpen}
+        onClose={() => setReferenceLibraryOpen(false)}
+        stageLabel="Stage 1: Prospecting"
+        testBypass={testBypass}
+      >
+        <section>
+          <ReferenceLibrarySectionLabel>Your ICP</ReferenceLibrarySectionLabel>
+          <div className="space-y-3">
+            {(
+              [
+                { label: "Target industry", value: state.icpTargetVerticals },
+                { label: "Decision-maker role", value: state.icpDecisionMakerRole },
+                {
+                  label: "Size range",
+                  value:
+                    state.icpSizeMinLocations.trim() || state.icpSizeMaxLocations.trim()
+                      ? `${state.icpSizeMinLocations.trim() || "—"} – ${state.icpSizeMaxLocations.trim() || "—"} locations`
+                      : "",
+                },
+                {
+                  label: "Operational signals that predict fit",
+                  value: state.icpOperationalSignals,
+                },
+                { label: "Disqualifier 1", value: state.icpDisqualifier1 },
+                { label: "Disqualifier 2", value: state.icpDisqualifier2 },
+                { label: "Disqualifier 3 (optional)", value: state.icpDisqualifier3 },
+              ] as const
+            ).map((field) => (
+              <div
+                key={field.label}
+                className="bg-white rounded-lg border border-outline-variant p-md shadow-sm"
+              >
+                <p className="font-bold text-label-sm text-on-surface mb-1">{field.label}</p>
+                <p className="text-label-sm text-on-surface-variant leading-relaxed whitespace-pre-wrap">
+                  {field.value.trim() ? field.value : "Not filled in yet"}
+                </p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section>
+          <ReferenceLibrarySectionLabel>Reading List</ReferenceLibrarySectionLabel>
+          <ProspectingReadingList />
+        </section>
+
+        <section>
+          <ReferenceLibrarySectionLabel>Tempo Product</ReferenceLibrarySectionLabel>
+          <div className="bg-white rounded-lg border border-outline-variant p-md shadow-sm">
+            <p className="text-label-sm leading-relaxed text-on-surface">
+              Scheduling software for appointment-based businesses. Core value: keep calendars
+              full and stop losing money to no-shows.
+            </p>
+          </div>
+        </section>
+
+        <section>
+          <ReferenceLibrarySectionLabel>Value Drivers</ReferenceLibrarySectionLabel>
+          {[
+            { icon: "trending_down", text: "Cut no-shows" },
+            { icon: "desktop_windows", text: "Free the front desk" },
+            { icon: "nightlight", text: "Capture after-hours demand" },
+            { icon: "replay", text: "Drive repeat visits" },
+          ].map((driver) => (
+            <div
+              key={driver.text}
+              className="flex items-center gap-sm p-sm hover:bg-surface-container-low rounded-lg transition-colors"
+            >
+              <MaterialIcon name={driver.icon} className="text-secondary text-[18px]" />
+              <span className="text-label-md text-on-surface">{driver.text}</span>
+            </div>
+          ))}
+        </section>
+
+        <section>
+          <ReferenceLibrarySectionLabel>Pricing</ReferenceLibrarySectionLabel>
+          <div className="bg-white rounded-lg border border-outline-variant p-md space-y-xs text-label-sm">
+            <div className="flex justify-between">
+              <span className="text-on-surface-variant">Starter</span>
+              <span className="font-bold text-on-surface">$99/location/mo</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-on-surface-variant">Pro</span>
+              <span className="font-bold text-on-surface">$179/location/mo</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-on-surface-variant">Annual</span>
+              <span className="font-bold text-on-surface">~15% off</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-on-surface-variant">Onboarding</span>
+              <span className="font-bold text-on-surface">$500/location</span>
+            </div>
+          </div>
+        </section>
+
+        <div className="p-md bg-secondary-fixed rounded-xl border border-secondary-container/20">
+          <div className="flex items-center gap-sm mb-xs text-on-secondary-fixed">
+            <MaterialIcon name="lightbulb" className="text-[18px]" />
+            <span className="font-bold text-label-sm">Rehearse Tips</span>
+          </div>
+          <p className="text-label-sm text-on-secondary-fixed/90 leading-relaxed">
+            Focus on pain points rather than demographics. A customer&apos;s industry matters
+            less than the specific problem they are trying to solve right now.
+          </p>
+        </div>
+
+        <div className="p-md bg-tertiary-fixed rounded-xl border border-tertiary-container/20">
+          <div className="flex items-center gap-sm mb-xs text-on-tertiary-fixed">
+            <MaterialIcon name="lightbulb" className="text-[18px]" />
+            <span className="font-bold text-label-sm">Rehearse Tips</span>
+          </div>
+          <p className="text-label-sm text-[#584400] leading-relaxed">
+            Keep the opening message under 120 words. Lead with their business issue and a
+            specific trigger to ensure a higher response rate.
+          </p>
+        </div>
+      </ReferenceLibraryDrawer>
 
       {showProspectingHandoff && (
         <HandoffModal

@@ -22,6 +22,45 @@ const READING_LIST: ReadingListItem[] = [
   { title: "How We Prospect", href: null },
 ];
 
+/**
+ * Shared reading list UI (onboarding step + Reference Library drawer).
+ * Single source of READING_LIST data — do not copy the array elsewhere.
+ */
+export function ProspectingReadingList(): React.ReactElement {
+  return (
+    <section className="bg-surface-container-lowest border border-outline-variant rounded-lg shadow-sm overflow-hidden">
+      <header className="px-gutter pt-gutter pb-md border-b border-outline-variant/30">
+        <h2 className="font-headline-md text-headline-md text-on-surface">Reading List</h2>
+        <p className="font-body-md text-body-md text-on-surface-variant mt-xs">
+          Review these materials before you move on.
+        </p>
+      </header>
+      <ul className="divide-y divide-outline-variant/30">
+        {READING_LIST.map((item) => (
+          <li key={item.title}>
+            {item.href ? (
+              <a
+                href={item.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-between gap-md px-gutter py-md hover:bg-surface-container-low transition-colors"
+              >
+                <span className="font-label-md text-label-md text-on-surface">{item.title}</span>
+                <MaterialIcon name="open_in_new" className="text-on-surface-variant text-[20px]" />
+              </a>
+            ) : (
+              <div className="flex items-center justify-between gap-md px-gutter py-md opacity-60">
+                <span className="font-label-md text-label-md text-on-surface">{item.title}</span>
+                <span className="font-label-sm text-label-sm text-on-surface-variant">Coming soon</span>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 type ProspectingOnboardingStepProps = {
   attemptId: string;
   onboardingComplete: boolean;
@@ -80,36 +119,7 @@ export function ProspectingOnboardingStep({
           <TempoOnboardingVideoInline />
         </div>
 
-        <section className="bg-surface-container-lowest border border-outline-variant rounded-lg shadow-sm overflow-hidden">
-          <header className="px-gutter pt-gutter pb-md border-b border-outline-variant/30">
-            <h2 className="font-headline-md text-headline-md text-on-surface">Reading List</h2>
-            <p className="font-body-md text-body-md text-on-surface-variant mt-xs">
-              Review these materials before you move on.
-            </p>
-          </header>
-          <ul className="divide-y divide-outline-variant/30">
-            {READING_LIST.map((item) => (
-              <li key={item.title}>
-                {item.href ? (
-                  <a
-                    href={item.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center justify-between gap-md px-gutter py-md hover:bg-surface-container-low transition-colors"
-                  >
-                    <span className="font-label-md text-label-md text-on-surface">{item.title}</span>
-                    <MaterialIcon name="open_in_new" className="text-on-surface-variant text-[20px]" />
-                  </a>
-                ) : (
-                  <div className="flex items-center justify-between gap-md px-gutter py-md opacity-60">
-                    <span className="font-label-md text-label-md text-on-surface">{item.title}</span>
-                    <span className="font-label-sm text-label-sm text-on-surface-variant">Coming soon</span>
-                  </div>
-                )}
-              </li>
-            ))}
-          </ul>
-        </section>
+        <ProspectingReadingList />
       </main>
     </div>
   );
