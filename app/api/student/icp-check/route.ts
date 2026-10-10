@@ -44,8 +44,9 @@ Respond with JSON only:
 
 meetsCorrectCriteria is true only when the student's ICP clearly covers the
 correct patterns (multi-location appointment-based services, manual scheduling,
-current operational strain/growth pressure, and a real ops/tooling buyer).
-Be fair but not lenient on vague or prestige-only answers.`;
+current operational strain/growth pressure, a real ops/tooling buyer, and an
+operations-level decision-maker role that owns scheduling and front-desk
+processes). Be fair but not lenient on vague or prestige-only answers.`;
 }
 
 /**

@@ -18,6 +18,7 @@ export type ProspectingStepId =
 /** Keys on ProspectingWizardState that belong to the ICP form. */
 export const ICP_FORM_FIELD_KEYS = [
   "icpTargetVerticals",
+  "icpDecisionMakerRole",
   "icpSizeMinLocations",
   "icpSizeMaxLocations",
   "icpOperationalSignals",
@@ -163,6 +164,8 @@ export type ProspectingWizardState = {
   /** Stable step id from PROSPECTING_STEPS — never rename persisted ids. */
   currentStepId: ProspectingStepId;
   icpTargetVerticals: string;
+  /** Display label: Decision-maker role. Persisted key stays icpDecisionMakerRole. */
+  icpDecisionMakerRole: string;
   icpSizeMinLocations: string;
   icpSizeMaxLocations: string;
   icpOperationalSignals: string;
@@ -199,6 +202,7 @@ export type ProspectingWizardState = {
 export const DEFAULT_PROSPECTING_WIZARD_STATE: ProspectingWizardState = {
   currentStepId: "onboarding",
   icpTargetVerticals: "",
+  icpDecisionMakerRole: "",
   icpSizeMinLocations: "",
   icpSizeMaxLocations: "",
   icpOperationalSignals: "",
@@ -299,6 +303,7 @@ export function readIcpFormFields(
 ): Pick<
   ProspectingWizardState,
   | "icpTargetVerticals"
+  | "icpDecisionMakerRole"
   | "icpSizeMinLocations"
   | "icpSizeMaxLocations"
   | "icpOperationalSignals"
@@ -320,6 +325,7 @@ export function readIcpFormFields(
 
   return {
     icpTargetVerticals,
+    icpDecisionMakerRole: str("icpDecisionMakerRole"),
     icpSizeMinLocations: str("icpSizeMinLocations"),
     icpSizeMaxLocations: str("icpSizeMaxLocations"),
     icpOperationalSignals,
@@ -531,6 +537,7 @@ export function countWords(text: string): number {
  * Minimum trimmed character counts for ICP step advance (see isIcpDefinitionComplete).
  */
 export const ICP_MIN_TARGET_VERTICALS_CHARS = 10;
+export const ICP_MIN_DECISION_MAKER_ROLE_CHARS = 10;
 export const ICP_MIN_OPERATIONAL_SIGNALS_CHARS = 20;
 export const ICP_MIN_DISQUALIFIER_CHARS = 3;
 
@@ -548,12 +555,32 @@ export function isIcpDefinitionComplete(state: ProspectingWizardState): boolean 
 
   return (
     state.icpTargetVerticals.trim().length >= ICP_MIN_TARGET_VERTICALS_CHARS &&
+    state.icpDecisionMakerRole.trim().length >= ICP_MIN_DECISION_MAKER_ROLE_CHARS &&
     minLoc !== null &&
     maxLoc !== null &&
     maxLoc >= minLoc &&
     state.icpOperationalSignals.trim().length >= ICP_MIN_OPERATIONAL_SIGNALS_CHARS &&
     filledDisqualifiers.length >= 2
   );
+}
+
+/**
+ * Formats ICP wizard fields into one text blob for the icp-check feedback route.
+ */
+export function formatIcpTextForFeedback(state: ProspectingWizardState): string {
+  return [
+    `Target industry: ${state.icpTargetVerticals.trim()}`,
+    `Decision-maker role: ${state.icpDecisionMakerRole.trim()}`,
+    `Size range: ${state.icpSizeMinLocations.trim()}–${state.icpSizeMaxLocations.trim()} locations`,
+    `Operational signals: ${state.icpOperationalSignals.trim()}`,
+    `Disqualifier 1: ${state.icpDisqualifier1.trim()}`,
+    `Disqualifier 2: ${state.icpDisqualifier2.trim()}`,
+    state.icpDisqualifier3.trim()
+      ? `Disqualifier 3: ${state.icpDisqualifier3.trim()}`
+      : null,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
 }
 
 /**

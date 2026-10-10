@@ -13,6 +13,7 @@ import {
   canAdvanceProspectingStep,
   canSubmitProspectingBrief,
   countWords,
+  formatIcpTextForFeedback,
   DEFAULT_PROSPECTING_WIZARD_STATE,
   ICP_FORM_FIELD_KEYS,
   isIcpDefinitionComplete,
@@ -410,12 +411,14 @@ export function useProspectingWizard({
     try {
       const transcript = JSON.stringify({
         icpTargetVerticals: state.icpTargetVerticals,
+        icpDecisionMakerRole: state.icpDecisionMakerRole,
         icpSizeMinLocations: state.icpSizeMinLocations,
         icpSizeMaxLocations: state.icpSizeMaxLocations,
         icpOperationalSignals: state.icpOperationalSignals,
         icpDisqualifier1: state.icpDisqualifier1,
         icpDisqualifier2: state.icpDisqualifier2,
         icpDisqualifier3: state.icpDisqualifier3,
+        icpTextForFeedback: formatIcpTextForFeedback(state),
         companyChats: state.companyChats,
         selectedCompanyId: state.selectedCompanyId,
         chatMessages: state.chatMessages,

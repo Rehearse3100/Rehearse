@@ -18,6 +18,9 @@ export const TEMPO_ICP_CRITERIA = `
       not steady-state, comfortable operations
     - A buyer with real authority over operations/tooling decisions —
       not just whoever happens to answer the phone
+    - Decision-maker role names an operations-level role that owns
+      scheduling and front-desk processes (not a generic "anyone" or
+      pure clinical title with no ops ownership)
 
     Common WRONG patterns to catch:
     - Too generic ("any healthcare business") with no real filtering logic

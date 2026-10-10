@@ -408,7 +408,7 @@ export function ProspectingDataRoom({
                       <dl className="grid grid-cols-1 sm:grid-cols-2 gap-md text-body-md">
                         {formatVerticalLabel(selected.vertical) ? (
                           <div>
-                            <dt className="text-label-sm text-on-surface-variant uppercase">Vertical</dt>
+                            <dt className="text-label-sm text-on-surface-variant uppercase">Industry</dt>
                             <dd className="text-on-surface">{formatVerticalLabel(selected.vertical)}</dd>
                           </div>
                         ) : null}

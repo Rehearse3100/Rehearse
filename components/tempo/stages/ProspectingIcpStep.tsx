@@ -6,6 +6,7 @@
 "use client";
 
 import {
+  ICP_MIN_DECISION_MAKER_ROLE_CHARS,
   ICP_MIN_DISQUALIFIER_CHARS,
   ICP_MIN_OPERATIONAL_SIGNALS_CHARS,
   ICP_MIN_TARGET_VERTICALS_CHARS,
@@ -75,7 +76,7 @@ export function ProspectingIcpStep({
         <section className="space-y-sm">
           <div className="flex justify-between items-center">
             <label className="font-bold text-label-md text-on-surface" htmlFor="icp-target-verticals">
-              Target verticals
+              Target industry
             </label>
             <FieldCounter
               value={state.icpTargetVerticals}
@@ -83,6 +84,9 @@ export function ProspectingIcpStep({
               minChars={ICP_MIN_TARGET_VERTICALS_CHARS}
             />
           </div>
+          <p className="font-label-sm text-on-surface-variant">
+            The type of business you believe is the best fit for Tempo.
+          </p>
           <textarea
             id="icp-target-verticals"
             rows={3}
@@ -91,6 +95,34 @@ export function ProspectingIcpStep({
             placeholder="Type your answer"
             value={state.icpTargetVerticals}
             onChange={(e) => onFieldChange("icpTargetVerticals", e.target.value)}
+          />
+        </section>
+
+        <section className="space-y-sm">
+          <div className="flex justify-between items-center">
+            <label
+              className="font-bold text-label-md text-on-surface"
+              htmlFor="icp-decision-maker-role"
+            >
+              Decision-maker role
+            </label>
+            <FieldCounter
+              value={state.icpDecisionMakerRole}
+              maxLength={FIELD_MAX_LENGTH}
+              minChars={ICP_MIN_DECISION_MAKER_ROLE_CHARS}
+            />
+          </div>
+          <p className="font-label-sm text-on-surface-variant">
+            Who at the company do you expect to own this purchase decision? Describe their role.
+          </p>
+          <textarea
+            id="icp-decision-maker-role"
+            rows={3}
+            maxLength={FIELD_MAX_LENGTH}
+            className="w-full p-md bg-surface-container-lowest border border-outline-variant rounded-lg focus:ring-2 focus:ring-secondary-container focus:border-secondary focus:outline-none font-body-md resize-y"
+            placeholder="Type your answer"
+            value={state.icpDecisionMakerRole}
+            onChange={(e) => onFieldChange("icpDecisionMakerRole", e.target.value)}
           />
         </section>
 

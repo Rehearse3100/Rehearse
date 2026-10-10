@@ -18,6 +18,7 @@ import {
 
 const COMPLETE_ICP = {
   icpTargetVerticals: "Multi-location dental and specialty clinics",
+  icpDecisionMakerRole: "Director of Operations owning scheduling and front desk",
   icpSizeMinLocations: "3",
   icpSizeMaxLocations: "12",
   icpOperationalSignals: "Manual phone scheduling, rising no-shows, after-hours demand",

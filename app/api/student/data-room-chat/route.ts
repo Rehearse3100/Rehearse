@@ -115,7 +115,7 @@ function formatDirectoryFacts(row: RosterCompany): string {
   const lines: string[] = [];
   const vertical = row.vertical?.trim();
   if (vertical) {
-    lines.push(`Vertical: ${formatVerticalLabel(vertical)}`);
+    lines.push(`Industry: ${formatVerticalLabel(vertical)}`);
   }
   if (typeof row.locations === "number" && Number.isFinite(row.locations)) {
     lines.push(`Locations: ${row.locations}`);

@@ -30,6 +30,7 @@ export function isGateBypassEnabled(): boolean {
 /** ICP placeholders — satisfy isIcpDefinitionComplete when fields are empty. */
 export const TEST_BYPASS_ICP = {
   icpTargetVerticals: `${TEST_BYPASS_PREFIX} Multi-location dental and specialty clinics`,
+  icpDecisionMakerRole: `${TEST_BYPASS_PREFIX} Director of Operations owning scheduling and front-desk processes`,
   icpSizeMinLocations: "5",
   icpSizeMaxLocations: "20",
   icpOperationalSignals: `${TEST_BYPASS_PREFIX} Manual phone scheduling, rising no-shows, after-hours demand`,
@@ -88,6 +89,9 @@ export function applyWizardAutofill(state: ProspectingWizardState): ProspectingW
 
   if (!next.icpTargetVerticals.trim()) {
     next.icpTargetVerticals = TEST_BYPASS_ICP.icpTargetVerticals;
+  }
+  if (!next.icpDecisionMakerRole.trim()) {
+    next.icpDecisionMakerRole = TEST_BYPASS_ICP.icpDecisionMakerRole;
   }
   if (!next.icpSizeMinLocations.trim()) {
     next.icpSizeMinLocations = TEST_BYPASS_ICP.icpSizeMinLocations;

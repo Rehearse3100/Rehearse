@@ -20,6 +20,7 @@ function withState(
 
 const COMPLETE_ICP: Partial<ProspectingWizardState> = {
   icpTargetVerticals: "Multi-location dental and specialty clinics",
+  icpDecisionMakerRole: "Director of Operations owning scheduling and front desk",
   icpSizeMinLocations: "3",
   icpSizeMaxLocations: "12",
   icpOperationalSignals: "Manual phone scheduling, rising no-shows, after-hours demand",
@@ -54,6 +55,12 @@ describe("canAdvanceProspectingStep", () => {
 
   it("icp: blocks until ICP definition is complete", () => {
     expect(canAdvanceProspectingStep("icp", withState({}))).toBe(false);
+    expect(
+      canAdvanceProspectingStep(
+        "icp",
+        withState({ ...COMPLETE_ICP, icpDecisionMakerRole: "" })
+      )
+    ).toBe(false);
     expect(canAdvanceProspectingStep("icp", withState(COMPLETE_ICP))).toBe(true);
   });
 
