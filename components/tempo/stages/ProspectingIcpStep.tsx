@@ -88,7 +88,7 @@ export function ProspectingIcpStep({
             rows={3}
             maxLength={FIELD_MAX_LENGTH}
             className="w-full p-md bg-surface-container-lowest border border-outline-variant rounded-lg focus:ring-2 focus:ring-secondary-container focus:border-secondary focus:outline-none font-body-md resize-y"
-            placeholder="Example: Multi-location dental groups, specialty clinics expanding regionally..."
+            placeholder="Type your answer"
             value={state.icpTargetVerticals}
             onChange={(e) => onFieldChange("icpTargetVerticals", e.target.value)}
           />
@@ -110,7 +110,7 @@ export function ProspectingIcpStep({
                 min={1}
                 inputMode="numeric"
                 className="w-full bg-surface-container-lowest border border-outline-variant rounded-lg focus:ring-2 focus:ring-secondary p-md font-body-md"
-                placeholder="e.g. 2"
+                placeholder="Type your answer"
                 value={state.icpSizeMinLocations}
                 onChange={(e) => onFieldChange("icpSizeMinLocations", e.target.value)}
               />
@@ -125,7 +125,7 @@ export function ProspectingIcpStep({
                 min={1}
                 inputMode="numeric"
                 className="w-full bg-surface-container-lowest border border-outline-variant rounded-lg focus:ring-2 focus:ring-secondary p-md font-body-md"
-                placeholder="e.g. 20"
+                placeholder="Type your answer"
                 value={state.icpSizeMaxLocations}
                 onChange={(e) => onFieldChange("icpSizeMaxLocations", e.target.value)}
               />
@@ -160,7 +160,7 @@ export function ProspectingIcpStep({
             rows={5}
             maxLength={FIELD_MAX_LENGTH}
             className="w-full p-md bg-surface-container-lowest border border-outline-variant rounded-lg focus:ring-2 focus:ring-secondary-container focus:border-secondary focus:outline-none font-body-md resize-y"
-            placeholder="Example: Recent location openings, front desk hiring spikes, manual scheduling bottlenecks across sites..."
+            placeholder="Type your answer"
             value={state.icpOperationalSignals}
             onChange={(e) => onFieldChange("icpOperationalSignals", e.target.value)}
           />
@@ -219,13 +219,7 @@ export function ProspectingIcpStep({
                   type="text"
                   maxLength={DISQUALIFIER_MAX_LENGTH}
                   className="w-full bg-surface-container-lowest border border-outline-variant rounded-lg focus:ring-2 focus:ring-secondary p-md font-body-md"
-                  placeholder={
-                    field.key === "icpDisqualifier1"
-                      ? "e.g. Single-location solo practice"
-                      : field.key === "icpDisqualifier2"
-                        ? "e.g. No appointment-based scheduling workflow"
-                        : "e.g. Already locked into a multi-year competitor contract"
-                  }
+                  placeholder="Type your answer"
                   value={state[field.key]}
                   onChange={(e) => onFieldChange(field.key, e.target.value)}
                 />

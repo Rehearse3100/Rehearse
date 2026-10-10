@@ -46,33 +46,33 @@ const FIELD_DEFS: {
   {
     key: "companyName",
     label: "Company Name",
-    placeholder: "Company name",
+    placeholder: "Type your answer",
   },
   {
     key: "contactName",
     label: "Contact Name",
-    placeholder: "Primary contact name",
+    placeholder: "Type your answer",
   },
   {
     key: "contactTitle",
     label: "Contact Title",
-    placeholder: "e.g. Practice Manager",
+    placeholder: "Type your answer",
   },
   {
     key: "whyFit",
     label: "Why This Account Is a Fit",
-    placeholder: "Why does this account match your ICP?",
+    placeholder: "Type your answer",
     multiline: true,
   },
   {
     key: "trigger",
     label: "Trigger Event",
-    placeholder: "What timing signal makes this worth pursuing now?",
+    placeholder: "Type your answer",
   },
   {
     key: "nextStep",
     label: "Next Step",
-    placeholder: "What will you do next with this lead?",
+    placeholder: "Type your answer",
   },
 ];
 

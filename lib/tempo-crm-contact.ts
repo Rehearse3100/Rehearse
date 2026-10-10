@@ -19,13 +19,13 @@ export const CRM_CONTACT_FIELD_SCHEMA: CrmContactFieldDef[] = [
   {
     key: "name",
     label: "Full Name",
-    placeholder: "e.g. Dana Reyes",
+    placeholder: "Type your answer",
     required: true,
   },
   {
     key: "position",
     label: "Position / Title",
-    placeholder: "e.g. Director of Operations",
+    placeholder: "Type your answer",
     required: true,
   },
 ];

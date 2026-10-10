@@ -172,7 +172,7 @@ export function ProspectingShortlistForm({
                 setValues((prev) => ({ ...prev, decisionMakerRationale: e.target.value }))
               }
               rows={3}
-              placeholder="Why does this person own the buying decision?"
+              placeholder="Type your answer"
               className="w-full px-3 py-2 rounded-lg border border-outline-variant bg-white text-on-surface text-sm resize-none outline-none focus:ring-2 focus:ring-secondary/40"
             />
           </label>
@@ -185,7 +185,7 @@ export function ProspectingShortlistForm({
               value={values.whyFit}
               onChange={(e) => setValues((prev) => ({ ...prev, whyFit: e.target.value }))}
               rows={3}
-              placeholder="Why does this account match your ICP?"
+              placeholder="Type your answer"
               className="w-full px-3 py-2 rounded-lg border border-outline-variant bg-white text-on-surface text-sm resize-none outline-none focus:ring-2 focus:ring-secondary/40"
             />
           </label>
@@ -196,7 +196,7 @@ export function ProspectingShortlistForm({
               type="text"
               value={values.trigger}
               onChange={(e) => setValues((prev) => ({ ...prev, trigger: e.target.value }))}
-              placeholder="What timing signal makes this worth pursuing now?"
+              placeholder="Type your answer"
               className="w-full h-10 px-3 rounded-lg border border-outline-variant bg-white text-on-surface text-sm outline-none focus:ring-2 focus:ring-secondary/40"
             />
           </label>
@@ -207,7 +207,7 @@ export function ProspectingShortlistForm({
               type="text"
               value={values.nextStep}
               onChange={(e) => setValues((prev) => ({ ...prev, nextStep: e.target.value }))}
-              placeholder="What will you do next with this lead?"
+              placeholder="Type your answer"
               className="w-full h-10 px-3 rounded-lg border border-outline-variant bg-white text-on-surface text-sm outline-none focus:ring-2 focus:ring-secondary/40"
             />
           </label>

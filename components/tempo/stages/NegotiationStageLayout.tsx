@@ -482,7 +482,7 @@ export function NegotiationStageLayout({
                       <div className="bg-surface-container-lowest border border-outline-variant rounded-xl p-1 focus-within:border-secondary transition-all shadow-sm">
                         <textarea
                           className="w-full h-40 p-4 bg-transparent border-none focus:ring-0 text-body-md resize-none placeholder:text-on-surface-variant/50 outline-none"
-                          placeholder="Draft your formal response here. Reference the levers in your sidebar..."
+                          placeholder="Type your answer"
                           value={currentResponse}
                           onChange={(e) => onResponseChange(e.target.value)}
                         />
@@ -562,7 +562,7 @@ export function NegotiationStageLayout({
                         </label>
                         <textarea
                           className="w-full p-4 bg-surface-container rounded-lg border border-outline-variant font-mono-code text-body-md h-40 resize-none focus:ring-2 focus:ring-secondary/20 focus:border-secondary outline-none transition-all"
-                          placeholder="Paste the exact prompts you used..."
+                          placeholder="Type your answer"
                           value={aiWork.prompts}
                           onChange={(e) => onAiWorkChange("prompts", e.target.value)}
                         />
@@ -573,7 +573,7 @@ export function NegotiationStageLayout({
                         </label>
                         <textarea
                           className="w-full p-4 bg-surface-container rounded-lg border border-outline-variant text-body-md h-40 resize-none focus:ring-2 focus:ring-secondary/20 focus:border-secondary outline-none transition-all"
-                          placeholder="What did the AI get wrong? What did you change and why?"
+                          placeholder="Type your answer"
                           value={aiWork.corrections}
                           onChange={(e) => onAiWorkChange("corrections", e.target.value)}
                         />

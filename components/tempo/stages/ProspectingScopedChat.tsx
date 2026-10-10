@@ -187,7 +187,7 @@ export function ProspectingScopedChat({
           <div className="relative flex items-center">
             <textarea
               className="w-full bg-surface-container-lowest border border-outline-variant rounded-xl py-3 pl-4 pr-14 text-body-md focus:ring-2 focus:ring-secondary focus:border-transparent outline-none resize-none shadow-sm"
-              placeholder={`Ask about ${company.name}...`}
+              placeholder="Type a message"
               rows={1}
               value={chatInput}
               onChange={(e) => onChatInputChange(e.target.value)}

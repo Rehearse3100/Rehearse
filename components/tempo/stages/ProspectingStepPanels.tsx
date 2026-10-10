@@ -145,7 +145,7 @@ export function ProspectingStepPanels({
           <div className="relative min-w-0">
             <textarea
               className="w-full h-64 p-lg rounded-lg border border-outline focus:ring-2 focus:ring-secondary-container focus:border-secondary font-body-md text-body-lg resize-none leading-relaxed"
-              placeholder="Write your opening message here..."
+              placeholder="Type your answer"
               value={state.openingMessage}
               onChange={(e) => onFieldChange("openingMessage", e.target.value)}
             />

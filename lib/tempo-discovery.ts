@@ -47,15 +47,14 @@ export const DISCOVERY_SUMMARY_FIELDS = [
     id: "businessIssue" as const,
     label: "Business Issue",
     helper: "What is the high-level business problem Dana mentioned?",
-    placeholder:
-      "e.g., Summit Dental is losing approximately X% of appointments to no-shows each month...",
+    placeholder: "Type your answer",
     rows: 4,
   },
   {
     id: "keyProblems" as const,
     label: "Key Problems",
     helper: "What specific operational or technical hurdles are in their way?",
-    placeholder: "List the problems identified during discovery...",
+    placeholder: "Type your answer",
     rows: 4,
   },
   {
@@ -63,7 +62,7 @@ export const DISCOVERY_SUMMARY_FIELDS = [
     label: "Quantified Value",
     helper:
       "What are the hard metrics: no-show rates, hours lost, appointment volume?",
-    placeholder: "e.g., Dana estimated their no-show rate at around 1 in 6 appointments...",
+    placeholder: "Type your answer",
     rows: 4,
   },
   {
@@ -71,14 +70,14 @@ export const DISCOVERY_SUMMARY_FIELDS = [
     label: "Personal Value",
     helper:
       "What does success mean for Dana personally: her reputation, her staff, her relationship with Dr. Kim?",
-    placeholder: "Individual motivations and personal drivers...",
+    placeholder: "Type your answer",
     rows: 3,
   },
   {
     id: "nextStep" as const,
     label: "Next Step",
     helper: "What is the definitive next action committed to in the call?",
-    placeholder: "e.g., Dana agreed to a presentation with her and Dr. Kim next week...",
+    placeholder: "Type your answer",
     rows: 3,
   },
 ] as const;

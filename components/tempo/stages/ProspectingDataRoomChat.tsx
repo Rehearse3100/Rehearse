@@ -442,7 +442,7 @@ export function ProspectingDataRoomChat({
               placeholder={
                 attachedIds.length === 0
                   ? "Attach documents to enable chat..."
-                  : "Ask about the attached documents..."
+                  : "Type a message"
               }
               rows={1}
               value={chatInput}

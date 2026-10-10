@@ -163,7 +163,7 @@ export function PresentationStageLayout({
                   name="business-case"
                   rows={3}
                   className={FORM_TEXTAREA}
-                  placeholder="e.g., Summit Dental is losing $138,240/month due to an 18% no-show rate..."
+                  placeholder="Type your answer"
                   value={form.businessCase}
                   onChange={(e) => onUpdateField("businessCase", e.target.value)}
                 />
@@ -188,7 +188,7 @@ export function PresentationStageLayout({
                   name="pain-points"
                   rows={3}
                   className={FORM_TEXTAREA}
-                  placeholder="e.g., Front desk staff is overwhelmed by manual calls, leading to dropped follow-ups..."
+                  placeholder="Type your answer"
                   value={form.underlyingPainPoints}
                   onChange={(e) => onUpdateField("underlyingPainPoints", e.target.value)}
                 />
@@ -213,7 +213,7 @@ export function PresentationStageLayout({
                   name="solution"
                   rows={4}
                   className={FORM_TEXTAREA}
-                  placeholder="e.g., Automated reminders and self-service booking would directly reduce the no-show rate and free up front-desk time..."
+                  placeholder="Type your answer"
                   value={form.solution}
                   onChange={(e) => onUpdateField("solution", e.target.value)}
                 />
@@ -251,7 +251,7 @@ export function PresentationStageLayout({
                     name="proof-point"
                     type="text"
                     className={FORM_INPUT}
-                    placeholder="e.g., Similar clinics saw a 35% reduction in no-shows within 90 days..."
+                    placeholder="Type your answer"
                     value={form.proofPoint}
                     onChange={(e) => onUpdateField("proofPoint", e.target.value)}
                   />
@@ -277,7 +277,7 @@ export function PresentationStageLayout({
                   name="power-stakeholder"
                   rows={4}
                   className={FORM_TEXTAREA}
-                  placeholder="Dr. Kim holds final approval on this decision — how will you speak directly to his concerns while still addressing Dana's day-to-day perspective?"
+                  placeholder="Type your answer"
                   value={form.powerStakeholder}
                   onChange={(e) => onUpdateField("powerStakeholder", e.target.value)}
                 />
@@ -302,7 +302,7 @@ export function PresentationStageLayout({
                   name="next-step"
                   type="text"
                   className={FORM_INPUT}
-                  placeholder="e.g., Secure commitment for a 14-day pilot at one location..."
+                  placeholder="Type your answer"
                   value={form.nextStep}
                   onChange={(e) => onUpdateField("nextStep", e.target.value)}
                 />

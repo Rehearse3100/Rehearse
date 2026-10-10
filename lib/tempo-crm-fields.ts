@@ -21,12 +21,12 @@ export const CRM_STAGE_FIELD_SCHEMA: Record<
     {
       key: "businessIssue",
       label: "Business Issue Identified",
-      placeholder: "e.g. Inefficient scheduling workflow",
+      placeholder: "Type your answer",
     },
     {
       key: "quantifiedValue",
       label: "Quantified Value, if known",
-      placeholder: "0.00",
+      placeholder: "Type your answer",
       prefix: "$",
     },
     {
@@ -39,80 +39,80 @@ export const CRM_STAGE_FIELD_SCHEMA: Record<
     {
       key: "stakeholders",
       label: "Other Stakeholders Involved",
-      placeholder: "Comma separated names...",
+      placeholder: "Type your answer",
     },
     {
       key: "nextStep",
       label: "Next Step",
-      placeholder: "Schedule follow-up demo",
+      placeholder: "Type your answer",
     },
   ],
   presentation: [
     {
       key: "whatProposed",
       label: "What You Proposed",
-      placeholder: "Summarize the Tempo offer you presented...",
+      placeholder: "Type your answer",
       multiline: true,
     },
     {
       key: "stakeholderReaction",
       label: "Stakeholder Reaction",
-      placeholder: "How did Dana / the team respond?",
+      placeholder: "Type your answer",
       multiline: true,
     },
     {
       key: "anticipatedObjections",
       label: "Anticipated Objections",
-      placeholder: "What pushback do you expect next?",
+      placeholder: "Type your answer",
       multiline: true,
     },
     {
       key: "nextStep",
       label: "Next Step",
-      placeholder: "e.g. Objection-handling call with Dr. Kim",
+      placeholder: "Type your answer",
     },
   ],
   objections: [
     {
       key: "objectionsRaised",
       label: "Objections Raised",
-      placeholder: "List the objections Dr. Kim raised...",
+      placeholder: "Type your answer",
       multiline: true,
     },
     {
       key: "howResolved",
       label: "How You Resolved Them",
-      placeholder: "Describe how you handled each concern...",
+      placeholder: "Type your answer",
       multiline: true,
     },
     {
       key: "remainingConcerns",
       label: "Remaining Concerns",
-      placeholder: "Anything still open?",
+      placeholder: "Type your answer",
       multiline: true,
     },
     {
       key: "nextStep",
       label: "Next Step",
-      placeholder: "e.g. Move to commercial negotiation",
+      placeholder: "Type your answer",
     },
   ],
   close: [
     {
       key: "termsDiscussed",
       label: "Terms Discussed",
-      placeholder: "Pricing, seats, billing, onboarding...",
+      placeholder: "Type your answer",
       multiline: true,
     },
     {
       key: "outcome",
       label: "Outcome",
-      placeholder: "e.g. Deal agreed / Partial close / Walked",
+      placeholder: "Type your answer",
     },
     {
       key: "closeNotes",
       label: "Close Notes",
-      placeholder: "Final notes on the negotiation...",
+      placeholder: "Type your answer",
       multiline: true,
     },
   ],

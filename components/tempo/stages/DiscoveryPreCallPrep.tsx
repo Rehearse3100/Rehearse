@@ -75,7 +75,7 @@ export function DiscoveryPreCallPrep({
               <input
                 type="text"
                 className={FIELD_INPUT}
-                placeholder="Walk me through how scheduling works across your locations today."
+                placeholder="Type your answer"
                 value={form.openQuestions[0]}
                 onChange={(e) => updateOpenQuestion(0, e.target.value)}
               />
@@ -110,7 +110,7 @@ export function DiscoveryPreCallPrep({
             <textarea
               className={FIELD_TEXTAREA}
               rows={3}
-              placeholder="When the front desk is tied up on the phone, what happens to the patients waiting in the lobby?"
+              placeholder="Type your answer"
               value={form.anticipatedProbe}
               onChange={(e) => onChange({ ...form, anticipatedProbe: e.target.value })}
             />
@@ -129,7 +129,7 @@ export function DiscoveryPreCallPrep({
             <textarea
               className={FIELD_TEXTAREA}
               rows={3}
-              placeholder="So if I'm hearing you right, the hold times got noticeably worse after the 8th location opened?"
+              placeholder="Type your answer"
               value={form.anticipatedConfirm}
               onChange={(e) => onChange({ ...form, anticipatedConfirm: e.target.value })}
             />

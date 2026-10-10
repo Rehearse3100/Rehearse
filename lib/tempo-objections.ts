@@ -55,36 +55,31 @@ export const OBJECTION_SUMMARY_FIELDS: {
     id: "objectionsRaised",
     label: "1. Objections Raised",
     helper: "List the specific points where Dr. Kim expressed hesitation or resistance.",
-    placeholder:
-      "e.g. Dr. Kim opened with a concern about the total cost across 8 locations. He then raised concerns about front desk adoption...",
+    placeholder: "Type your answer",
   },
   {
     id: "rootConcerns",
     label: "2. Root Concerns",
     helper: "What was the underlying fear or pain point behind their objections?",
-    placeholder:
-      "e.g. Behind the price objection, Dr. Kim seemed to doubt whether the no-show recovery would actually materialize...",
+    placeholder: "Type your answer",
   },
   {
     id: "howYouResponded",
     label: "3. How You Responded",
     helper: "Summarize your strategy for addressing these concerns. Did you acknowledge first?",
-    placeholder:
-      "e.g. For the price objection, I acknowledged that the total cost feels significant, then reframed it against the $138k/month they're losing...",
+    placeholder: "Type your answer",
   },
   {
     id: "priceAndDiscounting",
     label: "4. Price and Discounting",
     helper: "Record any specific mentions of pricing. Did you hold firm or concede? What did you trade for it?",
-    placeholder:
-      "e.g. I held price but offered to waive the onboarding fee on the first location as a show of good faith...",
+    placeholder: "Type your answer",
   },
   {
     id: "nextStep",
     label: "5. Next Step",
     helper: "What is the definitive action item agreed upon for the Negotiation phase?",
-    placeholder:
-      "e.g. Dr. Kim agreed to move forward with a discussion on final terms...",
+    placeholder: "Type your answer",
   },
 ];
 

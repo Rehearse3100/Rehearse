@@ -281,7 +281,7 @@ export function ContactRecordView({
               ) : (
                 <textarea
                   className="w-full min-h-[140px] bg-[#eef5f2] border border-[#bfc8c8] rounded-md px-4 py-3 text-sm focus:ring-2 focus:ring-[#0f4c4c] focus:border-[#0f4c4c] outline-none transition-all placeholder:text-[#bfc8c8] resize-y"
-                  placeholder="Priorities, rapport, last conversation, personal drivers…"
+                  placeholder="Type your answer"
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                 />
