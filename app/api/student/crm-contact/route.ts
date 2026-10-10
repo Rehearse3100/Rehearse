@@ -10,6 +10,11 @@ import {
   emptyContactFields,
   type CrmContactKey,
 } from "@/lib/tempo-crm-contact";
+import { isGateBypassEnabled } from "@/lib/tempo-test-bypass";
+import {
+  stripTestBypassRecord,
+  stripTestBypassString,
+} from "@/lib/tempo-test-bypass-client";
 import { createServiceClient } from "@/lib/supabase/server";
 
 /**
@@ -210,11 +215,52 @@ export async function GET(request: Request): Promise<NextResponse> {
       data = withFields.data;
     }
 
-    const notes = resolveContactNotes(data?.notes);
-    const fields = resolveContactFields(data?.fields, data?.notes);
+    let notes = resolveContactNotes(data?.notes);
+    let fields = resolveContactFields(data?.fields, data?.notes);
+    let role = (data?.role as string | undefined) ?? "";
+
+    // Bypass off: clear leftover [TEST] autofill so CRM text fields stay clean.
+    if (!isGateBypassEnabled() && data) {
+      const strippedFields = stripTestBypassRecord(fields);
+      const strippedNotes = stripTestBypassString(notes);
+      const strippedRole = stripTestBypassString(role);
+      const fieldsChanged =
+        JSON.stringify(strippedFields) !== JSON.stringify(fields);
+      const notesChanged = strippedNotes !== notes;
+      const roleChanged = strippedRole !== role;
+      if (fieldsChanged || notesChanged || roleChanged) {
+        fields = strippedFields;
+        notes = strippedNotes;
+        role = strippedRole;
+        const updatedAt = new Date().toISOString();
+        const { error: persistError } = await supabase
+          .from("crm_contact_notes")
+          .upsert(
+            {
+              attempt_id: attemptId,
+              contact_key: contactKey,
+              role,
+              notes,
+              fields,
+              updated_at: updatedAt,
+            },
+            { onConflict: "attempt_id,contact_key" }
+          );
+        if (persistError) {
+          console.error("[crm-contact] strip persist failed:", persistError);
+        } else {
+          return NextResponse.json({
+            role,
+            notes,
+            fields,
+            updated_at: updatedAt,
+          });
+        }
+      }
+    }
 
     return NextResponse.json({
-      role: (data?.role as string | undefined) ?? "",
+      role,
       notes,
       fields,
       updated_at: (data?.updated_at as string | null | undefined) ?? null,

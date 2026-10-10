@@ -24,6 +24,7 @@ import {
 } from "@/lib/tempo-negotiation";
 import {
   applyNegotiationAutofill,
+  stripNegotiationTestAutofill,
   TEST_BYPASS_PREFIX,
 } from "@/lib/tempo-test-bypass-client";
 import type { ChatMessage } from "@/types";
@@ -118,9 +119,11 @@ export function useNegotiationStage({
   useEffect(() => {
     const stored = loadNegotiationFromStorage(attemptId);
     const base = stored ?? createInitialNegotiationData();
-    const next = testBypass ? applyNegotiationAutofill(base) : base;
+    const next = testBypass
+      ? applyNegotiationAutofill(base)
+      : stripNegotiationTestAutofill(base);
     setData(next);
-    if (testBypass) {
+    if (testBypass || JSON.stringify(next) !== JSON.stringify(base)) {
       persistData(next);
     }
     setIsLoading(false);

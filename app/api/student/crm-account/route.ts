@@ -5,6 +5,11 @@
 
 import { NextResponse } from "next/server";
 import { requireStudentApi } from "@/lib/api-auth";
+import { isGateBypassEnabled } from "@/lib/tempo-test-bypass";
+import {
+  stripTestBypassRecord,
+  stripTestBypassString,
+} from "@/lib/tempo-test-bypass-client";
 import { createServiceClient } from "@/lib/supabase/server";
 
 type AccountBody = {
@@ -80,9 +85,46 @@ export async function GET(request: Request): Promise<NextResponse> {
       return NextResponse.json({ error: "Could not load account." }, { status: 500 });
     }
 
+    let notes = (data?.notes as string | undefined) ?? "";
+    let fields = normalizeFields(data?.fields);
+
+    // Bypass off: clear leftover [TEST] autofill so CRM text fields stay clean.
+    if (!isGateBypassEnabled() && data) {
+      const strippedFields = stripTestBypassRecord(fields);
+      const strippedNotes = stripTestBypassString(notes);
+      const fieldsChanged =
+        JSON.stringify(strippedFields) !== JSON.stringify(fields);
+      const notesChanged = strippedNotes !== notes;
+      if (fieldsChanged || notesChanged) {
+        fields = strippedFields;
+        notes = strippedNotes;
+        const updatedAt = new Date().toISOString();
+        const { error: persistError } = await supabase
+          .from("crm_account_notes")
+          .upsert(
+            {
+              attempt_id: attemptId,
+              notes,
+              fields,
+              updated_at: updatedAt,
+            },
+            { onConflict: "attempt_id" }
+          );
+        if (persistError) {
+          console.error("[crm-account] strip persist failed:", persistError);
+        } else {
+          return NextResponse.json({
+            notes,
+            fields,
+            updated_at: updatedAt,
+          });
+        }
+      }
+    }
+
     return NextResponse.json({
-      notes: (data?.notes as string | undefined) ?? "",
-      fields: normalizeFields(data?.fields),
+      notes,
+      fields,
       updated_at: (data?.updated_at as string | null | undefined) ?? null,
     });
   } catch {

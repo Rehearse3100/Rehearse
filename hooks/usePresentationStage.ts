@@ -18,7 +18,10 @@ import {
   savePresentationToStorage,
   type PresentationForm,
 } from "@/lib/tempo-presentation";
-import { applyPresentationAutofill } from "@/lib/tempo-test-bypass-client";
+import {
+  applyPresentationAutofill,
+  stripPresentationTestAutofill,
+} from "@/lib/tempo-test-bypass-client";
 
 type UsePresentationStageOptions = {
   attemptId: string;
@@ -84,6 +87,12 @@ export function usePresentationStage({
             let normalized = normalizePresentationForm(raw);
             if (testBypass) {
               normalized = applyPresentationAutofill(normalized);
+            } else {
+              const stripped = stripPresentationTestAutofill(normalized);
+              if (JSON.stringify(stripped) !== JSON.stringify(normalized)) {
+                normalized = stripped;
+                void persistForm(normalized);
+              }
             }
             setForm(normalized);
             savePresentationToStorage(attemptId, normalized);
@@ -92,21 +101,25 @@ export function usePresentationStage({
             }
           }
         } else if (!cancelled) {
+          const base = local ?? EMPTY_PRESENTATION_FORM;
           const next = testBypass
-            ? applyPresentationAutofill(local ?? EMPTY_PRESENTATION_FORM)
-            : local ?? EMPTY_PRESENTATION_FORM;
+            ? applyPresentationAutofill(base)
+            : stripPresentationTestAutofill(base);
           setForm(next);
-          if (testBypass) {
+          savePresentationToStorage(attemptId, next);
+          if (testBypass || JSON.stringify(next) !== JSON.stringify(base)) {
             void persistForm(next);
           }
         }
       } catch {
         if (!cancelled) {
+          const base = local ?? EMPTY_PRESENTATION_FORM;
           const next = testBypass
-            ? applyPresentationAutofill(local ?? EMPTY_PRESENTATION_FORM)
-            : local ?? EMPTY_PRESENTATION_FORM;
+            ? applyPresentationAutofill(base)
+            : stripPresentationTestAutofill(base);
           setForm(next);
-          if (testBypass) {
+          savePresentationToStorage(attemptId, next);
+          if (testBypass || JSON.stringify(next) !== JSON.stringify(base)) {
             void persistForm(next);
           }
         }

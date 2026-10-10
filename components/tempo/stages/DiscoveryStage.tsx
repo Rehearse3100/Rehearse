@@ -33,7 +33,10 @@ import {
   TEMPO_HANDOFF_MESSAGES,
   TEMPO_HANDOFF_STAGE_META,
 } from "@/lib/tempo-prospecting";
-import { applyDiscoveryPrepAutofill } from "@/lib/tempo-test-bypass-client";
+import {
+  applyDiscoveryPrepAutofill,
+  stripDiscoveryPrepTestAutofill,
+} from "@/lib/tempo-test-bypass-client";
 
 type DiscoveryStageProps = {
   attemptId: string;
@@ -102,6 +105,8 @@ export function DiscoveryStage({
 
     if (testBypass) {
       nextForm = applyDiscoveryPrepAutofill(nextForm);
+    } else {
+      nextForm = stripDiscoveryPrepTestAutofill(nextForm);
     }
 
     setPrepForm(nextForm);

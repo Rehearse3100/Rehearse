@@ -11,6 +11,7 @@ import {
   type ProspectingWizardState,
 } from "@/lib/tempo-prospecting";
 import { isGateBypassEnabled, prepareTempoTestBypass } from "@/lib/tempo-test-bypass";
+import { stripWizardTestAutofill } from "@/lib/tempo-test-bypass-client";
 import { revalidateStudentAttemptSurfaces } from "@/lib/revalidate-student-progress";
 import { createServiceClient } from "@/lib/supabase/server";
 
@@ -68,6 +69,25 @@ export async function GET(request: Request): Promise<NextResponse> {
         .eq("id", attemptId);
       if (persistError) {
         console.error("[prospecting-wizard] bypass persist failed:", persistError);
+      } else {
+        revalidateStudentAttemptSurfaces({
+          classId: (attempt.class_id as string | null) ?? null,
+          simulationId: (attempt.simulation_id as string | null) ?? null,
+        });
+      }
+    }
+  } else {
+    // Bypass off: clear leftover [TEST] autofill so it cannot leak into normal mode.
+    const stripped = stripWizardTestAutofill(state);
+    if (JSON.stringify(stripped) !== JSON.stringify(state)) {
+      state = stripped;
+      const existing = (attempt.stage_data ?? {}) as Record<string, unknown>;
+      const { error: persistError } = await supabase
+        .from("attempts")
+        .update({ stage_data: { ...existing, ...state } })
+        .eq("id", attemptId);
+      if (persistError) {
+        console.error("[prospecting-wizard] strip persist failed:", persistError);
       } else {
         revalidateStudentAttemptSurfaces({
           classId: (attempt.class_id as string | null) ?? null,

@@ -25,6 +25,7 @@ import {
   type ProspectingStepId,
   type ProspectingWizardState,
 } from "@/lib/tempo-prospecting";
+import { stripWizardTestAutofill } from "@/lib/tempo-test-bypass-client";
 import type { ChatMessage } from "@/types";
 
 type UseProspectingWizardOptions = {
@@ -119,8 +120,15 @@ export function useProspectingWizard({
             state: ProspectingWizardState;
           };
           nextState = normalizeProspectingWizardState(body.state);
-          saveProspectingWizardToStorage(attemptId, nextState);
           // testBypass comes only from the server page prop — never from this API body.
+        }
+
+        // Bypass off: strip [TEST] leftovers from API/local draft before they reach the UI.
+        let strippedTestAutofill = false;
+        if (!testBypass) {
+          const stripped = stripWizardTestAutofill(nextState);
+          strippedTestAutofill = JSON.stringify(stripped) !== JSON.stringify(nextState);
+          nextState = stripped;
         }
 
         const icpFieldsDone = isIcpDefinitionComplete(nextState);
@@ -138,13 +146,20 @@ export function useProspectingWizard({
               : nextState.currentStepId,
         };
         saveProspectingWizardToStorage(attemptId, nextState);
+        if (strippedTestAutofill) {
+          void persistState(nextState);
+        }
 
         if (!cancelled) {
           setState(nextState);
         }
       } catch {
         if (local && !cancelled) {
-          setState(normalizeProspectingWizardState(local));
+          const fallback = testBypass
+            ? normalizeProspectingWizardState(local)
+            : stripWizardTestAutofill(normalizeProspectingWizardState(local));
+          setState(fallback);
+          saveProspectingWizardToStorage(attemptId, fallback);
         }
       } finally {
         if (!cancelled) {
@@ -157,7 +172,7 @@ export function useProspectingWizard({
     return () => {
       cancelled = true;
     };
-  }, [attemptId, testBypass]);
+  }, [attemptId, persistState, testBypass]);
 
   const updateField = useCallback(
     <K extends keyof ProspectingWizardState>(key: K, value: ProspectingWizardState[K]): void => {

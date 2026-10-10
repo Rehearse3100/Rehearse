@@ -13,6 +13,8 @@ import {
   type PresentationForm,
   type PresentationStageData,
 } from "@/lib/tempo-presentation";
+import { isGateBypassEnabled } from "@/lib/tempo-test-bypass";
+import { stripPresentationTestAutofill } from "@/lib/tempo-test-bypass-client";
 import { createServiceClient } from "@/lib/supabase/server";
 
 type SaveBody = {
@@ -49,11 +51,20 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   const stageData = (attempt.stage_data ?? {}) as PresentationStageData;
   const rawPresentation = (stageData.presentation ?? null) as Record<string, unknown> | null;
-  const form: PresentationForm = rawPresentation
+  let form: PresentationForm = rawPresentation
     ? normalizePresentationForm(rawPresentation)
     : EMPTY_PRESENTATION_FORM;
 
-  if (rawPresentation && presentationDraftHasHtmlCorruption(rawPresentation)) {
+  const htmlCorrupted =
+    rawPresentation != null && presentationDraftHasHtmlCorruption(rawPresentation);
+  let strippedTestAutofill = false;
+  if (!isGateBypassEnabled()) {
+    const stripped = stripPresentationTestAutofill(form);
+    strippedTestAutofill = JSON.stringify(stripped) !== JSON.stringify(form);
+    form = stripped;
+  }
+
+  if (htmlCorrupted || strippedTestAutofill) {
     const existing = (attempt.stage_data ?? {}) as Record<string, unknown>;
     await supabase
       .from("attempts")
