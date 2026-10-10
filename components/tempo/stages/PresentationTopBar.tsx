@@ -12,6 +12,8 @@ type PresentationTopBarProps = {
   simulationTitle: string;
   onOpenHandoff: () => void;
   onBackToDashboard: () => void;
+  onOpenReferenceLibrary?: () => void;
+  isReferenceLibraryOpen?: boolean;
 };
 
 /**
@@ -24,6 +26,8 @@ export function PresentationTopBar({
   simulationTitle,
   onOpenHandoff,
   onBackToDashboard,
+  onOpenReferenceLibrary,
+  isReferenceLibraryOpen,
 }: PresentationTopBarProps): React.ReactElement {
   return (
     <TempoStageTopBar
@@ -34,6 +38,8 @@ export function PresentationTopBar({
       flowIndex={2}
       onOpenHandoff={onOpenHandoff}
       onBackToDashboard={onBackToDashboard}
+      onOpenReferenceLibrary={onOpenReferenceLibrary}
+      isReferenceLibraryOpen={isReferenceLibraryOpen}
     />
   );
 }

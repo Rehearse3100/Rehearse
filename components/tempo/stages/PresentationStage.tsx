@@ -12,15 +12,32 @@ import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { HandoffModal } from "@/components/tempo/HandoffModal";
+import {
+  ReferenceLibraryDrawer,
+  ReferenceLibrarySectionLabel,
+} from "@/components/tempo/ReferenceLibraryDrawer";
+import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import { TempoTestBypassBanner } from "@/components/tempo/TempoTestBypassBanner";
 import { PresentationStageLayout } from "@/components/tempo/stages/PresentationStageLayout";
 import { PresentationTopBar } from "@/components/tempo/stages/PresentationTopBar";
 import { usePresentationStage } from "@/hooks/usePresentationStage";
 import type { DiscoverySummaryForm } from "@/lib/tempo-discovery";
+import { TEMPO_REFERENCE_SECTIONS } from "@/lib/tempo-presentation";
 import {
   TEMPO_HANDOFF_MESSAGES,
   TEMPO_HANDOFF_STAGE_META,
 } from "@/lib/tempo-prospecting";
+
+const DISCOVERY_SUMMARY_ITEMS: {
+  label: string;
+  field: keyof DiscoverySummaryForm;
+}[] = [
+  { label: "Business Issue", field: "businessIssue" },
+  { label: "Key Problems", field: "keyProblems" },
+  { label: "Quantified Value", field: "quantifiedValue" },
+  { label: "Personal Value", field: "personalValue" },
+  { label: "Agreed Next Step", field: "nextStep" },
+];
 
 type PresentationStageProps = {
   attemptId: string;
@@ -46,6 +63,7 @@ export function PresentationStage({
   const router = useRouter();
   const [showHandoff, setShowHandoff] = useState(false);
   const [showObjectionsHandoff, setShowObjectionsHandoff] = useState(false);
+  const [referenceLibraryOpen, setReferenceLibraryOpen] = useState(false);
   const [openRefs, setOpenRefs] = useState<Set<string>>(() => new Set());
 
   const presentation = usePresentationStage({ attemptId, testBypass });
@@ -89,6 +107,8 @@ export function PresentationStage({
           onBackToDashboard={() =>
             router.push(`/student/simulation/${simulationId}/entry?classId=${classId}`)
           }
+          onOpenReferenceLibrary={() => setReferenceLibraryOpen(true)}
+          isReferenceLibraryOpen={referenceLibraryOpen}
         />
         <div className="fixed inset-x-0 bottom-0 top-16 z-[45] flex items-center justify-center bg-surface">
           <p className="text-on-surface-variant font-body-md">Loading your presentation...</p>
@@ -109,18 +129,17 @@ export function PresentationStage({
         onBackToDashboard={() =>
           router.push(`/student/simulation/${simulationId}/entry?classId=${classId}`)
         }
+        onOpenReferenceLibrary={() => setReferenceLibraryOpen(true)}
+        isReferenceLibraryOpen={referenceLibraryOpen}
       />
 
       <ErrorBoundary stageName="presentation">
         <PresentationStageLayout
           form={presentation.form}
-          discoverySummary={discoverySummary}
           completedSections={presentation.completedSections}
           canSubmit={presentation.canSubmit}
           isSaving={presentation.isSaving}
           isSubmitting={presentation.isSubmitting}
-          openRefs={openRefs}
-          onToggleRef={handleToggleRef}
           onUpdateField={presentation.updateField}
           onSubmit={() => void handleSubmit()}
           testBypass={testBypass}
@@ -152,6 +171,71 @@ export function PresentationStage({
           testBypass={testBypass}
         />
       )}
+
+      <ReferenceLibraryDrawer
+        open={referenceLibraryOpen}
+        onClose={() => setReferenceLibraryOpen(false)}
+        stageLabel="Stage 3: Presentation"
+        testBypass={testBypass}
+      >
+        <section>
+          <ReferenceLibrarySectionLabel>Tempo Reference</ReferenceLibrarySectionLabel>
+          <div className="space-y-2">
+            {TEMPO_REFERENCE_SECTIONS.map((section) => {
+              const isOpen = openRefs.has(section.label);
+              return (
+                <div key={section.label}>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleRef(section.label)}
+                    className="w-full flex items-center justify-between p-3 bg-white/50 hover:bg-white rounded-lg border border-outline-variant transition-all"
+                  >
+                    <span className="text-[13px] font-medium">{section.label}</span>
+                    <MaterialIcon
+                      name={isOpen ? "expand_less" : "chevron_right"}
+                      className="text-[18px]"
+                    />
+                  </button>
+                  {isOpen ? (
+                    <div className="mt-1 p-3 bg-white rounded-lg border border-outline-variant space-y-1">
+                      {section.content.map((line) => (
+                        <p key={line} className="text-[12px] text-on-surface-variant">
+                          • {line}
+                        </p>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <section>
+          <ReferenceLibrarySectionLabel>Your Discovery Summary</ReferenceLibrarySectionLabel>
+          <div className="space-y-4">
+            {DISCOVERY_SUMMARY_ITEMS.map((item) => (
+              <div
+                key={item.field}
+                className="p-3 bg-white border border-outline-variant rounded-lg shadow-sm"
+              >
+                <p className="text-[10px] font-mono-label text-primary-container uppercase mb-1">
+                  {item.label}
+                </p>
+                <p className="text-sm font-medium text-on-surface">
+                  {discoverySummary[item.field]?.trim() ? (
+                    discoverySummary[item.field]
+                  ) : (
+                    <span className="text-on-surface-variant italic font-normal">
+                      Not captured in Discovery
+                    </span>
+                  )}
+                </p>
+              </div>
+            ))}
+          </div>
+        </section>
+      </ReferenceLibraryDrawer>
     </>
   );
 }

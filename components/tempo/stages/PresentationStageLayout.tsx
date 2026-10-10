@@ -7,24 +7,11 @@
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import { TempoExitSimulation } from "@/components/tempo/TempoExitSimulation";
 import { TempoStageForwardNav } from "@/components/tempo/TempoStageForwardNav";
-import type { DiscoverySummaryForm } from "@/lib/tempo-discovery";
 import {
   isPresentationSectionComplete,
   PRESENTATION_PAYOFF_REFERENCE,
-  TEMPO_REFERENCE_SECTIONS,
   type PresentationForm,
 } from "@/lib/tempo-presentation";
-
-const DISCOVERY_SUMMARY_ITEMS: {
-  label: string;
-  field: keyof DiscoverySummaryForm;
-}[] = [
-  { label: "Business Issue", field: "businessIssue" },
-  { label: "Key Problems", field: "keyProblems" },
-  { label: "Quantified Value", field: "quantifiedValue" },
-  { label: "Personal Value", field: "personalValue" },
-  { label: "Agreed Next Step", field: "nextStep" },
-];
 
 /** Shared styling for student-editable fields — explicit border width so outlines render. */
 const FORM_TEXTAREA =
@@ -35,13 +22,10 @@ const FORM_INPUT =
 
 type PresentationStageLayoutProps = {
   form: PresentationForm;
-  discoverySummary: Partial<DiscoverySummaryForm>;
   completedSections: number;
   canSubmit: boolean;
   isSaving: boolean;
   isSubmitting: boolean;
-  openRefs: ReadonlySet<string>;
-  onToggleRef: (label: string) => void;
   onUpdateField: <K extends keyof PresentationForm>(key: K, value: PresentationForm[K]) => void;
   onSubmit: () => void;
   /** Extra top padding when TEST MODE banner is visible (matches Prospecting). */
@@ -53,13 +37,10 @@ type PresentationStageLayoutProps = {
  */
 export function PresentationStageLayout({
   form,
-  discoverySummary,
   completedSections,
   canSubmit,
   isSaving,
   isSubmitting,
-  openRefs,
-  onToggleRef,
   onUpdateField,
   onSubmit,
   testBypass = false,
@@ -362,82 +343,6 @@ export function PresentationStageLayout({
             </div>
           </footer>
         </section>
-
-        {/* ── Right column: reference ─── */}
-        <aside className="w-[320px] bg-[#f2f4f6] flex flex-col border-l border-outline-variant overflow-hidden shrink-0 hidden xl:flex">
-          <div className="p-5 border-b border-outline-variant bg-white/50 backdrop-blur shrink-0">
-            <h3 className="font-bold text-on-surface flex items-center gap-2">
-              <MaterialIcon name="menu_book" className="text-[20px]" />
-              Reference Library
-            </h3>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar min-h-0">
-            <div>
-              <h3 className="font-bold text-on-surface flex items-center gap-2 mb-4">
-                <MaterialIcon name="book" className="text-[20px]" />
-                Tempo Reference
-              </h3>
-              <div className="space-y-2">
-                {TEMPO_REFERENCE_SECTIONS.map((section) => {
-                  const isOpen = openRefs.has(section.label);
-                  return (
-                    <div key={section.label}>
-                      <button
-                        type="button"
-                        onClick={() => onToggleRef(section.label)}
-                        className="w-full flex items-center justify-between p-3 bg-white/50 hover:bg-white rounded-lg border border-outline-variant transition-all"
-                      >
-                        <span className="text-[13px] font-medium">{section.label}</span>
-                        <MaterialIcon
-                          name={isOpen ? "expand_less" : "chevron_right"}
-                          className="text-[18px]"
-                        />
-                      </button>
-                      {isOpen && (
-                        <div className="mt-1 p-3 bg-white rounded-lg border border-outline-variant space-y-1">
-                          {section.content.map((line) => (
-                            <p key={line} className="text-[12px] text-on-surface-variant">
-                              • {line}
-                            </p>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="pt-2 border-t border-outline-variant">
-              <h3 className="font-bold text-on-surface flex items-center gap-2 mb-4">
-                <MaterialIcon name="sticky_note_2" className="text-[20px]" />
-                Discovery Summary
-              </h3>
-              <div className="space-y-4">
-                {DISCOVERY_SUMMARY_ITEMS.map((item) => (
-                  <div
-                    key={item.field}
-                    className="p-3 bg-white border border-outline-variant rounded-lg shadow-sm"
-                  >
-                    <p className="text-[10px] font-mono-label text-primary-container uppercase mb-1">
-                      {item.label}
-                    </p>
-                    <p className="text-sm font-medium text-on-surface">
-                      {discoverySummary[item.field]?.trim() ? (
-                        discoverySummary[item.field]
-                      ) : (
-                        <span className="text-on-surface-variant italic font-normal">
-                          Not captured in Discovery
-                        </span>
-                      )}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </aside>
       </main>
     </div>
   );
