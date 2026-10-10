@@ -1,8 +1,8 @@
 /**
  * TempoStageTopBar.tsx
- * Shared fixed header for all Tempo stages — three zones align with the stage
- * body (left column / middle content / right panel). Project flow fills the
- * middle zone only.
+ * Shared fixed header for all Tempo stages — left brand zone, middle project
+ * flow, and a content-sized right action zone (Reference Library, Handoff,
+ * Restart).
  */
 
 import Link from "next/link";
@@ -23,6 +23,10 @@ type TempoStageTopBarProps = {
   onOpenHandoff: () => void;
   /** Mobile-only dashboard exit (desktop uses left-column control). */
   onBackToDashboard: () => void;
+  /** Opens the shared Reference Library drawer when provided. */
+  onOpenReferenceLibrary?: () => void;
+  /** Highlights the Reference Library button while the drawer is open. */
+  isReferenceLibraryOpen?: boolean;
 };
 
 /**
@@ -36,6 +40,8 @@ export function TempoStageTopBar({
   flowIndex,
   onOpenHandoff,
   onBackToDashboard,
+  onOpenReferenceLibrary,
+  isReferenceLibraryOpen = false,
 }: TempoStageTopBarProps): React.ReactElement {
   return (
     <header className="fixed top-0 left-0 right-0 z-[50] h-16 border-b border-border bg-page shrink-0">
@@ -84,8 +90,23 @@ export function TempoStageTopBar({
           <TempoProjectFlow currentIndex={flowIndex} />
         </div>
 
-        {/* Right zone — matches stage right panel width */}
-        <div className="shrink-0 flex items-center justify-end gap-2 sm:gap-3 px-3 sm:px-4 lg:px-6 w-auto lg:w-80">
+        {/* Right zone — content-sized action cluster */}
+        <div className="shrink-0 flex items-center justify-end gap-2 sm:gap-3 px-3 sm:px-4 lg:px-6 w-auto">
+          {onOpenReferenceLibrary ? (
+            <button
+              type="button"
+              onClick={onOpenReferenceLibrary}
+              aria-pressed={isReferenceLibraryOpen}
+              className={`${BAR_BUTTON} ${
+                isReferenceLibraryOpen
+                  ? "text-on-surface bg-surface-container border border-outline"
+                  : "text-on-surface-variant border border-outline-variant hover:bg-surface-container"
+              }`}
+            >
+              <MaterialIcon name="menu_book" className="text-[16px]" />
+              <span className="hidden sm:inline">Reference Library</span>
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={onOpenHandoff}
