@@ -1,7 +1,7 @@
 /**
  * ProspectingWizard.tsx
  * Stage 1 of the Tempo simulation — 6-step prospecting wizard (Welcome Briefing →
- * ICP → Data Room → Build Your Agent → Select Lead → Opening Message) with handoff.
+ * ICP → Data Room → Select Lead → Opening Message → Build Your Agent) with handoff.
  * Only rendered for Tempo in the Rehearse Essentials default class.
  */
 
@@ -289,7 +289,7 @@ export function ProspectingWizard({
                         : "bg-surface-container-highest text-on-surface-variant/40 cursor-not-allowed"
                     }`}
                   >
-                    {wizard.isSubmitting ? "Submitting..." : "Submit Prospecting Brief"}
+                    {wizard.isSubmitting ? "Submitting..." : "Submit"}
                     <MaterialIcon name="send" className="text-[18px]" />
                   </button>
                 )}

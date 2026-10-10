@@ -46,16 +46,16 @@ export const PROSPECTING_STEPS: readonly ProspectingStepDefinition[] = [
     description: "Review documents and shortlist three accounts",
   },
   {
-    id: "agent",
-    label: "Build Your Agent",
-    description: "Design an AI system to do what you just did by hand",
-  },
-  {
     id: "select_lead",
     label: "Select Target Lead",
     description: "Choose your best lead",
   },
   { id: "opening", label: "Opening Message", description: "Write your outreach" },
+  {
+    id: "agent",
+    label: "Build Your Agent",
+    description: "Design an AI system to do what you just did by hand",
+  },
 ] as const;
 
 export const TEMPO_HANDOFF_MESSAGES = {
@@ -584,8 +584,16 @@ export function formatIcpTextForFeedback(state: ProspectingWizardState): string 
 }
 
 /**
+ * Returns whether the opening message meets the 20–120 word gate.
+ */
+export function isOpeningMessageComplete(state: ProspectingWizardState): boolean {
+  const words = countWords(state.openingMessage);
+  return words >= 20 && words <= 120;
+}
+
+/**
  * Returns whether the student can advance from the current wizard step id.
- * Order: onboarding → icp → research → agent → select_lead → opening.
+ * Order: onboarding → icp → research → select_lead → opening → agent.
  * testBypass is a boolean passed from the server page — this file never reads process.env.
  * When true, short-circuits to allowed; existing conditions remain the fallback when false.
  */
@@ -604,21 +612,21 @@ export function canAdvanceProspectingStep(
       return isIcpDefinitionComplete(state);
     case "research":
       return state.shortlistedCompanyIds.length === 3;
-    case "agent":
-      return true;
     case "select_lead":
       return Boolean(state.selectedLeadId);
     case "opening":
-      return canSubmitProspectingBrief(state);
+      return isOpeningMessageComplete(state);
+    case "agent":
+      return true;
     default:
       return false;
   }
 }
 
 /**
- * Returns whether Opening Message submit is enabled.
- * testBypass short-circuits only; word-count rule is unchanged when bypass is off.
- * Never reads process.env — caller passes the server-reported boolean.
+ * Returns whether stage Submit is enabled on the final agent step.
+ * Re-checks every earlier step gate so the stage cannot complete with gaps.
+ * testBypass short-circuits only. Never reads process.env.
  */
 export function canSubmitProspectingBrief(
   state: ProspectingWizardState,
@@ -627,6 +635,13 @@ export function canSubmitProspectingBrief(
   if (testBypass) {
     return true;
   }
-  const words = countWords(state.openingMessage);
-  return words >= 20 && words <= 120;
+  for (const step of PROSPECTING_STEPS) {
+    if (step.id === "agent") {
+      continue;
+    }
+    if (!canAdvanceProspectingStep(step.id, state, false)) {
+      return false;
+    }
+  }
+  return true;
 }

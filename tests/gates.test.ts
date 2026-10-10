@@ -7,7 +7,9 @@
 import { describe, expect, it } from "vitest";
 import {
   canAdvanceProspectingStep,
+  canSubmitProspectingBrief,
   DEFAULT_PROSPECTING_WIZARD_STATE,
+  PROSPECTING_STEPS,
   type ProspectingStepId,
   type ProspectingWizardState,
 } from "@/lib/tempo-prospecting";
@@ -38,9 +40,9 @@ const ALL_STEPS: ProspectingStepId[] = [
   "onboarding",
   "icp",
   "research",
-  "agent",
   "select_lead",
   "opening",
+  "agent",
 ];
 
 describe("canAdvanceProspectingStep", () => {
@@ -85,10 +87,6 @@ describe("canAdvanceProspectingStep", () => {
     ).toBe(true);
   });
 
-  it("agent: always passes", () => {
-    expect(canAdvanceProspectingStep("agent", withState({}))).toBe(true);
-  });
-
   it("select_lead: requires selectedLeadId", () => {
     expect(
       canAdvanceProspectingStep("select_lead", withState({ selectedLeadId: null }))
@@ -105,6 +103,32 @@ describe("canAdvanceProspectingStep", () => {
     expect(
       canAdvanceProspectingStep("opening", withState({ openingMessage: OPENING_OK }))
     ).toBe(true);
+  });
+
+  it("agent: always passes for step advance", () => {
+    expect(canAdvanceProspectingStep("agent", withState({}))).toBe(true);
+  });
+
+  it("PROSPECTING_STEPS ends with agent after opening", () => {
+    expect(PROSPECTING_STEPS.map((s) => s.id)).toEqual(ALL_STEPS);
+  });
+
+  it("canSubmitProspectingBrief re-checks every earlier gate", () => {
+    const ready = withState({
+      ...COMPLETE_ICP,
+      onboardingComplete: true,
+      shortlistedCompanyIds: ["a", "b", "c"],
+      selectedLeadId: "lead-1",
+      openingMessage: OPENING_OK,
+    });
+    expect(canSubmitProspectingBrief(ready)).toBe(true);
+    expect(canSubmitProspectingBrief(withState({ ...ready, openingMessage: "short" }))).toBe(
+      false
+    );
+    expect(canSubmitProspectingBrief(withState({ ...ready, selectedLeadId: null }))).toBe(
+      false
+    );
+    expect(canSubmitProspectingBrief(withState({}), true)).toBe(true);
   });
 
   it("unknown step id blocks", () => {
