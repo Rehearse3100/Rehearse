@@ -1,21 +1,17 @@
 /**
  * NegotiationStageLayout.tsx
- * Presentational 3-column shell for Tempo Stage 5 Negotiation —
- * mission panel, written exchange workspace, reference library, and footer.
+ * Presentational shell for Tempo Stage 5 Negotiation —
+ * mission panel, written exchange workspace, and footer.
+ * Reference content lives in the Reference Library drawer.
  */
 
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import { TempoExitSimulation } from "@/components/tempo/TempoExitSimulation";
 import { TempoStageForwardNav } from "@/components/tempo/TempoStageForwardNav";
-import type { DiscoverySummaryForm } from "@/lib/tempo-discovery";
-import type { ObjectionSummaryForm } from "@/lib/tempo-objections";
-import type { PresentationForm } from "@/lib/tempo-presentation";
 import {
-  buildNegotiationPriorContext,
   getOutcomeStatusLabel,
   NEGOTIATION_MIN_WORDS,
   NEGOTIATION_STRATEGY_TIPS,
-  TRADEABLE_LEVERS,
   wordCount,
   type NegotiationAiWork,
   type NegotiationOutcome,
@@ -38,10 +34,6 @@ type NegotiationStageLayoutProps = {
   canSubmit: boolean;
   aiWorkOpen: boolean;
   aiWork: NegotiationAiWork;
-  rightTab: number;
-  discoverySummary: Partial<DiscoverySummaryForm> | null;
-  presentationSummary: Partial<PresentationForm> | null;
-  objectionSummary: Partial<ObjectionSummaryForm> | null;
   onOpenHandoff: () => void;
   onScenarioChange: (scenario: NegotiationScenario) => void;
   onResponseChange: (value: string) => void;
@@ -49,7 +41,6 @@ type NegotiationStageLayoutProps = {
   onContinueToScenarioB: () => void;
   onToggleAiWork: () => void;
   onAiWorkChange: (field: "prompts" | "corrections", value: string) => void;
-  onRightTabChange: (tab: number) => void;
   onSaveDraft: () => void;
   onSubmit: () => void;
   /**
@@ -168,10 +159,6 @@ export function NegotiationStageLayout({
   canSubmit,
   aiWorkOpen,
   aiWork,
-  rightTab,
-  discoverySummary,
-  presentationSummary,
-  objectionSummary,
   onOpenHandoff,
   onScenarioChange,
   onResponseChange,
@@ -179,7 +166,6 @@ export function NegotiationStageLayout({
   onContinueToScenarioB,
   onToggleAiWork,
   onAiWorkChange,
-  onRightTabChange,
   onSaveDraft,
   onSubmit,
   testBypass = false,
@@ -190,11 +176,6 @@ export function NegotiationStageLayout({
   const canSendTurn = testBypass || responseWords >= NEGOTIATION_MIN_WORDS;
   const showFloatingStatus =
     !activeComplete && currentTurnIndex >= 0 && (activeScenario === "A" ? scenarioAState === "active" : scenarioBState === "active");
-  const priorContextSections = buildNegotiationPriorContext(
-    discoverySummary,
-    presentationSummary,
-    objectionSummary
-  );
 
   const topOffsetClass = testBypass ? "pt-28" : "pt-16";
   const railTopClass = testBypass ? "top-40" : "top-28";
@@ -367,7 +348,7 @@ export function NegotiationStageLayout({
         </aside>
 
         {/* ── Center panel ─── */}
-        <section className="ml-[280px] mr-[320px] flex-1 overflow-y-auto bg-background px-10 py-8 pb-32">
+        <section className="ml-[280px] flex-1 overflow-y-auto bg-background px-10 py-8 pb-32">
           <div className="max-w-3xl mx-auto">
             <div className="flex gap-1 border-b border-outline-variant mb-8">
               <button
@@ -652,161 +633,9 @@ export function NegotiationStageLayout({
           </div>
         </section>
 
-        {/* ── Right panel ─── */}
-        <aside
-          className={`fixed right-0 ${railTopClass} ${railHeightClass} w-[320px] bg-surface-container border-l border-outline-variant flex flex-col z-30`}
-        >
-          <div className="p-6 border-b border-outline-variant bg-surface shrink-0">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-8 h-8 rounded-full bg-secondary-container flex items-center justify-center">
-                <MaterialIcon name="description" className="text-secondary text-lg" />
-              </div>
-              <h2 className="text-title-lg font-title-lg">Reference Library</h2>
-            </div>
-            <div className="flex gap-1">
-              {["Levers", "Prior Context"].map((tab, i) => (
-                <button
-                  key={tab}
-                  type="button"
-                  onClick={() => onRightTabChange(i)}
-                  className={`flex-1 py-2 text-xs font-bold uppercase tracking-tighter ${
-                    rightTab === i
-                      ? "border-b-4 border-primary text-primary"
-                      : "text-on-surface-variant opacity-60"
-                  }`}
-                >
-                  {tab}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-6 pb-8 space-y-8">
-            {rightTab === 0 && (
-              <>
-                <section className="space-y-4">
-                  <h4 className="text-mono-label font-mono-label uppercase tracking-widest text-on-surface-variant/70 flex items-center gap-2">
-                    <MaterialIcon name="swap_horiz" className="text-sm" />
-                    Tradeable Levers
-                  </h4>
-                  <div className="overflow-hidden rounded-lg border border-outline-variant">
-                    <table className="w-full text-xs">
-                      <thead className="bg-surface-container-highest text-on-surface-variant font-bold">
-                        <tr>
-                          <th className="text-left p-3">Lever</th>
-                          <th className="text-left p-3">Give</th>
-                          <th className="text-left p-3">Get</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-outline-variant bg-white">
-                        {TRADEABLE_LEVERS.map((row) => (
-                          <tr key={row.lever}>
-                            <td className="p-3 font-medium">{row.lever}</td>
-                            <td className="p-3 text-error">{row.give}</td>
-                            <td className="p-3 text-green-600">{row.get}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <div className="bg-tertiary-fixed text-on-tertiary-fixed p-4 rounded-xl shadow-sm border border-tertiary-container">
-                    <div className="flex items-center gap-2 mb-2 font-bold text-sm">
-                      <MaterialIcon name="payments" className="text-[18px]" />
-                      Deal Math Check
-                    </div>
-                    <div className="space-y-2 text-xs opacity-90">
-                      <div className="flex justify-between">
-                        <span>Pro × 8 locations annual:</span>
-                        <span className="font-bold">~$14,600/yr</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Monthly per location:</span>
-                        <span className="font-bold">$179/mo</span>
-                      </div>
-                      <div className="pt-2 mt-2 border-t border-on-tertiary-fixed/10 font-bold text-[11px]">
-                        Kim&apos;s true priority: certainty it works, not raw price
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="p-4 bg-primary/5 border border-primary/20 rounded-xl">
-                    <h4 className="text-mono-label font-mono-label uppercase tracking-widest text-on-surface-variant/70 flex items-center gap-2 mb-3">
-                      <MaterialIcon name="person" className="text-sm" />
-                      Persona
-                    </h4>
-                    <div className="flex items-center gap-3 mb-3">
-                      <div className="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center font-bold text-on-secondary-container">
-                        SK
-                      </div>
-                      <div>
-                        <p className="font-bold text-body-md">Dr. Saul Kim</p>
-                        <p className="text-xs text-on-surface-variant">Founder & Owner</p>
-                      </div>
-                    </div>
-                    <p className="text-body-md italic text-on-surface-variant mb-3">
-                      &ldquo;I value precision and long-term sustainability over quick discounts.&rdquo;
-                    </p>
-                    <div className="flex gap-2">
-                      <span className="px-2 py-1 bg-tertiary-fixed text-on-tertiary-fixed text-[10px] rounded uppercase font-bold">
-                        Analytical
-                      </span>
-                      <span className="px-2 py-1 bg-secondary-fixed text-on-secondary-fixed text-[10px] rounded uppercase font-bold">
-                        Tough
-                      </span>
-                    </div>
-                  </div>
-                </section>
-              </>
-            )}
-
-            {rightTab === 1 && (
-              <section className="space-y-6">
-                <div>
-                  <h4 className="text-mono-label font-mono-label uppercase tracking-widest text-on-surface-variant/70 mb-1">
-                    Prior Context
-                  </h4>
-                  <p className="text-[12px] text-on-surface-variant">
-                    Your work from Stages 2–4, or Tempo simulation reference if a stage was skipped.
-                  </p>
-                </div>
-
-                {priorContextSections.map((section) => (
-                  <div key={section.stageLabel} className="space-y-3">
-                    <p className="text-mono-label text-[11px] font-bold uppercase text-on-surface-variant">
-                      {section.stageLabel}
-                    </p>
-                    {section.items.map((item) => (
-                      <div
-                        key={`${section.stageLabel}-${item.label}`}
-                        className={`p-3 bg-surface-container-high rounded-lg border-l-4 ${section.borderClass}`}
-                      >
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <p className="text-mono-label text-[11px]">{item.label}</p>
-                          <span
-                            className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
-                              item.fromStudent
-                                ? "bg-primary-container/10 text-primary"
-                                : "bg-surface-container text-on-surface-variant"
-                            }`}
-                          >
-                            {item.fromStudent ? "Your work" : "Reference"}
-                          </span>
-                        </div>
-                        <p className="text-body-md text-on-surface leading-relaxed whitespace-pre-wrap">
-                          {item.text}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                ))}
-              </section>
-            )}
-          </div>
-        </aside>
       </div>
 
-      <footer className="fixed bottom-0 left-[280px] right-[320px] h-24 bg-surface border-t border-outline-variant px-8 flex items-center z-40">
+      <footer className="fixed bottom-0 left-[280px] right-0 h-24 bg-surface border-t border-outline-variant px-8 flex items-center z-40">
         <div className="flex items-center gap-4">
           <div
             className={`w-12 h-12 rounded-full flex items-center justify-center ${

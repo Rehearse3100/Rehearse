@@ -12,6 +12,8 @@ type NegotiationTopBarProps = {
   simulationTitle: string;
   onOpenHandoff: () => void;
   onBackToDashboard: () => void;
+  onOpenReferenceLibrary?: () => void;
+  isReferenceLibraryOpen?: boolean;
 };
 
 /**
@@ -24,6 +26,8 @@ export function NegotiationTopBar({
   simulationTitle,
   onOpenHandoff,
   onBackToDashboard,
+  onOpenReferenceLibrary,
+  isReferenceLibraryOpen,
 }: NegotiationTopBarProps): React.ReactElement {
   return (
     <TempoStageTopBar
@@ -34,6 +38,8 @@ export function NegotiationTopBar({
       flowIndex={4}
       onOpenHandoff={onOpenHandoff}
       onBackToDashboard={onBackToDashboard}
+      onOpenReferenceLibrary={onOpenReferenceLibrary}
+      isReferenceLibraryOpen={isReferenceLibraryOpen}
     />
   );
 }
