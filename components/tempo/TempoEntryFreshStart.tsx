@@ -151,7 +151,7 @@ export function TempoEntryFreshStart({
                 <span className="font-bold text-headline-md text-on-surface">Tempo - Your Product</span>
               </div>
               <div className="bg-tertiary-fixed/20 border-l-4 border-tertiary-fixed p-4 mb-8 italic text-on-surface-variant">
-                &quot;Tempo is the nervous system for the modern dental practice. We automate the
+                &quot;Tempo is the nervous system for the modern practice. We automate the
                 admin, so doctors can focus on patients.&quot;
               </div>
               <div className="grid grid-cols-2 gap-y-6 gap-x-4">

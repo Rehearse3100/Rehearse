@@ -530,8 +530,8 @@ INSERT INTO public.simulations (
 ) VALUES (
   '00000000-0000-0000-0000-000000000002',
   NULL,
-  'Sell Tempo to Summit Dental Group',
-  'Work a full-cycle B2B deal selling Tempo AI scheduling to Summit Dental Group — from prospecting through close.',
+  'Tempo: Your First Deal',
+  'Run a full B2B sales cycle for Tempo, from finding the right account to closing the deal.',
   'Dana Reyes',
   'Director of Operations',
   'Runtime persona prompt is defined in application code. This row intentionally contains no scenario details.',
@@ -551,6 +551,18 @@ SET persona_system_prompt =
 WHERE id = '00000000-0000-0000-0000-000000000002'
   AND persona_system_prompt IS DISTINCT FROM
     'Runtime persona prompt is defined in application code. This row intentionally contains no scenario details.';
+
+-- Keep Tempo class-card title/description non-spoiling on re-run.
+UPDATE public.simulations
+SET
+  title = 'Tempo: Your First Deal',
+  description = 'Run a full B2B sales cycle for Tempo, from finding the right account to closing the deal.'
+WHERE id = '00000000-0000-0000-0000-000000000002'
+  AND (
+    title IS DISTINCT FROM 'Tempo: Your First Deal'
+    OR description IS DISTINCT FROM
+      'Run a full B2B sales cycle for Tempo, from finding the right account to closing the deal.'
+  );
 
 INSERT INTO public.class_simulations (class_id, simulation_id)
 VALUES (

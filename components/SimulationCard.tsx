@@ -39,7 +39,8 @@ export function SimulationCard({
   const personaLine = [simulation.persona_name, simulation.persona_role]
     .filter(Boolean)
     .join(" · ");
-  const productLine = simulation.product_context?.trim() || null;
+  const descriptionLine =
+    simulation.description?.trim() || simulation.product_context?.trim() || null;
 
   return (
     <article
@@ -68,10 +69,10 @@ export function SimulationCard({
               <span>{personaLine}</span>
             </div>
           )}
-          {productLine && (
+          {descriptionLine && (
             <div className="flex items-start gap-2 text-on-surface-variant font-body-md text-body-md">
               <MaterialIcon name="inventory_2" className="text-[16px] shrink-0 mt-0.5" />
-              <span className="line-clamp-2">{productLine}</span>
+              <span className="line-clamp-2">{descriptionLine}</span>
             </div>
           )}
         </div>
