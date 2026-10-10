@@ -13,6 +13,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { HandoffModal } from "@/components/tempo/HandoffModal";
+import {
+  ReferenceLibraryDrawer,
+  ReferenceLibrarySectionLabel,
+} from "@/components/tempo/ReferenceLibraryDrawer";
 import { TempoTestBypassBanner } from "@/components/tempo/TempoTestBypassBanner";
 import { DiscoveryCallSession } from "@/components/tempo/stages/DiscoveryCallSession";
 import { DiscoveryLobby, type DiscoveryJoinStreams } from "@/components/tempo/stages/DiscoveryLobby";
@@ -25,6 +29,7 @@ import {
   clearDiscoveryPrepFromStorage,
   loadDiscoveryPrepFromStorage,
   saveDiscoveryPrepToStorage,
+  TEMPO_VALUE_DRIVERS,
   type DiscoveryPhase,
   type DiscoveryPreCallPrep as DiscoveryPreCallPrepForm,
   type DiscoveryTranscriptEntry,
@@ -73,7 +78,7 @@ export function DiscoveryStage({
   const [prepReady, setPrepReady] = useState(false);
   const [connectError, setConnectError] = useState("");
   const [callSeconds, setCallSeconds] = useState(0);
-  const [referenceCollapsed, setReferenceCollapsed] = useState(false);
+  const [referenceLibraryOpen, setReferenceLibraryOpen] = useState(false);
   const [transcript, setTranscript] = useState<DiscoveryTranscriptEntry[]>([]);
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
   const [videoStream, setVideoStream] = useState<MediaStream | null>(null);
@@ -221,6 +226,8 @@ export function DiscoveryStage({
         onBackToDashboard={() =>
           router.push(`/student/simulation/${simulationId}/entry?classId=${classId}`)
         }
+        onOpenReferenceLibrary={() => setReferenceLibraryOpen(true)}
+        isReferenceLibraryOpen={referenceLibraryOpen}
       />
 
       {!prepReady ? (
@@ -232,8 +239,6 @@ export function DiscoveryStage({
           <DiscoveryStageLayout
             phase={phase}
             callSeconds={callSeconds}
-            referenceCollapsed={referenceCollapsed}
-            onToggleReference={() => setReferenceCollapsed((prev) => !prev)}
             transcript={transcript}
             testBypass={testBypass}
             lobbySlot={
@@ -310,6 +315,37 @@ export function DiscoveryStage({
           testBypass={testBypass}
         />
       )}
+
+      <ReferenceLibraryDrawer
+        open={referenceLibraryOpen}
+        onClose={() => setReferenceLibraryOpen(false)}
+        stageLabel="Stage 2: Discovery"
+        testBypass={testBypass}
+      >
+        <section>
+          <ReferenceLibrarySectionLabel>Tempo Product</ReferenceLibrarySectionLabel>
+          <div>
+            <h4 className="font-headline-md text-headline-md mb-1">Tempo</h4>
+            <p className="text-sm text-on-surface-variant leading-relaxed">
+              Scheduling software for appointment-based businesses. Core value: keep calendars
+              full, stop losing money to no-shows.
+            </p>
+          </div>
+        </section>
+        <section>
+          <ReferenceLibrarySectionLabel>Value Drivers</ReferenceLibrarySectionLabel>
+          <div className="grid grid-cols-1 gap-2">
+            {TEMPO_VALUE_DRIVERS.map((value) => (
+              <div
+                key={value}
+                className="p-2 bg-surface-container rounded border border-outline-variant/30 text-xs"
+              >
+                {value}
+              </div>
+            ))}
+          </div>
+        </section>
+      </ReferenceLibraryDrawer>
     </>
   );
 }

@@ -1,19 +1,19 @@
 /**
  * DiscoveryStageLayout.tsx
- * Presentational 3-column shell for Tempo Stage 2 Discovery during lobby, call,
- * and post-call submit (mission briefing, center, reference + transcript).
+ * Presentational shell for Tempo Stage 2 Discovery during lobby, call,
+ * and post-call submit (mission briefing, center, docked transcript).
  * The top app bar lives in DiscoveryStage; OPC prep gates before the lobby
  * (DiscoveryPreCallPrep → DiscoveryLobby). The active call center is injected
  * via callSlot so the mic session only mounts after Join Call.
  */
 
+import { CallTranscriptPanel } from "@/components/tempo/CallTranscriptPanel";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import { PostCallCompletePanel } from "@/components/tempo/PostCallCompletePanel";
 import { TempoExitSimulation } from "@/components/tempo/TempoExitSimulation";
 import { TempoStageForwardNav } from "@/components/tempo/TempoStageForwardNav";
 import {
   DISCOVERY_TIPS,
-  TEMPO_VALUE_DRIVERS,
   formatDiscoveryTime,
   type DiscoveryPhase,
   type DiscoveryTranscriptEntry,
@@ -22,8 +22,6 @@ import {
 type DiscoveryStageLayoutProps = {
   phase: DiscoveryPhase;
   callSeconds: number;
-  referenceCollapsed: boolean;
-  onToggleReference: () => void;
   transcript: DiscoveryTranscriptEntry[];
   lobbySlot: React.ReactNode;
   callSlot: React.ReactNode;
@@ -35,13 +33,25 @@ type DiscoveryStageLayoutProps = {
 };
 
 /**
+ * Maps Discovery transcript roles to the shared panel entry shape.
+ */
+function mapDiscoveryTranscript(
+  transcript: DiscoveryTranscriptEntry[]
+): { speaker: "persona" | "student"; name: string; timestamp: string; content: string }[] {
+  return transcript.map((msg) => ({
+    speaker: msg.role === "dana" ? "persona" : "student",
+    name: msg.role === "dana" ? "Dana Reyes" : "You",
+    timestamp: msg.timestamp,
+    content: msg.content,
+  }));
+}
+
+/**
  * Renders the Discovery call/submit chrome; center swaps by phase.
  */
 export function DiscoveryStageLayout({
   phase,
   callSeconds,
-  referenceCollapsed,
-  onToggleReference,
   transcript,
   lobbySlot,
   callSlot,
@@ -51,6 +61,8 @@ export function DiscoveryStageLayout({
   testBypass = false,
 }: DiscoveryStageLayoutProps): React.ReactElement {
   const isCallPhase = phase === "connecting" || phase === "active";
+  const panelEntries = mapDiscoveryTranscript(transcript);
+  const durationLabel = formatDiscoveryTime(callSeconds);
 
   return (
     <div
@@ -152,113 +164,27 @@ export function DiscoveryStageLayout({
         {/* ── Center panel ─── */}
         {(phase === "prep" || phase === "lobby") && lobbySlot}
 
-        {isCallPhase && callSlot}
-
-        {phase === "summary" && (
-          <PostCallCompletePanel
-            callLengthLabel={formatDiscoveryTime(callSeconds)}
-            nextStageName={nextStageName}
-            isSubmitting={isSubmitting}
-          />
+        {isCallPhase && (
+          <div className="flex flex-1 min-w-0 min-h-0">
+            <div className="flex-1 min-w-0 min-h-0 flex flex-col">{callSlot}</div>
+            <CallTranscriptPanel entries={panelEntries} variant="live" />
+          </div>
         )}
 
-        {/* ── Right panel ─── */}
-        <aside className="w-72 xl:w-80 bg-surface-container-low flex flex-col border-l border-outline-variant shrink-0 hidden lg:flex min-h-0">
-          <section
-            className={`border-b border-outline-variant flex flex-col overflow-hidden ${
-              referenceCollapsed ? "shrink-0" : "flex-1 min-h-0"
-            }`}
-          >
-            <button
-              type="button"
-              onClick={onToggleReference}
-              className="p-md border-b border-outline-variant flex items-center justify-between bg-surface-container hover:bg-surface-container-high transition-colors text-left w-full"
-            >
-              <h3 className="font-label-md text-label-md uppercase tracking-wider text-on-surface-variant">
-                Reference: Tempo Product
-              </h3>
-              <MaterialIcon name={referenceCollapsed ? "expand_more" : "expand_less"} />
-            </button>
-            {!referenceCollapsed && (
-              <div className="flex-1 p-lg overflow-y-auto space-y-lg custom-scrollbar min-h-0">
-                <div>
-                  <h4 className="font-headline-md text-headline-md mb-1">Tempo</h4>
-                  <p className="text-sm text-on-surface-variant leading-relaxed">
-                    Scheduling software for appointment-based businesses. Core value: keep
-                    calendars full, stop losing money to no-shows.
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <h5 className="text-xs font-bold uppercase text-on-surface-variant opacity-60">
-                    Value Drivers
-                  </h5>
-                  <div className="grid grid-cols-1 gap-2">
-                    {TEMPO_VALUE_DRIVERS.map((value) => (
-                      <div
-                        key={value}
-                        className="p-2 bg-surface-container rounded border border-outline-variant/30 text-xs"
-                      >
-                        {value}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-          </section>
-
-          <section className="flex-1 flex flex-col min-h-0 bg-surface-container-high/50">
-            <div className="p-md border-b border-outline-variant flex items-center gap-2 bg-surface-container shrink-0">
-              <MaterialIcon name="subtitles" className="text-sm" />
-              <h3 className="font-label-md text-label-md uppercase tracking-wider text-on-surface-variant">
-                Live Transcript
-              </h3>
-              {phase === "active" && (
-                <div className="ml-auto flex items-center gap-1">
-                  <div className="w-2 h-2 rounded-full bg-error animate-pulse" />
-                  <span className="text-[10px] font-bold text-error uppercase">LIVE</span>
-                </div>
-              )}
-              {phase === "summary" && (
-                <span className="ml-auto text-[10px] text-on-surface-variant">
-                  Call ended · {formatDiscoveryTime(callSeconds)}
-                </span>
-              )}
-            </div>
-            <div className="flex-1 overflow-y-auto p-lg space-y-lg custom-scrollbar min-h-0">
-              {transcript.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-center p-lg">
-                  <MaterialIcon name="waves" className="text-4xl text-on-surface-variant/20 mb-2" />
-                  <p className="text-sm text-on-surface-variant/50 italic">
-                    Transcript will appear here during the call.
-                  </p>
-                </div>
-              ) : (
-                transcript.map((msg, i) => (
-                  <div key={`${msg.role}-${i}`} className="space-y-sm">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`font-label-sm text-label-sm font-bold ${
-                          msg.role === "dana" ? "text-on-surface" : "text-secondary"
-                        }`}
-                      >
-                        {msg.role === "dana" ? "Dana Reyes" : "You"}
-                      </span>
-                      <span className="text-[10px] text-outline font-code-md">{msg.timestamp}</span>
-                    </div>
-                    <p
-                      className={`text-on-surface-variant leading-relaxed ${
-                        msg.role === "student" ? "italic" : ""
-                      }`}
-                    >
-                      {msg.content}
-                    </p>
-                  </div>
-                ))
-              )}
-            </div>
-          </section>
-        </aside>
+        {phase === "summary" && (
+          <div className="flex flex-1 min-w-0 min-h-0">
+            <PostCallCompletePanel
+              callLengthLabel={durationLabel}
+              nextStageName={nextStageName}
+              isSubmitting={isSubmitting}
+            />
+            <CallTranscriptPanel
+              entries={panelEntries}
+              variant="ended"
+              durationLabel={durationLabel}
+            />
+          </div>
+        )}
       </main>
     </div>
   );
