@@ -10,13 +10,17 @@ import { ProspectingAgentStep } from "@/components/tempo/stages/ProspectingAgent
 import { ProspectingOnboardingStep } from "@/components/tempo/stages/ProspectingOnboardingStep";
 import { ProspectingDataRoom } from "@/components/tempo/stages/ProspectingDataRoom";
 import { ProspectingIcpStep } from "@/components/tempo/stages/ProspectingIcpStep";
-import { ProspectingLeadSelectionStep } from "@/components/tempo/stages/ProspectingLeadSelectionStep";
+import {
+  ProspectingLeadSelectionStep,
+  type ProspectingLeadSelectionHandle,
+} from "@/components/tempo/stages/ProspectingLeadSelectionStep";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import {
   OPENING_MESSAGE_TIPS,
   type ProspectingStepId,
   type ProspectingWizardState,
 } from "@/lib/tempo-prospecting";
+import type { Ref } from "react";
 
 type StepPanelsProps = {
   currentStepId: ProspectingStepId;
@@ -31,6 +35,8 @@ type StepPanelsProps = {
     key: K,
     value: ProspectingWizardState[K]
   ) => void;
+  leadSelectionRef?: Ref<ProspectingLeadSelectionHandle>;
+  onLeadPickedChange: (leadId: string | null) => void;
   onLeadSelected: (leadId: string) => Promise<void>;
   onOnboardingComplete: () => void;
 };
@@ -47,6 +53,8 @@ export function ProspectingStepPanels({
   onSelectCompany,
   onShortlistChange,
   onFieldChange,
+  leadSelectionRef,
+  onLeadPickedChange,
   onLeadSelected,
   onOnboardingComplete,
 }: StepPanelsProps): React.ReactElement {
@@ -85,8 +93,10 @@ export function ProspectingStepPanels({
   if (currentStepId === "select_lead") {
     return (
       <ProspectingLeadSelectionStep
+        ref={leadSelectionRef}
         attemptId={attemptId}
         selectedLeadId={state.selectedLeadId}
+        onPickedChange={onLeadPickedChange}
         onSelected={onLeadSelected}
       />
     );

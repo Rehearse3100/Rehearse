@@ -8,7 +8,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { HandoffModal } from "@/components/tempo/HandoffModal";
 import { TempoExitSimulation } from "@/components/tempo/TempoExitSimulation";
 import { TempoStageForwardNav } from "@/components/tempo/TempoStageForwardNav";
@@ -16,6 +16,7 @@ import { TempoTestBypassBanner } from "@/components/tempo/TempoTestBypassBanner"
 import { TempoWizardTopBar } from "@/components/tempo/TempoWizardTopBar";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import { ProspectingStepPanels } from "@/components/tempo/stages/ProspectingStepPanels";
+import type { ProspectingLeadSelectionHandle } from "@/components/tempo/stages/ProspectingLeadSelectionStep";
 import { useProspectingWizard } from "@/hooks/useProspectingWizard";
 import {
   isIcpDefinitionComplete,
@@ -59,6 +60,9 @@ export function ProspectingWizard({
     initialDiscoveryHandoff ? "discovery" : null
   );
   const [forceHandoffOpen, setForceHandoffOpen] = useState(false);
+  const [pickedLeadId, setPickedLeadId] = useState<string | null>(null);
+  const [isConfirmingLead, setIsConfirmingLead] = useState(false);
+  const leadSelectionRef = useRef<ProspectingLeadSelectionHandle>(null);
 
   const { state } = wizard;
   const { currentStepId } = state;
@@ -74,6 +78,24 @@ export function ProspectingWizard({
     !postSubmitHandoff &&
     (forceHandoffOpen || (!state.prospectingHandoffSeen && !icpComplete));
 
+  useEffect(() => {
+    if (currentStepId === "select_lead") {
+      setPickedLeadId(state.selectedLeadId);
+    }
+  }, [currentStepId, state.selectedLeadId]);
+
+  const handleLeadPickedChange = useCallback((leadId: string | null): void => {
+    setPickedLeadId(leadId);
+  }, []);
+
+  const selectLeadCanProceed =
+    testBypass || Boolean(pickedLeadId ?? state.selectedLeadId);
+  const forwardDisabled = upcomingStepId
+    ? currentStepId === "select_lead"
+      ? !selectLeadCanProceed || isConfirmingLead
+      : !wizard.canProceed
+    : !wizard.canSubmit || wizard.isSubmitting;
+
   if (wizard.isLoading) {
     return (
       <>
@@ -86,7 +108,35 @@ export function ProspectingWizard({
   }
 
   const handleNext = async (): Promise<void> => {
-    if (!wizard.canProceed || !upcomingStepId) {
+    if (!upcomingStepId) {
+      return;
+    }
+
+    if (currentStepId === "select_lead") {
+      if (!selectLeadCanProceed || isConfirmingLead) {
+        return;
+      }
+      if (testBypass) {
+        const leadId = pickedLeadId ?? state.selectedLeadId;
+        if (leadId) {
+          await wizard.completeLeadSelection(leadId);
+        }
+      } else {
+        setIsConfirmingLead(true);
+        try {
+          const ok = await leadSelectionRef.current?.confirmSelection();
+          if (!ok) {
+            return;
+          }
+        } finally {
+          setIsConfirmingLead(false);
+        }
+      }
+      await wizard.handleStepAdvance(upcomingStepId);
+      return;
+    }
+
+    if (!wizard.canProceed) {
       return;
     }
     await wizard.handleStepAdvance(upcomingStepId);
@@ -225,9 +275,7 @@ export function ProspectingWizard({
 
             <TempoStageForwardNav
               forwardLabel={upcomingStepId ? "Next" : "Submit"}
-              forwardDisabled={
-                upcomingStepId ? !wizard.canProceed : !wizard.canSubmit || wizard.isSubmitting
-              }
+              forwardDisabled={forwardDisabled}
               isForwardLoading={!upcomingStepId && wizard.isSubmitting}
               onForward={() => {
                 if (upcomingStepId) {
@@ -241,7 +289,9 @@ export function ProspectingWizard({
                   ? state.onboardingComplete
                     ? "Briefing complete, you can continue"
                     : "Watch the briefing to unlock Next"
-                  : null
+                  : currentStepId === "select_lead" && !selectLeadCanProceed
+                    ? "Pick a lead to continue"
+                    : null
               }
               onBack={
                 previousStepId
@@ -289,6 +339,8 @@ export function ProspectingWizard({
               onSelectCompany={wizard.selectDirectoryCompany}
               onShortlistChange={wizard.setShortlistedCompanyIds}
               onFieldChange={wizard.updateField}
+              leadSelectionRef={leadSelectionRef}
+              onLeadPickedChange={handleLeadPickedChange}
               onLeadSelected={(leadId) => wizard.completeLeadSelection(leadId)}
               onOnboardingComplete={wizard.completeOnboarding}
             />

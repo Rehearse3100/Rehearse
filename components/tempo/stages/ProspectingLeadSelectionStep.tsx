@@ -1,31 +1,48 @@
 /**
  * ProspectingLeadSelectionStep.tsx
- * Prospecting wizard step — pick and validate the target CRM Lead.
- * On success the wizard advances; failures show ConvertFailureModal.
+ * Prospecting wizard step — pick the target CRM Lead.
+ * Validation + manager-note feedback run when the student clicks Next.
  */
 
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useState,
+} from "react";
 import { ConvertFailureModal } from "@/components/crm/ConvertFailureModal";
 import { useTempoCrmGate } from "@/components/crm/CrmOverlay";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import type { CrmLead } from "@/types";
 
+export type ProspectingLeadSelectionHandle = {
+  /**
+   * Validates the picked lead via the select API.
+   * Returns true when Next may advance; false when a manager note or error blocks.
+   */
+  confirmSelection: () => Promise<boolean>;
+};
+
 type ProspectingLeadSelectionStepProps = {
   attemptId: string;
   selectedLeadId: string | null;
+  onPickedChange: (leadId: string | null) => void;
   onSelected: (leadId: string) => Promise<void>;
 };
 
 /**
  * Selectable Lead list with CRM deep-link when none exist yet.
  */
-export function ProspectingLeadSelectionStep({
-  attemptId,
-  selectedLeadId,
-  onSelected,
-}: ProspectingLeadSelectionStepProps): React.ReactElement {
+export const ProspectingLeadSelectionStep = forwardRef<
+  ProspectingLeadSelectionHandle,
+  ProspectingLeadSelectionStepProps
+>(function ProspectingLeadSelectionStep(
+  { attemptId, selectedLeadId, onPickedChange, onSelected },
+  ref
+): React.ReactElement {
   const { openCrmLeads } = useTempoCrmGate();
   const [leads, setLeads] = useState<CrmLead[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -62,12 +79,18 @@ export function ProspectingLeadSelectionStep({
     setPickedId(selectedLeadId);
   }, [selectedLeadId]);
 
+  const handlePick = (leadId: string): void => {
+    setPickedId(leadId);
+    onPickedChange(leadId);
+    setError(null);
+  };
+
   /**
-   * Validates and marks the picked Lead as the Prospecting target.
+   * Validates and marks the picked Lead as the Prospecting target (called from Next).
    */
-  const handleSelectTarget = async (): Promise<void> => {
+  const confirmSelection = useCallback(async (): Promise<boolean> => {
     if (!pickedId || isSelecting) {
-      return;
+      return false;
     }
     setIsSelecting(true);
     setError(null);
@@ -86,19 +109,23 @@ export function ProspectingLeadSelectionStep({
       if (!res.ok || !body?.success) {
         if (typeof body?.managerNote === "string" && body.managerNote.trim()) {
           setManagerNote(body.managerNote);
-          return;
+          return false;
         }
         setError(body?.error ?? "Could not select this lead.");
-        return;
+        return false;
       }
 
       await onSelected(pickedId);
+      return true;
     } catch {
       setError("Could not select this lead.");
+      return false;
     } finally {
       setIsSelecting(false);
     }
-  };
+  }, [isSelecting, onSelected, pickedId]);
+
+  useImperativeHandle(ref, () => ({ confirmSelection }), [confirmSelection]);
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -116,7 +143,7 @@ export function ProspectingLeadSelectionStep({
         </div>
         <p className="text-body-md text-on-surface-variant mb-lg">
           Choose the lead you will pursue. Your selection is checked against what your manager is
-          prioritizing. Pick carefully, then move on to your opening message.
+          prioritizing when you continue.
         </p>
       </div>
 
@@ -164,8 +191,9 @@ export function ProspectingLeadSelectionStep({
                     <li key={lead.id}>
                       <button
                         type="button"
-                        onClick={() => setPickedId(lead.id)}
-                        className={`w-full text-left px-lg py-md flex items-center justify-between gap-4 transition-colors ${
+                        onClick={() => handlePick(lead.id)}
+                        disabled={isSelecting}
+                        className={`w-full text-left px-lg py-md flex items-center justify-between gap-4 transition-colors disabled:opacity-60 ${
                           isPicked
                             ? "bg-secondary-fixed/40"
                             : "hover:bg-surface-container-low"
@@ -197,26 +225,10 @@ export function ProspectingLeadSelectionStep({
               </ul>
             )}
           </div>
-
-          <div className="p-lg bg-surface-container-low border-t border-outline-variant flex justify-end">
-            <button
-              type="button"
-              disabled={!pickedId || isSelecting}
-              onClick={() => void handleSelectTarget()}
-              className={`px-lg py-sm rounded-lg font-bold text-label-md flex items-center gap-xs transition-all ${
-                pickedId && !isSelecting
-                  ? "bg-primary-container text-white hover:bg-primary shadow-md"
-                  : "bg-surface-container-highest text-on-surface-variant/40 cursor-not-allowed"
-              }`}
-            >
-              {isSelecting ? "Selecting…" : "Select as Target"}
-              <MaterialIcon name="arrow_forward" className="text-[18px]" />
-            </button>
-          </div>
         </div>
       </div>
 
       {error ? <p className="text-sm text-error">{error}</p> : null}
     </div>
   );
-}
+});
