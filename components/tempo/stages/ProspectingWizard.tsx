@@ -14,7 +14,6 @@ import {
   ReferenceLibraryDrawer,
   ReferenceLibrarySectionLabel,
 } from "@/components/tempo/ReferenceLibraryDrawer";
-import { TempoExitSimulation } from "@/components/tempo/TempoExitSimulation";
 import { TempoStageForwardNav } from "@/components/tempo/TempoStageForwardNav";
 import { TempoTestBypassBanner } from "@/components/tempo/TempoTestBypassBanner";
 import { TempoWizardTopBar } from "@/components/tempo/TempoWizardTopBar";
@@ -199,9 +198,6 @@ export function ProspectingWizard({
       >
         <div className="flex flex-1 min-h-0 overflow-hidden">
         <aside className="w-60 bg-primary-container text-on-primary-container flex flex-col h-full shrink-0 hidden lg:flex">
-          <div className="px-lg h-12 flex items-center border-b border-white/10 shrink-0">
-            <TempoExitSimulation />
-          </div>
           <div className="p-lg border-b border-white/10">
             <div className="flex items-center gap-2 mb-sm flex-nowrap">
               <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-[#c6c4df] whitespace-nowrap shrink-0">

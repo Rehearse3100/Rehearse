@@ -9,7 +9,6 @@
 
 import { FieldCounter } from "@/components/tempo/FieldCounter";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
-import { TempoExitSimulation } from "@/components/tempo/TempoExitSimulation";
 import { TempoStageForwardNav } from "@/components/tempo/TempoStageForwardNav";
 import {
   isPresentationSectionComplete,
@@ -59,9 +58,6 @@ export function PresentationStageLayout({
       <main className="flex flex-1 min-h-0 overflow-hidden">
         {/* ── Left column: mission ─── */}
         <aside className="w-[280px] bg-[#1a1a2e] text-white flex flex-col p-6 overflow-y-auto border-r border-outline-variant shrink-0 hidden lg:flex">
-          <div className="mb-6">
-            <TempoExitSimulation />
-          </div>
           <div className="mb-8">
             <span className="text-[11px] font-mono-label text-blue-300 uppercase tracking-[0.2em]">
               Current Phase

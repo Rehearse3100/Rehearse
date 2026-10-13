@@ -11,7 +11,6 @@
 import { CallTranscriptPanel } from "@/components/tempo/CallTranscriptPanel";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import { PostCallCompletePanel } from "@/components/tempo/PostCallCompletePanel";
-import { TempoExitSimulation } from "@/components/tempo/TempoExitSimulation";
 import { TempoStageForwardNav } from "@/components/tempo/TempoStageForwardNav";
 import {
   DISCOVERY_TIPS,
@@ -101,7 +100,6 @@ export function DiscoveryStageLayout({
       <main className="flex flex-1 min-h-0 overflow-hidden">
         {/* ── Left panel ─── */}
         <aside className="w-60 xl:w-72 bg-primary-container text-on-primary p-lg flex flex-col gap-lg border-r border-white/5 shrink-0 hidden lg:flex overflow-y-auto">
-          <TempoExitSimulation />
           <section>
             <h2 className="font-label-sm text-label-sm uppercase tracking-widest text-on-primary-container mb-4">
               Mission Briefing

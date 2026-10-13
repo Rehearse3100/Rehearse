@@ -8,7 +8,6 @@
  */
 
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
-import { TempoExitSimulation } from "@/components/tempo/TempoExitSimulation";
 import { TempoStageForwardNav } from "@/components/tempo/TempoStageForwardNav";
 import {
   getOutcomeStatusLabel,
@@ -47,7 +46,7 @@ type NegotiationStageLayoutProps = {
   onSubmit: () => void;
   /**
    * Server page boolean — short-circuits word-min Send gate, and adds top offset
-   * so Exit Simulation clears the TEST MODE banner (matches Prospecting).
+   * so the stage clears the TEST MODE banner (matches Prospecting).
    */
   testBypass?: boolean;
 };
@@ -195,7 +194,6 @@ export function NegotiationStageLayout({
         <aside
           className={`fixed left-0 ${railTopClass} w-[280px] ${railHeightClass} bg-primary-container text-on-primary p-6 flex flex-col gap-6 border-r border-white/5 z-40 overflow-y-auto`}
         >
-          <TempoExitSimulation />
           <section>
             <h2 className="font-label-sm text-label-sm uppercase tracking-widest text-on-primary-container mb-4">
               Mission Briefing
