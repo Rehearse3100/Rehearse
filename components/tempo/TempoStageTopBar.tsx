@@ -1,13 +1,14 @@
 /**
  * TempoStageTopBar.tsx
  * Shared fixed header for all Tempo stages — left brand zone, middle project
- * flow, and a content-sized right action zone (Reference Library, Handoff,
- * Restart).
+ * flow, and a content-sized right action zone: the hamburger menu
+ * (TempoStageMenu: Exit Simulation, Handoff Note, Restart), then Reference
+ * Library as the rightmost button.
  */
 
 import Link from "next/link";
-import { RestartSimulationButton } from "@/components/simulation/RestartSimulationButton";
 import { TempoProjectFlow } from "@/components/tempo/TempoProjectFlow";
+import { TempoStageMenu } from "@/components/tempo/TempoStageMenu";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 
 const BAR_BUTTON =
@@ -21,7 +22,7 @@ type TempoStageTopBarProps = {
   /** 0 = Prospecting … 4 = Negotiation */
   flowIndex: number;
   onOpenHandoff: () => void;
-  /** Mobile-only dashboard exit (desktop uses left-column control). */
+  /** Mobile-only Back button (Exit Simulation also lives in the menu). */
   onBackToDashboard: () => void;
   /** Opens the shared Reference Library drawer when provided. */
   onOpenReferenceLibrary?: () => void;
@@ -90,8 +91,16 @@ export function TempoStageTopBar({
           <TempoProjectFlow currentIndex={flowIndex} />
         </div>
 
-        {/* Right zone — content-sized action cluster */}
+        {/* Right zone — content-sized action cluster: menu, then Reference Library (rightmost) */}
         <div className="shrink-0 flex items-center justify-end gap-2 sm:gap-3 px-3 sm:px-4 lg:px-6 w-auto">
+          <TempoStageMenu
+            attemptId={attemptId}
+            simulationId={simulationId}
+            classId={classId}
+            simulationTitle={simulationTitle}
+            onOpenHandoff={onOpenHandoff}
+            buttonBaseClass={BAR_BUTTON}
+          />
           {onOpenReferenceLibrary ? (
             <button
               type="button"
@@ -107,21 +116,6 @@ export function TempoStageTopBar({
               <span className="hidden sm:inline">Reference Library</span>
             </button>
           ) : null}
-          <button
-            type="button"
-            onClick={onOpenHandoff}
-            className={`${BAR_BUTTON} text-on-surface-variant border border-outline-variant hover:bg-surface-container`}
-          >
-            <MaterialIcon name="mail" className="text-[16px]" />
-            <span className="hidden sm:inline">Handoff Note</span>
-          </button>
-          <RestartSimulationButton
-            attemptId={attemptId}
-            simulationId={simulationId}
-            classId={classId}
-            simulationTitle={simulationTitle}
-            variant="tempoTopBar"
-          />
         </div>
       </div>
     </header>

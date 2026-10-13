@@ -1,0 +1,211 @@
+/**
+ * TempoStageMenu.tsx
+ * Hamburger menu in the Tempo top bar (TempoStageTopBar): Exit Simulation,
+ * Handoff Note, and Restart, each behaving exactly as the old standalone controls.
+ * The panel is portaled into document.body (fixed, z-[70]) so it sits above the
+ * TEST MODE banner (z-[60]) and the Reference Library drawer (z-[48]), and below
+ * ConfirmModal (z-[100]). It stays mounted while closed (hidden), because
+ * RestartSimulationButton holds its confirm popup's state.
+ */
+
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { RestartSimulationButton } from "@/components/simulation/RestartSimulationButton";
+import { useExitSimulation } from "@/components/tempo/TempoExitSimulation";
+import { MaterialIcon } from "@/components/ui/MaterialIcon";
+
+/** Gap between the trigger's bottom edge and the panel. */
+const PANEL_OFFSET_PX = 8;
+
+const MENU_ITEM =
+  "w-full flex items-center gap-2 px-3 py-2 text-left font-label-sm text-label-sm text-on-surface hover:bg-surface-container focus:outline-none focus-visible:bg-surface-container transition-colors";
+
+type TempoStageMenuProps = {
+  attemptId: string;
+  simulationId: string;
+  classId: string;
+  simulationTitle: string;
+  onOpenHandoff: () => void;
+  /** Shared top-bar button classes (BAR_BUTTON in TempoStageTopBar). */
+  buttonBaseClass: string;
+};
+
+type PanelPosition = {
+  top: number;
+  right: number;
+};
+
+/** Buttons inside the panel, in order (the Restart row's own button included). */
+function getMenuItemButtons(panel: HTMLDivElement | null): HTMLButtonElement[] {
+  return Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? []);
+}
+
+/**
+ * Menu trigger plus a portaled panel, right-aligned under the trigger.
+ */
+export function TempoStageMenu({
+  attemptId,
+  simulationId,
+  classId,
+  simulationTitle,
+  onOpenHandoff,
+  buttonBaseClass,
+}: TempoStageMenuProps): React.ReactElement {
+  const handleExit = useExitSimulation();
+  const [isOpen, setIsOpen] = useState(false);
+  // Portal needs document.body, so the panel renders only after mount.
+  const [isMounted, setIsMounted] = useState(false);
+  const [position, setPosition] = useState<PanelPosition>({ top: 0, right: 0 });
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  const closeMenu = (): void => {
+    setIsOpen(false);
+  };
+
+  const toggleMenu = (): void => {
+    if (isOpen) {
+      setIsOpen(false);
+      return;
+    }
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (rect) {
+      // Right-align the panel with the trigger (clientWidth excludes any scrollbar).
+      setPosition({
+        top: rect.bottom + PANEL_OFFSET_PX,
+        right: document.documentElement.clientWidth - rect.right,
+      });
+    }
+    setIsOpen(true);
+  };
+
+  // While open: move focus into the panel, and close on outside click, Escape,
+  // Tab, resize, or scroll. Arrow keys move between items.
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    getMenuItemButtons(panelRef.current)[0]?.focus();
+
+    const handlePointerDown = (event: MouseEvent): void => {
+      const target = event.target as Node;
+      if (triggerRef.current?.contains(target) || panelRef.current?.contains(target)) {
+        return;
+      }
+      setIsOpen(false);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+        triggerRef.current?.focus();
+        return;
+      }
+      if (event.key === "Tab") {
+        // Back on the trigger, the browser's Tab then moves on from there as usual.
+        setIsOpen(false);
+        triggerRef.current?.focus();
+        return;
+      }
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const items = getMenuItemButtons(panelRef.current);
+        const current = items.indexOf(document.activeElement as HTMLButtonElement);
+        const step = event.key === "ArrowDown" ? 1 : -1;
+        items[(current + step + items.length) % items.length]?.focus();
+      }
+    };
+
+    const handleViewportChange = (): void => {
+      setIsOpen(false);
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("resize", handleViewportChange);
+    // Capture so scrolling any inner container also closes the menu.
+    window.addEventListener("scroll", handleViewportChange, true);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
+    };
+  }, [isOpen]);
+
+  const panel = (
+    <div
+      ref={panelRef}
+      role="menu"
+      aria-label="Simulation menu"
+      style={{ top: position.top, right: position.right }}
+      className={`fixed z-[70] w-[200px] py-1 bg-surface-container-lowest border border-outline-variant rounded-lg shadow-lg ${
+        isOpen ? "" : "hidden"
+      }`}
+    >
+      <button
+        type="button"
+        role="menuitem"
+        className={MENU_ITEM}
+        onClick={() => {
+          closeMenu();
+          handleExit();
+        }}
+      >
+        <MaterialIcon name="logout" className="text-[16px]" />
+        Exit Simulation
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        className={MENU_ITEM}
+        onClick={() => {
+          closeMenu();
+          onOpenHandoff();
+        }}
+      >
+        <MaterialIcon name="mail" className="text-[16px]" />
+        Handoff Note
+      </button>
+      {/* RestartSimulationButton renders its own button and confirm popup; the
+          click bubbles here to close the menu while the popup opens. */}
+      <div role="menuitem" onClick={closeMenu}>
+        <RestartSimulationButton
+          attemptId={attemptId}
+          simulationId={simulationId}
+          classId={classId}
+          simulationTitle={simulationTitle}
+          variant="tempoMenuItem"
+        />
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={toggleMenu}
+        aria-label="Menu"
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+        className={`${buttonBaseClass} ${
+          isOpen
+            ? "text-on-surface bg-surface-container border border-outline"
+            : "text-on-surface-variant border border-outline-variant hover:bg-surface-container"
+        }`}
+      >
+        <MaterialIcon name="menu" className="text-[16px]" />
+      </button>
+      {isMounted ? createPortal(panel, document.body) : null}
+    </>
+  );
+}
