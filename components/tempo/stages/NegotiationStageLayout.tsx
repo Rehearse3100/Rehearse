@@ -2,6 +2,8 @@
  * NegotiationStageLayout.tsx
  * Presentational shell for Tempo Stage 5 Negotiation —
  * mission panel, written exchange workspace, and footer.
+ * The Submit bar sits at the top of the center column (matches ProspectingWizard);
+ * the fixed mission panel runs full height from directly under the header.
  * Reference content lives in the Reference Library drawer.
  */
 
@@ -178,8 +180,9 @@ export function NegotiationStageLayout({
     !activeComplete && currentTurnIndex >= 0 && (activeScenario === "A" ? scenarioAState === "active" : scenarioBState === "active");
 
   const topOffsetClass = testBypass ? "pt-28" : "pt-16";
-  const railTopClass = testBypass ? "top-40" : "top-28";
-  const railHeightClass = testBypass ? "h-[calc(100vh-10rem)]" : "h-[calc(100vh-7rem)]";
+  // Rail starts where the content area starts (same offsets as topOffsetClass).
+  const railTopClass = testBypass ? "top-28" : "top-16";
+  const railHeightClass = testBypass ? "h-[calc(100vh-7rem)]" : "h-[calc(100vh-4rem)]";
   const needsScenarioBUnlock =
     scenarioAState === "complete" && scenarioBState === "locked";
 
@@ -187,38 +190,6 @@ export function NegotiationStageLayout({
     <div
       className={`fixed inset-0 z-[45] flex flex-col overflow-hidden bg-surface ${topOffsetClass}`}
     >
-      <div className="h-12 bg-surface-container-low border-b border-outline-variant shrink-0 flex items-center justify-end px-4 lg:px-xl z-50 relative">
-        <TempoStageForwardNav
-          forwardLabel={needsScenarioBUnlock ? "Next" : "Submit"}
-          forwardDisabled={
-            needsScenarioBUnlock ? false : !canSubmit || isSubmitting
-          }
-          isForwardLoading={!needsScenarioBUnlock && isSubmitting}
-          onForward={() => {
-            if (needsScenarioBUnlock) {
-              onContinueToScenarioB();
-              return;
-            }
-            onSubmit();
-          }}
-          forwardHint={
-            needsScenarioBUnlock
-              ? "Scenario A complete — continue to Scenario B"
-              : canSubmit
-                ? null
-                : "Complete both scenarios and AI work to submit."
-          }
-          actions={
-            <button
-              type="button"
-              onClick={onSaveDraft}
-              className="hidden sm:inline px-md py-sm rounded-lg text-on-surface-variant font-bold text-label-md hover:text-primary transition-colors"
-            >
-              Save Draft
-            </button>
-          }
-        />
-      </div>
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* ── Left panel (matches Stages 2–4 mission briefing) ─── */}
         <aside
@@ -347,8 +318,42 @@ export function NegotiationStageLayout({
           </div>
         </aside>
 
-        {/* ── Center panel ─── */}
-        <section className="ml-[280px] flex-1 overflow-y-auto bg-background px-10 py-8 pb-32">
+        {/* ── Center panel: Submit bar + scrolling scenario content ─── */}
+        <section className="ml-[280px] flex-1 flex flex-col min-w-0 min-h-0 bg-background">
+          <div className="h-12 bg-surface-container-low border-b border-outline-variant shrink-0 flex items-center justify-end px-4 lg:px-xl gap-4">
+            <TempoStageForwardNav
+              forwardLabel={needsScenarioBUnlock ? "Next" : "Submit"}
+              forwardDisabled={
+                needsScenarioBUnlock ? false : !canSubmit || isSubmitting
+              }
+              isForwardLoading={!needsScenarioBUnlock && isSubmitting}
+              onForward={() => {
+                if (needsScenarioBUnlock) {
+                  onContinueToScenarioB();
+                  return;
+                }
+                onSubmit();
+              }}
+              forwardHint={
+                needsScenarioBUnlock
+                  ? "Scenario A complete — continue to Scenario B"
+                  : canSubmit
+                    ? null
+                    : "Complete both scenarios and AI work to submit."
+              }
+              actions={
+                <button
+                  type="button"
+                  onClick={onSaveDraft}
+                  className="hidden sm:inline px-md py-sm rounded-lg text-on-surface-variant font-bold text-label-md hover:text-primary transition-colors"
+                >
+                  Save Draft
+                </button>
+              }
+            />
+          </div>
+
+          <div className="flex-1 min-h-0 overflow-y-auto px-10 py-8 pb-32">
           <div className="max-w-3xl mx-auto">
             <div className="flex gap-1 border-b border-outline-variant mb-8">
               <button
@@ -630,6 +635,7 @@ export function NegotiationStageLayout({
                 )}
               </div>
             )}
+          </div>
           </div>
         </section>
 
