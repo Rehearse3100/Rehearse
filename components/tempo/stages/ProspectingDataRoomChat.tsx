@@ -1,7 +1,11 @@
 /**
  * ProspectingDataRoomChat.tsx
- * Data Room AI Assistant — attach roster company documents and chat
- * grounded only in those attachments (IDs sent to server, not raw text).
+ * Data Room AI Research Assistant: one transcript for the whole Data Room.
+ * Each question is about a scope worked out live (lib/data-room-chat-scope.ts):
+ * All companies, companies picked from suggestions or named in the text, or the
+ * open company. Type-to-pick: after 3 letters, matching companies appear above
+ * the input (Tab picks, Enter always sends). The server receives company ids only
+ * and returns per-company blocks; names shown come from the server reply.
  */
 
 "use client";
@@ -9,469 +13,531 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import type { DataRoomCompany } from "@/app/api/student/data-room/route";
+import {
+  buildScopeIndex,
+  insertPickedName,
+  previewScope,
+  resolveSendScope,
+  suggestCompanies,
+  textContainsCompanyName,
+  wordFragmentBeforeCaret,
+  type ChatScope,
+  type ScopeCompany,
+} from "@/lib/data-room-chat-scope";
 import { sanitizeAiResearchReply } from "@/lib/tempo-prospecting";
-import type { ChatMessage } from "@/types";
 
-type AttachmentNotice = {
-  kind: "attachment";
-  action: "attached" | "removed";
+const STORAGE_PREFIX = "tempo-data-room-chat-v2-";
+
+type AnswerItem = {
+  companyId: string;
   companyName: string;
+  text: string;
 };
 
-type ChatTimelineItem = ChatMessage | AttachmentNotice;
+type UserMessage = {
+  id: string;
+  role: "user";
+  content: string;
+  scope: ChatScope;
+};
 
-function isChatMessage(item: ChatTimelineItem): item is ChatMessage {
-  return "role" in item;
+type AssistantMessage = {
+  id: string;
+  role: "assistant";
+  scope: ChatScope;
+  intro: string;
+  items: AnswerItem[];
+  /** Request failures are shown but never sent back as history. */
+  isError?: boolean;
+};
+
+type TranscriptMessage = UserMessage | AssistantMessage;
+
+type ChatReply = {
+  intro?: unknown;
+  items?: unknown;
+  error?: unknown;
+};
+
+/** Short unique id for transcript keys. */
+function newMessageId(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function toApiMessages(timeline: ChatTimelineItem[]): ChatMessage[] {
-  return timeline.map((item) => {
-    if (isChatMessage(item)) {
-      return item;
+/** Loose check for a transcript restored from sessionStorage. */
+function isTranscript(value: unknown): value is TranscriptMessage[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (item) =>
+        item &&
+        typeof item === "object" &&
+        typeof (item as TranscriptMessage).id === "string" &&
+        ((item as TranscriptMessage).role === "user" ||
+          (item as TranscriptMessage).role === "assistant") &&
+        typeof (item as TranscriptMessage).scope === "object"
+    )
+  );
+}
+
+function loadTranscript(attemptId: string): TranscriptMessage[] {
+  try {
+    const raw = window.sessionStorage.getItem(`${STORAGE_PREFIX}${attemptId}`);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return isTranscript(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveTranscript(attemptId: string, messages: TranscriptMessage[]): void {
+  try {
+    window.sessionStorage.setItem(`${STORAGE_PREFIX}${attemptId}`, JSON.stringify(messages));
+  } catch {
+    /* storage unavailable: the transcript still lives in memory */
+  }
+}
+
+/** Server reply → answer items (names are the server's, never typed by the model). */
+function parseAnswerItems(value: unknown): AnswerItem[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((item): AnswerItem[] => {
+    if (!item || typeof item !== "object") {
+      return [];
     }
-    return {
-      role: "user",
-      content:
-        item.action === "attached"
-          ? `Attached ${item.companyName}.`
-          : `Removed ${item.companyName}.`,
-    };
+    const { companyId, companyName, text } = item as Record<string, unknown>;
+    if (typeof companyId !== "string" || typeof companyName !== "string" || typeof text !== "string") {
+      return [];
+    }
+    return [{ companyId, companyName, text: sanitizeAiResearchReply(text) }];
   });
+}
+
+/** History entry sent to the server: ids and text only, never company names. */
+function toHistoryEntry(message: TranscriptMessage): Record<string, unknown> {
+  if (message.role === "user") {
+    return { role: "user", content: message.content, scope: message.scope };
+  }
+  return {
+    role: "assistant",
+    intro: message.intro,
+    items: message.items.map((item) => ({ companyId: item.companyId, text: item.text })),
+    scope: message.scope,
+  };
 }
 
 type ProspectingDataRoomChatProps = {
   attemptId: string;
   companies: DataRoomCompany[];
+  /** Company open on the company page (default scope). */
+  openCompanyId: string | null;
+  /** Shown as a close button on narrow screens (slide-over). */
+  onClose?: () => void;
 };
 
 /**
- * Attach-documents picker + chat transcript for the Data Room AI Assistant tab.
+ * AI Research Assistant pane: scope chip, transcript, All companies toggle,
+ * type-to-pick suggestions, and the input.
  */
 export function ProspectingDataRoomChat({
   attemptId,
   companies,
+  openCompanyId,
+  onClose,
 }: ProspectingDataRoomChatProps): React.ReactElement {
-  const [attachedIds, setAttachedIds] = useState<string[]>([]);
-  const [timeline, setTimeline] = useState<ChatTimelineItem[]>([]);
-  const [chatInput, setChatInput] = useState("");
-  const [isAILoading, setIsAILoading] = useState(false);
-  const [sendError, setSendError] = useState<string | null>(null);
-  const [isPickerOpen, setIsPickerOpen] = useState(false);
-  const [pickerSearch, setPickerSearch] = useState("");
-  const chatScrollRef = useRef<HTMLDivElement>(null);
-  const pickerRef = useRef<HTMLDivElement>(null);
+  const [messages, setMessages] = useState<TranscriptMessage[]>([]);
+  const [hasRestored, setHasRestored] = useState(false);
+  const [input, setInput] = useState("");
+  const [caret, setCaret] = useState(0);
+  const [pickedIds, setPickedIds] = useState<string[]>([]);
+  const [allCompanies, setAllCompanies] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+  const [suggestionsHidden, setSuggestionsHidden] = useState(false);
+  const [ambiguity, setAmbiguity] = useState<{ word: string; options: ScopeCompany[] } | null>(
+    null
+  );
+  const [notice, setNotice] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const pendingCaretRef = useRef<number | null>(null);
 
-  const sortedCompanies = useMemo(() => {
-    return [...companies].sort((a, b) => a.name.localeCompare(b.name));
-  }, [companies]);
+  const index = useMemo(
+    () =>
+      buildScopeIndex(
+        companies.map((company) => ({
+          id: company.id,
+          name: company.name,
+          industry: company.industry,
+        }))
+      ),
+    [companies]
+  );
 
-  const companyById = useMemo(() => {
-    return new Map(companies.map((company) => [company.id, company]));
-  }, [companies]);
-
-  const filteredPickerCompanies = useMemo(() => {
-    const query = pickerSearch.trim().toLowerCase();
-    const base =
-      query.length === 0
-        ? sortedCompanies
-        : sortedCompanies.filter(
-            (company) =>
-              company.name.toLowerCase().includes(query) ||
-              company.industry.toLowerCase().includes(query)
-          );
-
-    const attachedSet = new Set(attachedIds);
-    return [...base].sort((a, b) => {
-      const aAttached = attachedSet.has(a.id);
-      const bAttached = attachedSet.has(b.id);
-      if (aAttached !== bAttached) {
-        return aAttached ? -1 : 1;
-      }
-      return a.name.localeCompare(b.name);
-    });
-  }, [attachedIds, pickerSearch, sortedCompanies]);
+  // Restore after mount (sessionStorage is browser-only), then mirror every change.
+  useEffect(() => {
+    setMessages(loadTranscript(attemptId));
+    setHasRestored(true);
+  }, [attemptId]);
 
   useEffect(() => {
-    const el = chatScrollRef.current;
-    if (!el) {
-      return;
+    if (hasRestored) {
+      saveTranscript(attemptId, messages);
     }
-    el.scrollTop = el.scrollHeight;
-  }, [timeline, isAILoading]);
+  }, [attemptId, hasRestored, messages]);
 
   useEffect(() => {
-    if (!isPickerOpen) {
+    const el = scrollRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [messages, isLoading]);
+
+  // Put the caret after a picked name once the new text has rendered.
+  useEffect(() => {
+    const position = pendingCaretRef.current;
+    if (position === null) {
       return;
     }
-    const handlePointerDown = (event: MouseEvent): void => {
-      if (pickerRef.current && !pickerRef.current.contains(event.target as Node)) {
-        setIsPickerOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [isPickerOpen]);
+    pendingCaretRef.current = null;
+    inputRef.current?.focus();
+    inputRef.current?.setSelectionRange(position, position);
+  }, [input]);
 
-  const applyAttachedIds = (updater: (previousIds: string[]) => string[]): void => {
-    setAttachedIds((previousIds) => {
-      const nextIds = updater(previousIds);
-      const previousSet = new Set(previousIds);
-      const nextSet = new Set(nextIds);
-      const added = nextIds.filter((id) => !previousSet.has(id));
-      const removed = previousIds.filter((id) => !nextSet.has(id));
+  // Suggestion picks only count while their full name is still in the text.
+  const activePickedIds = pickedIds.filter((id) => textContainsCompanyName(index, input, id));
 
-      if (added.length > 0 || removed.length > 0) {
-        setTimeline((current) => {
-          if (!current.some(isChatMessage)) {
-            return current;
-          }
+  const fragment = wordFragmentBeforeCaret(input, caret);
+  const suggestions =
+    suggestionsHidden || !fragment ? [] : suggestCompanies(index, fragment.fragment);
+  const highlighted = Math.min(highlight, Math.max(0, suggestions.length - 1));
 
-          const notices: AttachmentNotice[] = [
-            ...added.map((id) => ({
-              kind: "attachment" as const,
-              action: "attached" as const,
-              companyName: companyById.get(id)?.name ?? "Company",
-            })),
-            ...removed.map((id) => ({
-              kind: "attachment" as const,
-              action: "removed" as const,
-              companyName: companyById.get(id)?.name ?? "Company",
-            })),
-          ];
-          return [...current, ...notices];
-        });
-      }
+  const preview = previewScope({
+    index,
+    text: input,
+    allCompanies,
+    pickedIds: activePickedIds,
+    openCompanyId,
+  });
+  const scopeChipLabel =
+    preview.kind === "all"
+      ? "About: All companies"
+      : preview.kind === "companies"
+        ? `About: ${preview.companies.map((company) => company.name).join(", ")}`
+        : "Open a company or type a company's name";
 
-      return nextIds;
+  const handleInputChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
+    setInput(event.target.value);
+    setCaret(event.target.selectionStart ?? event.target.value.length);
+    setSuggestionsHidden(false);
+    setHighlight(0);
+    setAmbiguity(null);
+    setNotice(null);
+  };
+
+  const pickSuggestion = (company: ScopeCompany): void => {
+    if (!fragment) {
+      return;
+    }
+    const next = insertPickedName(input, fragment.start, caret, company.name);
+    pendingCaretRef.current = next.caret;
+    setInput(next.text);
+    setCaret(next.caret);
+    setPickedIds((prev) => (prev.includes(company.id) ? prev : [...prev, company.id]));
+    setHighlight(0);
+    setNotice(null);
+    setAmbiguity(null);
+  };
+
+  const sendMessage = async (extraPickedIds: string[] = []): Promise<void> => {
+    const text = input.trim();
+    if (!text || isLoading) {
+      return;
+    }
+
+    const decision = resolveSendScope({
+      index,
+      text,
+      allCompanies,
+      pickedIds: [...activePickedIds, ...extraPickedIds],
+      openCompanyId,
     });
-    setSendError(null);
-  };
-
-  const selectAllCompanies = (): void => {
-    applyAttachedIds(() => companies.map((company) => company.id));
-  };
-
-  const clearAllCompanies = (): void => {
-    applyAttachedIds(() => []);
-  };
-
-  const toggleAttached = (companyId: string): void => {
-    const isAttaching = !attachedIds.includes(companyId);
-    applyAttachedIds((previousIds) =>
-      previousIds.includes(companyId)
-        ? previousIds.filter((id) => id !== companyId)
-        : [...previousIds, companyId]
-    );
-    if (isAttaching) {
-      setPickerSearch("");
-    }
-  };
-
-  const handleSendMessage = async (): Promise<void> => {
-    const trimmed = chatInput.trim();
-    if (!trimmed || isAILoading) {
+    if (decision.kind === "error") {
+      setNotice(decision.message);
       return;
     }
-    if (attachedIds.length === 0) {
-      setSendError("Attach one or more company documents above to start asking questions.");
+    if (decision.kind === "ask") {
+      setAmbiguity({ word: decision.word, options: decision.options });
       return;
     }
 
-    const userMessage: ChatMessage = { role: "user", content: trimmed };
-    const prior = toApiMessages(timeline);
-    const companyIdsForRequest = [...attachedIds];
-    const nextTimeline: ChatTimelineItem[] = [...timeline, userMessage];
-    setChatInput("");
-    setSendError(null);
-    setTimeline(nextTimeline);
-    setIsAILoading(true);
+    const scope = decision.scope;
+    const history = messages
+      .filter((message) => !(message.role === "assistant" && message.isError))
+      .map(toHistoryEntry);
+    const userMessage: UserMessage = { id: newMessageId(), role: "user", content: text, scope };
+    const withQuestion = [...messages, userMessage];
+
+    setMessages(withQuestion);
+    setInput("");
+    setCaret(0);
+    setPickedIds([]);
+    setAmbiguity(null);
+    setNotice(null);
+    setIsLoading(true);
 
     try {
       const res = await fetch("/api/student/data-room-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          attemptId,
-          companyIds: companyIdsForRequest,
-          messages: prior,
-          newMessage: trimmed,
-        }),
+        body: JSON.stringify({ attemptId, scope, history, newMessage: text }),
       });
-
-      const body = (await res.json().catch(() => null)) as {
-        reply?: string;
-        error?: string;
-      } | null;
-
-      if (!res.ok || !body?.reply) {
-        throw new Error(body?.error ?? "AI request failed");
+      const body = (await res.json().catch(() => null)) as ChatReply | null;
+      if (!res.ok || !body || typeof body.intro !== "string") {
+        throw new Error(typeof body?.error === "string" ? body.error : "AI request failed");
       }
-
-      setTimeline([
-        ...nextTimeline,
-        { role: "assistant", content: sanitizeAiResearchReply(body.reply) },
+      setMessages([
+        ...withQuestion,
+        {
+          id: newMessageId(),
+          role: "assistant",
+          scope,
+          intro: sanitizeAiResearchReply(body.intro),
+          items: parseAnswerItems(body.items),
+        },
       ]);
     } catch (err) {
-      const message =
-        err instanceof Error && err.message
-          ? err.message
-          : "Sorry, I couldn't respond right now. Try again in a moment.";
-      setTimeline([
-        ...nextTimeline,
+      setMessages([
+        ...withQuestion,
         {
+          id: newMessageId(),
           role: "assistant",
-          content: message,
+          scope,
+          intro:
+            err instanceof Error && err.message
+              ? err.message
+              : "Sorry, I couldn't respond right now. Try again in a moment.",
+          items: [],
+          isError: true,
         },
       ]);
     } finally {
-      setIsAILoading(false);
+      setIsLoading(false);
     }
   };
 
-  const handleRefreshChat = (): void => {
-    setTimeline([]);
-    setChatInput("");
-    setSendError(null);
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (event.key === "Enter") {
+      // Enter always sends; it never picks a suggestion.
+      event.preventDefault();
+      void sendMessage();
+      return;
+    }
+    if (suggestions.length === 0) {
+      return;
+    }
+    if (event.key === "Tab" && !event.shiftKey) {
+      event.preventDefault();
+      const company = suggestions[highlighted];
+      if (company) {
+        pickSuggestion(company);
+      }
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      setHighlight((highlighted + step + suggestions.length) % suggestions.length);
+    } else if (event.key === "Escape") {
+      // Hide suggestions only; don't also close the slide-over.
+      event.preventDefault();
+      event.stopPropagation();
+      setSuggestionsHidden(true);
+    }
   };
 
-  const canRefreshChat = timeline.length > 0 && !isAILoading;
-
   return (
-    <section className="flex-1 flex flex-col bg-white min-h-0 overflow-hidden">
-      <div className="p-4 border-b border-outline-variant bg-surface-container-low shrink-0 space-y-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="font-headline-md text-headline-md text-primary">AI Assistant</h3>
-            <p className="text-body-md text-on-surface-variant">
-              Attach company documents, then ask questions grounded only in what you attached.
-            </p>
-          </div>
+    <section className="flex-1 flex flex-col min-h-0 overflow-hidden bg-surface-container-lowest">
+      {/* Header */}
+      <div className="p-4 border-b border-outline-variant shrink-0 flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="text-[16px] font-semibold leading-none text-on-surface">
+            AI Research Assistant
+          </h3>
+          <p
+            className={`mt-2 inline-flex max-w-full px-2 py-0.5 rounded-full text-[12px] font-medium ${
+              preview.kind === "none"
+                ? "bg-surface-container text-on-surface-variant"
+                : "bg-secondary-fixed text-secondary"
+            }`}
+          >
+            <span className="truncate">{scopeChipLabel}</span>
+          </p>
+        </div>
+        {onClose ? (
           <button
             type="button"
-            onClick={handleRefreshChat}
-            disabled={!canRefreshChat}
-            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-outline-variant bg-white text-label-sm font-bold text-on-surface hover:bg-surface-container transition-colors shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
-            aria-label="Refresh chat"
+            onClick={onClose}
+            className="min-[1360px]:hidden w-8 h-8 rounded-lg text-on-surface-variant hover:bg-surface-container flex items-center justify-center shrink-0"
+            aria-label="Close AI Assistant"
           >
-            <MaterialIcon name="refresh" className="text-[18px]" />
-            Refresh chat
+            <MaterialIcon name="close" className="text-[18px]" />
+          </button>
+        ) : null}
+      </div>
+
+      {/* Transcript */}
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-4 space-y-4">
+        {messages.length === 0 ? (
+          <p className="text-body-md text-on-surface-variant text-center pt-6">
+            Ask about the open company, or type another company&apos;s name.
+          </p>
+        ) : (
+          messages.map((message) =>
+            message.role === "user" ? (
+              <div key={message.id} className="flex justify-end">
+                <div className="max-w-[85%] bg-secondary-fixed text-on-surface rounded-xl rounded-br-none p-3.5 text-[14px] leading-relaxed shadow-sm whitespace-pre-wrap">
+                  {message.content}
+                </div>
+              </div>
+            ) : (
+              <div key={message.id} className="flex justify-start">
+                <div
+                  className={`max-w-[92%] bg-white border rounded-xl rounded-bl-none p-3.5 text-[14px] leading-relaxed shadow-sm space-y-3 ${
+                    message.isError ? "border-error/40" : "border-outline-variant"
+                  }`}
+                >
+                  {message.intro ? (
+                    <p
+                      className={`whitespace-pre-wrap ${
+                        message.isError ? "text-error" : "text-on-surface-variant"
+                      }`}
+                    >
+                      {message.intro}
+                    </p>
+                  ) : null}
+                  {message.items.map((item) => (
+                    <div key={item.companyId}>
+                      <p className="text-[12px] font-semibold text-on-surface mb-1">
+                        {item.companyName}
+                      </p>
+                      <p className="text-on-surface-variant whitespace-pre-wrap">{item.text}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
+          )
+        )}
+        {isLoading ? (
+          <div className="flex items-center gap-sm text-on-surface-variant">
+            <div className="w-4 h-4 border-2 border-secondary border-t-transparent rounded-full animate-spin" />
+            <span className="text-label-sm">Rehearse AI is thinking...</span>
+          </div>
+        ) : null}
+      </div>
+
+      {/* Footer */}
+      <div className="p-4 border-t border-outline-variant shrink-0 space-y-2">
+        <div className="flex items-center">
+          <button
+            type="button"
+            onClick={() => {
+              setAllCompanies((on) => !on);
+              setNotice(null);
+              setAmbiguity(null);
+            }}
+            aria-pressed={allCompanies}
+            className={`h-6 px-2 rounded-full text-[11px] font-medium flex items-center gap-1 transition-colors ${
+              allCompanies
+                ? "bg-secondary text-white"
+                : "bg-surface-container text-on-surface-variant hover:bg-surface-container-high"
+            }`}
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                allCompanies ? "bg-white" : "bg-on-surface-variant/60"
+              }`}
+            />
+            All companies
           </button>
         </div>
 
-        <div ref={pickerRef} className="relative">
-          <p className="text-label-sm font-bold text-on-surface mb-2">Attach Documents</p>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setIsPickerOpen((open) => {
-                  if (open) {
-                    setPickerSearch("");
-                  }
-                  return !open;
-                });
-              }}
-              className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-outline-variant bg-white text-label-sm font-bold text-on-surface hover:bg-surface-container transition-colors min-w-[220px] justify-between"
-              aria-expanded={isPickerOpen}
-              aria-haspopup="listbox"
-            >
-              <span className="truncate">
-                {attachedIds.length === 0
-                  ? "Select companies…"
-                  : `${attachedIds.length} of ${companies.length} selected`}
-              </span>
-              <MaterialIcon
-                name={isPickerOpen ? "expand_less" : "expand_more"}
-                className="text-[18px] shrink-0"
-              />
-            </button>
+        {ambiguity ? (
+          <div className="space-y-1.5" role="group" aria-label="Which one did you mean?">
+            <p className="text-[12px] font-medium text-on-surface">Which one did you mean?</p>
+            <div className="flex flex-wrap gap-1.5">
+              {ambiguity.options.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => void sendMessage([option.id])}
+                  className="h-7 px-2.5 rounded-full border border-outline-variant bg-white text-[12px] font-medium text-on-surface hover:bg-surface-container transition-colors"
+                >
+                  {option.name}
+                </button>
+              ))}
+            </div>
           </div>
+        ) : null}
 
-          {isPickerOpen ? (
-            <div
-              className="absolute z-20 mt-1 w-full max-w-md rounded-lg border border-outline-variant bg-white shadow-lg overflow-hidden"
-              role="listbox"
-              aria-multiselectable="true"
-            >
-              <div className="p-2 border-b border-outline-variant bg-surface-container-lowest flex items-center gap-2">
-                <div className="relative flex-1 min-w-0">
-                  <MaterialIcon
-                    name="search"
-                    className="absolute left-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant text-[16px]"
-                  />
-                  <input
-                    type="text"
-                    value={pickerSearch}
-                    onChange={(e) => setPickerSearch(e.target.value)}
-                    placeholder="Search companies…"
-                    className="w-full h-8 pl-8 pr-3 rounded-md border border-outline-variant bg-white text-sm outline-none focus:ring-2 focus:ring-secondary/50"
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={selectAllCompanies}
-                  disabled={companies.length === 0}
-                  className="h-8 px-2.5 rounded-md border border-outline-variant bg-white text-label-sm font-bold text-primary hover:bg-surface-container transition-colors shrink-0 disabled:opacity-40"
-                >
-                  Select all
-                </button>
-                <button
-                  type="button"
-                  onClick={clearAllCompanies}
-                  disabled={attachedIds.length === 0}
-                  className="h-8 px-2.5 rounded-md border border-outline-variant bg-white text-label-sm font-bold text-on-surface-variant hover:bg-surface-container transition-colors shrink-0 disabled:opacity-40"
-                >
-                  Clear all
-                </button>
-              </div>
-              <div className="max-h-56 overflow-y-auto custom-scrollbar">
-                {filteredPickerCompanies.length === 0 ? (
-                  <p className="px-3 py-4 text-label-sm text-on-surface-variant text-center">
-                    No matches.
-                  </p>
-                ) : (
-                  filteredPickerCompanies.map((company) => {
-                    const isAttached = attachedIds.includes(company.id);
-                    return (
-                      <label
-                        key={company.id}
-                        className="flex items-center gap-2.5 px-3 py-2 hover:bg-surface-container cursor-pointer border-b border-outline-variant/40 last:border-b-0"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isAttached}
-                          onChange={() => toggleAttached(company.id)}
-                          className="h-4 w-4 rounded border-outline-variant text-primary focus:ring-secondary"
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-label-sm font-bold text-on-surface truncate">
-                            {company.name}
-                          </span>
-                          <span className="block text-[11px] text-on-surface-variant truncate">
-                            {company.industry} · {company.sizeLabel}
-                          </span>
-                        </span>
-                      </label>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-        <div
-          ref={chatScrollRef}
-          className="flex-1 overflow-y-auto custom-scrollbar min-h-0 flex flex-col"
-        >
-          {timeline.length === 0 && attachedIds.length === 0 ? (
-            <div className="flex-1 flex items-center justify-center text-center px-6 p-lg min-h-[200px]">
-              <p className="text-body-md text-on-surface-variant max-w-md">
-                Attach one or more company documents above to start asking questions.
-              </p>
-            </div>
-          ) : timeline.length === 0 && attachedIds.length > 0 ? (
-            <div className="flex-1 flex items-center justify-center text-center px-6 p-lg min-h-[200px]">
-              <p className="text-body-md text-on-surface-variant max-w-md">
-                Ask a question about the attached documents. The assistant will not rank or pick a
-                target for you.
-              </p>
-            </div>
-          ) : (
-            <div className="p-lg space-y-lg">
-              {timeline.map((item, i) => {
-                if (!isChatMessage(item)) {
-                  return (
-                    <div
-                      key={`data-room-attachment-${item.action}-${item.companyName}-${i}`}
-                      className="flex items-center gap-3 py-1"
-                    >
-                      <div className="flex-1 h-px bg-outline-variant" />
-                      <p className="text-label-sm text-on-surface-variant shrink-0">
-                        {item.action === "attached" ? "Attached" : "Removed"} {item.companyName}
-                      </p>
-                      <div className="flex-1 h-px bg-outline-variant" />
-                    </div>
-                  );
-                }
-
-                return (
-                  <div key={`data-room-chat-${item.role}-${i}`}>
-                    {item.role === "user" ? (
-                      <div className="flex justify-end">
-                        <div className="bg-primary-container text-on-primary p-md rounded-2xl rounded-tr-none max-w-[80%] shadow-sm">
-                          <p className="text-body-md whitespace-pre-wrap">{item.content}</p>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex justify-start gap-md">
-                        <div className="w-8 h-8 rounded-full bg-secondary-fixed/40 flex items-center justify-center shrink-0">
-                          <MaterialIcon name="smart_toy" className="text-secondary text-[20px]" />
-                        </div>
-                        <div className="bg-surface-container p-md rounded-2xl rounded-tl-none max-w-[85%] border border-outline-variant">
-                          <p className="text-[10px] font-bold text-primary uppercase tracking-wide mb-1">
-                            Rehearse AI
-                          </p>
-                          <p className="text-body-md leading-relaxed whitespace-pre-wrap">
-                            {item.content}
-                          </p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-
-              {isAILoading ? (
-                <div className="flex items-center gap-sm text-on-surface-variant">
-                  <div className="w-4 h-4 border-2 border-secondary border-t-transparent rounded-full animate-spin" />
-                  <span className="text-label-sm">Rehearse AI is thinking...</span>
-                </div>
-              ) : null}
-            </div>
-          )}
-        </div>
-
-        <div className="p-lg bg-white border-t border-outline-variant shrink-0">
-          {sendError ? <p className="text-sm text-error mb-2">{sendError}</p> : null}
-          <div className="relative flex items-center">
-            <textarea
-              className="w-full bg-surface-container-lowest border border-outline-variant rounded-xl py-3 pl-4 pr-14 text-body-md focus:ring-2 focus:ring-secondary focus:border-transparent outline-none resize-none shadow-sm"
-              placeholder={
-                attachedIds.length === 0
-                  ? "Attach documents to enable chat..."
-                  : "Type a message"
-              }
-              rows={1}
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void handleSendMessage();
-                }
-              }}
-            />
-            <div className="absolute right-3 flex items-center">
+        {suggestions.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5" role="listbox" aria-label="Suggested companies">
+            {suggestions.map((company, i) => (
               <button
+                key={company.id}
                 type="button"
-                onClick={() => void handleSendMessage()}
-                disabled={isAILoading || !chatInput.trim()}
-                className="bg-primary-container text-on-primary p-1.5 rounded-lg active:scale-95 transition-transform disabled:opacity-40"
-                aria-label="Send message"
+                role="option"
+                aria-selected={i === highlighted}
+                // Keep focus in the input so typing can continue.
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => pickSuggestion(company)}
+                className={`h-7 px-2.5 rounded-full text-[12px] font-medium flex items-center gap-1.5 transition-colors ${
+                  i === highlighted
+                    ? "bg-secondary-fixed text-secondary"
+                    : "bg-surface-container text-on-surface-variant hover:bg-surface-container-high"
+                }`}
               >
-                <MaterialIcon name="send" className="text-[20px]" />
+                {company.name}
+                {i === highlighted ? (
+                  <span className="px-1 rounded border border-secondary/30 text-[10px] leading-4">
+                    Tab
+                  </span>
+                ) : null}
               </button>
-            </div>
+            ))}
           </div>
-          <div className="mt-sm flex justify-center">
-            <p className="text-label-sm text-on-surface-variant">
-              Rehearse AI can make mistakes. Verify important info.
-            </p>
-          </div>
+        ) : null}
+
+        {notice ? <p className="text-[12px] text-error">{notice}</p> : null}
+
+        <div className="relative flex items-center">
+          <input
+            ref={inputRef}
+            type="text"
+            value={input}
+            onChange={handleInputChange}
+            onSelect={(event) =>
+              setCaret(event.currentTarget.selectionStart ?? event.currentTarget.value.length)
+            }
+            onKeyDown={handleKeyDown}
+            placeholder="Ask about this company, or type another company's name…"
+            aria-label="Ask the AI Research Assistant"
+            className="w-full h-10 pl-3.5 pr-10 text-[13px] bg-surface-container-low border border-outline-variant rounded-lg text-on-surface placeholder:text-on-surface-variant/70 focus:outline-none focus:border-secondary focus:bg-white transition-all"
+          />
+          <button
+            type="button"
+            onClick={() => void sendMessage()}
+            disabled={isLoading || !input.trim()}
+            className="absolute right-1.5 w-7 h-7 rounded-md bg-primary-container text-white flex items-center justify-center hover:bg-primary transition-colors disabled:opacity-40"
+            aria-label="Send message"
+          >
+            <MaterialIcon name="arrow_upward" className="text-[16px]" />
+          </button>
         </div>
+        <p className="px-0.5 text-[11px] text-on-surface-variant/80">
+          Tab to pick a suggested company · Enter to send
+        </p>
       </div>
     </section>
   );

@@ -494,17 +494,12 @@ export function ProspectingDataRoom({
             : "invisible translate-x-full transition-[transform,visibility] duration-[180ms] ease-in"
         } min-[1360px]:static min-[1360px]:z-auto min-[1360px]:shrink-0 min-[1360px]:visible min-[1360px]:translate-x-0 min-[1360px]:shadow-none min-[1360px]:transition-none`}
       >
-        <div className="min-[1360px]:hidden flex justify-end px-2 pt-2 shrink-0">
-          <button
-            type="button"
-            onClick={() => setIsAssistantOpen(false)}
-            className="w-8 h-8 rounded-lg text-on-surface-variant hover:bg-surface-container flex items-center justify-center"
-            aria-label="Close AI Assistant"
-          >
-            <MaterialIcon name="close" className="text-[18px]" />
-          </button>
-        </div>
-        <ProspectingDataRoomChat attemptId={attemptId} companies={companies} />
+        <ProspectingDataRoomChat
+          attemptId={attemptId}
+          companies={companies}
+          openCompanyId={selected?.id ?? null}
+          onClose={() => setIsAssistantOpen(false)}
+        />
       </aside>
 
       {formCompany ? (
