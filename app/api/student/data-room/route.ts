@@ -1,7 +1,8 @@
 /**
  * data-room/route.ts
- * GET — returns the locked 10-company Data Room roster with Profile/News docs
- * and public contacts (never exposes correct-contact / axis fields).
+ * GET — returns the Data Room roster (every in_data_room, active company for the
+ * simulation; 64 in Tempo) with Profile/News docs and public contacts (never
+ * exposes correct-contact / axis fields).
  */
 
 import { NextResponse } from "next/server";

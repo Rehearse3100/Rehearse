@@ -3,7 +3,9 @@
  * Pure helpers for the Data Room AI Research Assistant (no DB, no network).
  * Works out which companies a question is about: the generic-word list (derived
  * from the roster itself), type-to-pick suggestions, company detection in the
- * question text, and the scope priority used on send. Used by
+ * question text, and the scope priority used on send. Server side: scope and
+ * history parsing, ref labels ([C1]…), name redaction for the prompt, and the
+ * guard that rejects company names in model replies. Used by
  * ProspectingDataRoomChat (client) and POST /api/student/data-room-chat (server).
  */
 
@@ -389,4 +391,257 @@ export function scopesEqual(a: ChatScope, b: ChatScope): boolean {
   }
   const left = new Set(a.companyIds);
   return left.size === new Set(b.companyIds).size && b.companyIds.every((id) => left.has(id));
+}
+
+// ── Server: request parsing ───
+
+/** Prior turns (messages) sent to the model, after the same-scope filter. */
+export const HISTORY_TURN_LIMIT = 10;
+const MAX_HISTORY_ENTRIES = 100;
+const MAX_TEXT_LENGTH = 8_000;
+
+/**
+ * Parses a request scope: { mode: "all" } or { mode: "companies", companyIds }
+ * with 1–3 distinct non-empty ids. Anything else is null.
+ */
+export function parseChatScope(raw: unknown): ChatScope | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  const { mode, companyIds } = raw as { mode?: unknown; companyIds?: unknown };
+  if (mode === "all") {
+    return { mode: "all" };
+  }
+  if (mode !== "companies" || !Array.isArray(companyIds)) {
+    return null;
+  }
+  const ids: string[] = [];
+  for (const value of companyIds) {
+    if (typeof value !== "string" || value.trim().length === 0) {
+      return null;
+    }
+    const id = value.trim();
+    if (!ids.includes(id)) {
+      ids.push(id);
+    }
+  }
+  return ids.length >= 1 && ids.length <= MAX_SCOPE_COMPANIES
+    ? { mode: "companies", companyIds: ids }
+    : null;
+}
+
+export type HistoryEntry =
+  | { role: "user"; content: string; scope: ChatScope }
+  | {
+      role: "assistant";
+      intro: string;
+      items: Array<{ companyId: string; text: string }>;
+      scope: ChatScope;
+    };
+
+/**
+ * Parses client-sent history: ids, text and scope only (company names are never
+ * read). Malformed entries are dropped.
+ */
+export function parseHistory(raw: unknown): HistoryEntry[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.slice(-MAX_HISTORY_ENTRIES).flatMap((entry): HistoryEntry[] => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+    const record = entry as Record<string, unknown>;
+    const scope = parseChatScope(record.scope);
+    if (!scope) {
+      return [];
+    }
+    if (record.role === "user" && typeof record.content === "string") {
+      return [{ role: "user", content: record.content.slice(0, MAX_TEXT_LENGTH), scope }];
+    }
+    if (record.role === "assistant" && Array.isArray(record.items)) {
+      const items = record.items.flatMap((item): Array<{ companyId: string; text: string }> => {
+        if (!item || typeof item !== "object") {
+          return [];
+        }
+        const { companyId, text } = item as Record<string, unknown>;
+        return typeof companyId === "string" && typeof text === "string"
+          ? [{ companyId, text: text.slice(0, MAX_TEXT_LENGTH) }]
+          : [];
+      });
+      const intro = typeof record.intro === "string" ? record.intro.slice(0, MAX_TEXT_LENGTH) : "";
+      return [{ role: "assistant", intro, items, scope }];
+    }
+    return [];
+  });
+}
+
+/**
+ * Keeps only turns whose scope exactly matches the current scope (last 10).
+ */
+export function filterHistoryForScope(history: HistoryEntry[], scope: ChatScope): HistoryEntry[] {
+  return history.filter((entry) => scopesEqual(entry.scope, scope)).slice(-HISTORY_TURN_LIMIT);
+}
+
+/**
+ * Ref labels for the companies in scope, in order: id → "C1", "C2", ….
+ */
+export function buildRefLabels(companyIds: readonly string[]): Map<string, string> {
+  return new Map(companyIds.map((id, i) => [id, `C${i + 1}`]));
+}
+
+// ── Server: name redaction and the guard ───
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Whole-word pattern for a name's words, any separators between them. */
+function wordsPattern(words: readonly string[]): string {
+  return `(?<![A-Za-z0-9])${words.map(escapeRegExp).join("[^A-Za-z0-9]+")}(?![A-Za-z0-9])`;
+}
+
+/** The first word of a name exactly as written (for case-sensitive redaction). */
+export function firstWordAsWritten(name: string): string {
+  return name.trim().match(/^[A-Za-z0-9]+/)?.[0] ?? "";
+}
+
+export type FirstWordReplacement = {
+  word: string;
+  replacement: string;
+  caseSensitive: boolean;
+};
+
+/**
+ * Replaces every full company name (any case, whole words; longest first) with
+ * fullNameReplacement(companyId), then each listed first word with its replacement.
+ */
+export function redactCompanyMentions(
+  text: string,
+  index: ScopeIndex,
+  fullNameReplacement: (companyId: string) => string,
+  firstWords: readonly FirstWordReplacement[] = []
+): string {
+  let out = text;
+  const byLength = [...index.companies].sort(
+    (a, b) =>
+      (index.nameWordsById.get(b.id)?.length ?? 0) - (index.nameWordsById.get(a.id)?.length ?? 0)
+  );
+  for (const company of byLength) {
+    const words = index.nameWordsById.get(company.id) ?? [];
+    if (words.length > 0) {
+      out = out.replace(new RegExp(wordsPattern(words), "gi"), fullNameReplacement(company.id));
+    }
+  }
+  for (const entry of firstWords) {
+    if (entry.word.length > 0) {
+      out = out.replace(
+        new RegExp(wordsPattern([entry.word]), entry.caseSensitive ? "g" : "gi"),
+        entry.replacement
+      );
+    }
+  }
+  return out;
+}
+
+/**
+ * Company names found in a text: any full roster name, or any identifying first
+ * word (non-generic, 4+ letters). Empty when the text is clean.
+ */
+export function findCompanyNameMentions(text: string, index: ScopeIndex): string[] {
+  const words = toWords(text);
+  const fullMatches = findFullNameMatches(index, words);
+  const covered = new Set<number>();
+  const hits = new Set<string>();
+  for (const match of fullMatches) {
+    hits.add(index.byId.get(match.companyId)?.name ?? match.companyId);
+    for (let k = match.startWord; k < match.endWord; k += 1) {
+      covered.add(k);
+    }
+  }
+  words.forEach((word, i) => {
+    if (!covered.has(i) && index.firstWordIds.has(word)) {
+      hits.add(word);
+    }
+  });
+  return Array.from(hits);
+}
+
+// ── Server: model reply ───
+
+export type ModelAnswer = {
+  intro: string;
+  items: Array<{ ref: string; text: string }>;
+};
+
+export type ScopedAnswer = {
+  intro: string;
+  items: Array<{ companyId: string; companyName: string; text: string }>;
+};
+
+/**
+ * Parses the model's JSON reply: {"intro": string, "items": [{"ref", "text"}]}.
+ * Returns null for anything that does not have that shape.
+ */
+export function parseModelAnswer(raw: string | null | undefined): ModelAnswer | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw ?? "");
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+  const { intro, items } = parsed as { intro?: unknown; items?: unknown };
+  if ((intro !== undefined && intro !== null && typeof intro !== "string") || !Array.isArray(items)) {
+    return null;
+  }
+  const parsedItems: ModelAnswer["items"] = [];
+  for (const item of items) {
+    const { ref, text } = (item ?? {}) as { ref?: unknown; text?: unknown };
+    if (typeof ref !== "string" || typeof text !== "string") {
+      return null;
+    }
+    parsedItems.push({ ref, text });
+  }
+  return { intro: typeof intro === "string" ? intro : "", items: parsedItems };
+}
+
+/** Removes ref labels the model may have written inside a text. */
+function stripRefLabels(text: string): string {
+  return text.replace(/\[C\d+\]|\bC\d+\b/g, "the company");
+}
+
+/**
+ * Maps refs back to companies (names from the roster, never from the model),
+ * drops refs that are not in scope, then rejects the answer (null) if the intro
+ * or any text names a company.
+ */
+export function finalizeModelAnswer(
+  answer: ModelAnswer,
+  refLabels: ReadonlyMap<string, string>,
+  index: ScopeIndex
+): ScopedAnswer | null {
+  const idByRef = new Map(Array.from(refLabels.entries()).map(([id, ref]) => [ref, id]));
+  const seen = new Set<string>();
+  const items: ScopedAnswer["items"] = [];
+
+  for (const item of answer.items) {
+    const ref = item.ref.trim().replace(/^\[|\]$/g, "").toUpperCase();
+    const companyId = idByRef.get(ref);
+    const company = companyId ? index.byId.get(companyId) : undefined;
+    const text = stripRefLabels(item.text).trim();
+    if (!companyId || !company || seen.has(companyId) || text.length === 0) {
+      continue;
+    }
+    seen.add(companyId);
+    items.push({ companyId, companyName: company.name, text });
+  }
+
+  const intro = stripRefLabels(answer.intro).trim();
+  const leaked = [intro, ...items.map((item) => item.text)].some(
+    (text) => findCompanyNameMentions(text, index).length > 0
+  );
+  return leaked ? null : { intro, items };
 }

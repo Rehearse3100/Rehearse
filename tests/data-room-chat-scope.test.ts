@@ -8,10 +8,17 @@
 import { describe, expect, it } from "vitest";
 import {
   buildGenericWords,
+  buildRefLabels,
   buildScopeIndex,
   detectCompanies,
+  filterHistoryForScope,
+  finalizeModelAnswer,
+  findCompanyNameMentions,
   insertPickedName,
+  parseChatScope,
+  parseModelAnswer,
   previewScope,
+  redactCompanyMentions,
   resolveSendScope,
   scopesEqual,
   SCOPE_NONE_MESSAGE,
@@ -19,6 +26,7 @@ import {
   suggestCompanies,
   textContainsCompanyName,
   wordFragmentBeforeCaret,
+  type HistoryEntry,
   type ScopeCompany,
 } from "@/lib/data-room-chat-scope";
 
@@ -205,5 +213,63 @@ describe("scope on send (priority 1–4)", () => {
     expect(scopesEqual({ mode: "companies", companyIds: ["a"] }, { mode: "companies", companyIds: ["a", "b"] })).toBe(false);
     expect(scopesEqual({ mode: "all" }, { mode: "all" })).toBe(true);
     expect(scopesEqual({ mode: "all" }, { mode: "companies", companyIds: ["a"] })).toBe(false);
+  });
+});
+
+describe("server helpers", () => {
+  it("parses a scope: all, or 1–3 distinct company ids", () => {
+    expect(parseChatScope({ mode: "all" })).toEqual({ mode: "all" });
+    expect(parseChatScope({ mode: "companies", companyIds: ["a", "a", "b"] })).toEqual({
+      mode: "companies",
+      companyIds: ["a", "b"],
+    });
+    expect(parseChatScope({ mode: "companies", companyIds: [] })).toBeNull();
+    expect(parseChatScope({ mode: "companies", companyIds: ["a", "b", "c", "d"] })).toBeNull();
+    expect(parseChatScope({ mode: "companies", companyIds: ["a", 7] })).toBeNull();
+    expect(parseChatScope({ companyIds: ["a"] })).toBeNull();
+  });
+
+  it("guard: finds full names and identifying first words; ordinary words pass", () => {
+    expect(findCompanyNameMentions("Summit Dental Group is busy.", index)).toEqual(["Summit Dental Group"]);
+    expect(findCompanyNameMentions("Unlike falcon, the company is busy.", index)).toEqual(["falcon"]);
+    expect(
+      findCompanyNameMentions("The company has a market, a vision for growth and a center.", index)
+    ).toEqual([]);
+  });
+
+  it("redacts full names first, then listed first words", () => {
+    expect(
+      redactCompanyMentions(
+        "Summit Dental Group vs falcon market; Summit grew.",
+        index,
+        (id) => (id === "summit-dental" ? "[C1]" : "another company"),
+        [{ word: "Summit", replacement: "the company", caseSensitive: true }]
+      )
+    ).toBe("[C1] vs another company; the company grew.");
+  });
+
+  it("parses the model JSON and maps refs to roster names", () => {
+    expect(parseModelAnswer("not json")).toBeNull();
+    expect(parseModelAnswer(JSON.stringify({ intro: "x", items: "nope" }))).toBeNull();
+    const answer = parseModelAnswer(
+      JSON.stringify({ items: [{ ref: "[c2]", text: "Busy, like C1." }, { ref: "C9", text: "x" }] })
+    );
+    expect(answer).toEqual({ intro: "", items: [{ ref: "[c2]", text: "Busy, like C1." }, { ref: "C9", text: "x" }] });
+    expect(finalizeModelAnswer(answer!, buildRefLabels(["falcon", "oasis"]), index)).toEqual({
+      intro: "",
+      items: [{ companyId: "oasis", companyName: "Oasis Supply Co.", text: "Busy, like the company." }],
+    });
+  });
+
+  it("keeps only same-scope history, last 10", () => {
+    const one = { mode: "companies" as const, companyIds: ["falcon"] };
+    const history: HistoryEntry[] = Array.from({ length: 14 }, (_, i) => ({
+      role: "user" as const,
+      content: `q${i}`,
+      scope: i % 2 === 0 ? one : { mode: "all" as const },
+    }));
+    const kept = filterHistoryForScope([...history, ...history], one);
+    expect(kept).toHaveLength(10);
+    expect(kept.every((entry) => scopesEqual(entry.scope, one))).toBe(true);
   });
 });
