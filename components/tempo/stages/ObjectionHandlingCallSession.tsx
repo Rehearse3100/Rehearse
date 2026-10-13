@@ -313,41 +313,8 @@ export function ObjectionHandlingCallSession({
 
   const showCameraPreview = !cameraOff;
 
-  const objectionChips = [
-    { label: "Price", raised: tracker.price, handled: tracker.priceHandled },
-    { label: "Adoption", raised: tracker.adoption, handled: tracker.adoptionHandled },
-    { label: "Status Quo", raised: tracker.statusQuo, handled: tracker.statusQuoHandled },
-  ] as const;
-
   return (
     <section className="flex-1 bg-[#0a0a0a] relative flex flex-col min-w-0 overflow-hidden">
-      <div className="absolute top-8 left-1/2 -translate-x-1/2 z-30 flex gap-3 flex-wrap justify-center px-4 pointer-events-none">
-        {objectionChips.map((obj) => (
-          <div
-            key={obj.label}
-            className={`px-4 py-2 rounded-full flex items-center gap-2 backdrop-blur-lg border pointer-events-auto ${
-              obj.handled
-                ? "bg-green-900/40 border-green-600/40 text-green-300"
-                : obj.raised
-                  ? "bg-amber-900/40 border-tertiary/30 text-tertiary-fixed"
-                  : "glass-panel text-outline-variant/50 border-white/5"
-            }`}
-          >
-            <div
-              className={`w-2 h-2 rounded-full ${
-                obj.handled
-                  ? "bg-green-400"
-                  : obj.raised
-                    ? "bg-tertiary-fixed animate-pulse"
-                    : "bg-outline-variant/30"
-              }`}
-            />
-            <span className="text-body-md font-bold uppercase tracking-wider">{obj.label}</span>
-            {obj.handled && <MaterialIcon name="check" className="text-green-300 text-[16px]" />}
-          </div>
-        ))}
-      </div>
-
       <div className="flex-1 flex flex-col items-center justify-center px-4 pt-16 pb-4 min-h-0">
         <div
           className={`relative w-full max-w-4xl aspect-video max-h-[min(72vh,calc(100%-1rem))] rounded-3xl overflow-hidden transition-all duration-700 ${
