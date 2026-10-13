@@ -136,7 +136,6 @@ export function PresentationStage({
       <ErrorBoundary stageName="presentation">
         <PresentationStageLayout
           form={presentation.form}
-          completedSections={presentation.completedSections}
           canSubmit={presentation.canSubmit}
           isSaving={presentation.isSaving}
           isSubmitting={presentation.isSubmitting}

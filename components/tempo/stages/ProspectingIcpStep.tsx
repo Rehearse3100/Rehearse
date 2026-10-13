@@ -5,6 +5,7 @@
 
 "use client";
 
+import { FieldCounter } from "@/components/tempo/FieldCounter";
 import {
   ICP_MIN_DECISION_MAKER_ROLE_CHARS,
   ICP_MIN_DISQUALIFIER_CHARS,
@@ -16,33 +17,6 @@ import {
 
 const FIELD_MAX_LENGTH = 500;
 const DISQUALIFIER_MAX_LENGTH = 120;
-
-type FieldCounterProps = {
-  value: string;
-  maxLength: number;
-  minChars?: number;
-};
-
-/** Character count with optional short min-length nudge when typing below advance threshold. */
-function FieldCounter({
-  value,
-  maxLength,
-  minChars,
-}: FieldCounterProps): React.ReactElement {
-  const trimmedLength = value.trim().length;
-  const belowMin =
-    minChars !== undefined && trimmedLength > 0 && trimmedLength < minChars;
-
-  return (
-    <div className="flex flex-nowrap items-center gap-sm shrink-0 whitespace-nowrap text-[11px] text-on-surface-variant font-medium">
-      {belowMin ? <span>Min {minChars}</span> : null}
-      {belowMin ? <span aria-hidden="true">·</span> : null}
-      <span>
-        {value.length} / {maxLength}
-      </span>
-    </div>
-  );
-}
 
 type ProspectingIcpStepProps = {
   attemptId: string;

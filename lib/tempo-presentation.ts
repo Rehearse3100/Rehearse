@@ -71,7 +71,7 @@ export const TEMPO_REFERENCE_SECTIONS = [
 ] as const;
 
 const STORAGE_PREFIX = "tempo-presentation-v2-";
-const MIN_FIELD_LENGTH = 6;
+export const MIN_FIELD_LENGTH = 6;
 
 /**
  * True when a saved field looks like pasted page/markup rather than student pitch text.

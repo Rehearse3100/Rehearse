@@ -2,15 +2,18 @@
  * PresentationStageLayout.tsx
  * Presentational shell for Tempo Stage 3 Presentation — mission panel and pitch form.
  * The Submit bar (save status left, Submit right) sits at the top of the center
- * column, matching ProspectingWizard; a center-only completion bar sits at the bottom.
+ * column, matching ProspectingWizard. Each field shows an ICP-style "Min n" nudge
+ * (FieldCounter) while it is too short.
  * The discovery reference lives in the Reference Library drawer (PresentationStage).
  */
 
+import { FieldCounter } from "@/components/tempo/FieldCounter";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import { TempoExitSimulation } from "@/components/tempo/TempoExitSimulation";
 import { TempoStageForwardNav } from "@/components/tempo/TempoStageForwardNav";
 import {
   isPresentationSectionComplete,
+  MIN_FIELD_LENGTH,
   PRESENTATION_PAYOFF_REFERENCE,
   type PresentationForm,
 } from "@/lib/tempo-presentation";
@@ -24,7 +27,6 @@ const FORM_INPUT =
 
 type PresentationStageLayoutProps = {
   form: PresentationForm;
-  completedSections: number;
   canSubmit: boolean;
   isSaving: boolean;
   isSubmitting: boolean;
@@ -35,11 +37,10 @@ type PresentationStageLayoutProps = {
 };
 
 /**
- * Renders the Presentation stage grid with a center-column completion bar.
+ * Renders the Presentation stage: mission column, and the pitch form under the Submit bar.
  */
 export function PresentationStageLayout({
   form,
-  completedSections,
   canSubmit,
   isSaving,
   isSubmitting,
@@ -101,7 +102,7 @@ export function PresentationStageLayout({
           </div>
         </aside>
 
-        {/* ── Center column: Submit bar + form + completion bar ─── */}
+        {/* ── Center column: Submit bar + form ─── */}
         <section className="flex-1 bg-white flex flex-col min-w-0 min-h-0">
           <div className="h-12 bg-surface-container-low border-b border-outline-variant shrink-0 flex items-center justify-between px-4 lg:px-xl gap-4">
             <div className="flex items-center gap-sm text-on-surface-variant min-w-0 shrink-0">
@@ -149,16 +150,19 @@ export function PresentationStageLayout({
             >
               {/* Field 1: Business Issue */}
               <div className="flex flex-col gap-sm">
-                <label
-                  className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
-                  htmlFor="business-case"
-                >
-                  <MaterialIcon name="trending_down" className="text-on-surface-variant text-[18px]" />
-                  Business Issue
-                  {isPresentationSectionComplete(1, form) ? (
-                    <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
-                  ) : null}
-                </label>
+                <div className="flex justify-between items-center">
+                  <label
+                    className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
+                    htmlFor="business-case"
+                  >
+                    <MaterialIcon name="trending_down" className="text-on-surface-variant text-[18px]" />
+                    Business Issue
+                    {isPresentationSectionComplete(1, form) ? (
+                      <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
+                    ) : null}
+                  </label>
+                  <FieldCounter value={form.businessCase} minChars={MIN_FIELD_LENGTH} />
+                </div>
                 <textarea
                   id="business-case"
                   name="business-case"
@@ -174,16 +178,19 @@ export function PresentationStageLayout({
 
               {/* Field 2: Problem */}
               <div className="flex flex-col gap-sm">
-                <label
-                  className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
-                  htmlFor="pain-points"
-                >
-                  <MaterialIcon name="report_problem" className="text-on-surface-variant text-[18px]" />
-                  Problem
-                  {isPresentationSectionComplete(2, form) ? (
-                    <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
-                  ) : null}
-                </label>
+                <div className="flex justify-between items-center">
+                  <label
+                    className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
+                    htmlFor="pain-points"
+                  >
+                    <MaterialIcon name="report_problem" className="text-on-surface-variant text-[18px]" />
+                    Problem
+                    {isPresentationSectionComplete(2, form) ? (
+                      <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
+                    ) : null}
+                  </label>
+                  <FieldCounter value={form.underlyingPainPoints} minChars={MIN_FIELD_LENGTH} />
+                </div>
                 <textarea
                   id="pain-points"
                   name="pain-points"
@@ -199,16 +206,19 @@ export function PresentationStageLayout({
 
               {/* Field 3: Solution */}
               <div className="flex flex-col gap-sm">
-                <label
-                  className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
-                  htmlFor="solution"
-                >
-                  <MaterialIcon name="build" className="text-on-surface-variant text-[18px]" />
-                  Solution
-                  {isPresentationSectionComplete(3, form) ? (
-                    <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
-                  ) : null}
-                </label>
+                <div className="flex justify-between items-center">
+                  <label
+                    className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
+                    htmlFor="solution"
+                  >
+                    <MaterialIcon name="build" className="text-on-surface-variant text-[18px]" />
+                    Solution
+                    {isPresentationSectionComplete(3, form) ? (
+                      <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
+                    ) : null}
+                  </label>
+                  <FieldCounter value={form.solution} minChars={MIN_FIELD_LENGTH} />
+                </div>
                 <textarea
                   id="solution"
                   name="solution"
@@ -224,19 +234,22 @@ export function PresentationStageLayout({
 
               {/* Field 4: Value */}
               <div className="flex flex-col gap-md">
-                <label
-                  className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
-                  htmlFor="proof-point"
-                >
-                  <MaterialIcon
-                    name="monetization_on"
-                    className="text-on-surface-variant text-[18px]"
-                  />
-                  Value
-                  {isPresentationSectionComplete(4, form) ? (
-                    <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
-                  ) : null}
-                </label>
+                <div className="flex justify-between items-center">
+                  <label
+                    className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
+                    htmlFor="proof-point"
+                  >
+                    <MaterialIcon
+                      name="monetization_on"
+                      className="text-on-surface-variant text-[18px]"
+                    />
+                    Value
+                    {isPresentationSectionComplete(4, form) ? (
+                      <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
+                    ) : null}
+                  </label>
+                  <FieldCounter value={form.proofPoint} minChars={MIN_FIELD_LENGTH} />
+                </div>
                 <div className="bg-surface-container-low rounded-md border border-dashed border-outline-variant p-md flex items-center gap-md">
                   <MaterialIcon name="calculate" className="text-secondary shrink-0" />
                   <span className="font-code-md text-code-md text-on-surface-variant">
@@ -263,16 +276,19 @@ export function PresentationStageLayout({
 
               {/* Field 5: Power */}
               <div className="flex flex-col gap-sm">
-                <label
-                  className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
-                  htmlFor="power-stakeholder"
-                >
-                  <MaterialIcon name="group" className="text-on-surface-variant text-[18px]" />
-                  Power
-                  {isPresentationSectionComplete(5, form) ? (
-                    <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
-                  ) : null}
-                </label>
+                <div className="flex justify-between items-center">
+                  <label
+                    className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
+                    htmlFor="power-stakeholder"
+                  >
+                    <MaterialIcon name="group" className="text-on-surface-variant text-[18px]" />
+                    Power
+                    {isPresentationSectionComplete(5, form) ? (
+                      <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
+                    ) : null}
+                  </label>
+                  <FieldCounter value={form.powerStakeholder} minChars={MIN_FIELD_LENGTH} />
+                </div>
                 <textarea
                   id="power-stakeholder"
                   name="power-stakeholder"
@@ -288,16 +304,19 @@ export function PresentationStageLayout({
 
               {/* Field 6: Plan */}
               <div className="flex flex-col gap-sm">
-                <label
-                  className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
-                  htmlFor="next-step"
-                >
-                  <MaterialIcon name="flag" className="text-on-surface-variant text-[18px]" />
-                  Plan
-                  {isPresentationSectionComplete(6, form) ? (
-                    <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
-                  ) : null}
-                </label>
+                <div className="flex justify-between items-center">
+                  <label
+                    className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
+                    htmlFor="next-step"
+                  >
+                    <MaterialIcon name="flag" className="text-on-surface-variant text-[18px]" />
+                    Plan
+                    {isPresentationSectionComplete(6, form) ? (
+                      <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
+                    ) : null}
+                  </label>
+                  <FieldCounter value={form.nextStep} minChars={MIN_FIELD_LENGTH} />
+                </div>
                 <input
                   id="next-step"
                   name="next-step"
@@ -311,37 +330,6 @@ export function PresentationStageLayout({
             </form>
             </div>
           </div>
-
-          {/* Completion bar — center column only */}
-          <footer className="shrink-0 min-h-[96px] bg-white border-t border-outline-variant flex items-center justify-between gap-4 px-4 lg:px-12 py-5 z-10 shadow-[0_-4px_12px_rgba(0,0,0,0.04)]">
-            <div className="flex flex-col min-w-0 flex-1 max-w-md gap-2">
-              <div className="flex justify-between items-end gap-3">
-                <h3 className="font-mono-label text-[12px] text-on-surface-variant uppercase tracking-wider">
-                  Progress
-                </h3>
-                <span className="text-[12px] font-mono-label text-on-surface">
-                  {completedSections} / 6 Completed
-                </span>
-              </div>
-              <div className="flex gap-2">
-                {Array.from({ length: 6 }, (_, i) => (
-                  <div
-                    key={i}
-                    className={`h-2 flex-1 rounded-full ${
-                      i < completedSections
-                        ? "bg-tertiary-container shadow-[0_0_8px_rgba(201,168,76,0.35)]"
-                        : "bg-surface-container-high"
-                    }`}
-                  />
-                ))}
-              </div>
-              <span className="text-[12px] text-on-surface-variant leading-snug">
-                {readyToSubmit
-                  ? "Great! You're ready to submit."
-                  : "Finish all sections to submit."}
-              </span>
-            </div>
-          </footer>
         </section>
       </main>
     </div>
