@@ -2,6 +2,7 @@
  * ObjectionHandlingStageLayout.tsx
  * Presentational shell for Tempo Stage 4 Objection Handling.
  * Lobby, active video call, and post-call submit share the left briefing rail.
+ * After the call, the Next bar sits inside the middle column (matches Discovery).
  * Transcript docks beside the call; playbook content lives in the Reference Library.
  * Objection tracker stays visible as live in-call feedback (not a post-call form).
  */
@@ -101,15 +102,6 @@ export function ObjectionHandlingStageLayout({
         testBypass ? "pt-28" : "pt-16"
       }`}
     >
-      {phase === "summary" ? (
-        <div className="h-12 bg-surface-container-low border-b border-outline-variant shrink-0 flex items-center justify-end px-4 lg:px-xl">
-          <TempoStageForwardNav
-            forwardLabel="Next"
-            forwardDisabled={isSubmitting}
-            onForward={onContinueAfterCall}
-          />
-        </div>
-      ) : null}
       <main className="flex flex-1 min-h-0 overflow-hidden">
         {/* ── Left panel (matches Stage 2 Discovery mission briefing) ─── */}
         <aside className="w-60 xl:w-72 bg-primary-container text-on-primary p-lg flex flex-col gap-lg border-r border-white/5 shrink-0 hidden lg:flex overflow-y-auto">
@@ -230,18 +222,30 @@ export function ObjectionHandlingStageLayout({
         )}
 
         {phase === "summary" && (
-          <div className="flex flex-1 min-w-0 min-h-0">
-            <PostCallCompletePanel
-              callLengthLabel={durationLabel}
-              nextStageName={nextStageName}
-              isSubmitting={isSubmitting}
-            />
-            <CallTranscriptPanel
-              entries={panelEntries}
-              variant="ended"
-              durationLabel={durationLabel}
-            />
-          </div>
+          <section className="flex-1 bg-surface-container-lowest flex flex-col min-w-0">
+            <div className="h-12 bg-surface-container-low border-b border-outline-variant shrink-0 flex items-center justify-between px-4 lg:px-xl gap-4">
+              <div className="flex items-center gap-sm text-on-surface-variant min-w-0">
+                <span className="text-label-sm">Call complete</span>
+              </div>
+              <TempoStageForwardNav
+                forwardLabel="Next"
+                forwardDisabled={isSubmitting}
+                onForward={onContinueAfterCall}
+              />
+            </div>
+            <div className="flex flex-1 min-w-0 min-h-0">
+              <PostCallCompletePanel
+                callLengthLabel={durationLabel}
+                nextStageName={nextStageName}
+                isSubmitting={isSubmitting}
+              />
+              <CallTranscriptPanel
+                entries={panelEntries}
+                variant="ended"
+                durationLabel={durationLabel}
+              />
+            </div>
+          </section>
         )}
       </main>
     </div>
