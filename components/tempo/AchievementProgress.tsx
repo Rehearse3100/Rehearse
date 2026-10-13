@@ -2,6 +2,8 @@
  * AchievementProgress.tsx
  * Data-driven Tempo badge sidebar for the results page.
  * Reads stage_scores.badges_earned; icons/names from lib/tempo-badges.ts.
+ * Stages still graded in the background (badges_status 'pending' | 'grading')
+ * show "Grading badges…" and finish via POST /api/student/grade-badges.
  */
 
 "use client";
@@ -43,8 +45,23 @@ const TOTAL_BADGE_COUNT = ACHIEVEMENT_SECTIONS.reduce(
   0
 );
 
+/** Wait after a 'grading' reply before asking again (one request per stage at a time). */
+const GRADE_RETRY_DELAY_MS = 3_000;
+/** Stop asking after this long and tell the student to refresh. */
+const GRADE_POLL_LIMIT_MS = 60_000;
+
 type AchievementProgressProps = {
   stageScores: StageScore[];
+};
+
+export type StageGradingTarget = {
+  attemptId: string;
+  stage: SimulationStage;
+};
+
+type GradeBadgesReply = {
+  status?: string;
+  badges?: unknown;
 };
 
 type BadgeCellProps = {
@@ -68,6 +85,61 @@ function earnedIdsForStage(
     return new Set();
   }
   return new Set(raw.filter((id): id is string => typeof id === "string"));
+}
+
+/**
+ * True when a row's badges are still being graded. A missing or unknown
+ * status counts as "done", so older rows and test mocks render as before.
+ */
+function isGradingPending(row: StageScore | undefined): boolean {
+  return row?.badges_status === "pending" || row?.badges_status === "grading";
+}
+
+/**
+ * Asks grade-badges to finish one stage: one request at a time, the next one
+ * GRADE_RETRY_DELAY_MS after a 'grading' reply returns, for up to GRADE_POLL_LIMIT_MS.
+ * Calls onDone with the badges, or onStalled on timeout, an HTTP error, or a network error.
+ */
+export async function pollStageGrading(
+  target: StageGradingTarget,
+  isCancelled: () => boolean,
+  onDone: (stage: SimulationStage, badges: string[]) => void,
+  onStalled: (stage: SimulationStage) => void
+): Promise<void> {
+  const startedAt = Date.now();
+  while (!isCancelled()) {
+    let reply: GradeBadgesReply | null = null;
+    try {
+      const res = await fetch("/api/student/grade-badges", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ attemptId: target.attemptId, stage: target.stage }),
+      });
+      reply = res.ok ? ((await res.json()) as GradeBadgesReply) : null;
+    } catch {
+      reply = null;
+    }
+
+    if (isCancelled()) {
+      return;
+    }
+    if (!reply) {
+      onStalled(target.stage);
+      return;
+    }
+    if (reply.status === "done") {
+      const badges = Array.isArray(reply.badges)
+        ? reply.badges.filter((id): id is string => typeof id === "string")
+        : [];
+      onDone(target.stage, badges);
+      return;
+    }
+    if (Date.now() - startedAt + GRADE_RETRY_DELAY_MS >= GRADE_POLL_LIMIT_MS) {
+      onStalled(target.stage);
+      return;
+    }
+    await new Promise<void>((resolve) => globalThis.setTimeout(resolve, GRADE_RETRY_DELAY_MS));
+  }
 }
 
 /**
@@ -153,7 +225,24 @@ export function AchievementProgress({
   stageScores,
 }: AchievementProgressProps): React.ReactElement {
   const [openBadgeId, setOpenBadgeId] = useState<string | null>(null);
+  /** Badges returned by grade-badges for stages that were still grading on load. */
+  const [gradedBadges, setGradedBadges] = useState<Partial<Record<SimulationStage, string[]>>>(
+    {}
+  );
+  const [stalledStages, setStalledStages] = useState<Partial<Record<SimulationStage, true>>>({});
   const rootRef = useRef<HTMLDivElement>(null);
+
+  const gradingTargets: StageGradingTarget[] = ACHIEVEMENT_SECTIONS.flatMap((section) => {
+    const row = stageScores.find((score) => score.stage === section.stageKey);
+    return row && isGradingPending(row) ? [{ attemptId: row.attempt_id, stage: row.stage }] : [];
+  });
+  const gradingKey = gradingTargets.map((target) => `${target.attemptId}:${target.stage}`).join("|");
+  // Latest targets for the effect, which re-runs only when gradingKey changes.
+  const gradingTargetsRef = useRef(gradingTargets);
+  gradingTargetsRef.current = gradingTargets;
+  // Per-stage chain so a re-run (e.g. React strict mode) waits for the request
+  // already in flight instead of sending a second one in parallel.
+  const gradingRunsRef = useRef(new Map<string, Promise<void>>());
 
   useEffect(() => {
     /**
@@ -168,12 +257,43 @@ export function AchievementProgress({
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, []);
 
+  useEffect(() => {
+    if (gradingKey === "") {
+      return;
+    }
+    let cancelled = false;
+    const isCancelled = (): boolean => cancelled;
+    const handleDone = (stage: SimulationStage, badges: string[]): void => {
+      setGradedBadges((prev) => ({ ...prev, [stage]: badges }));
+    };
+    const handleStalled = (stage: SimulationStage): void => {
+      setStalledStages((prev) => ({ ...prev, [stage]: true }));
+    };
+
+    for (const target of gradingTargetsRef.current) {
+      const runKey = `${target.attemptId}:${target.stage}`;
+      const previous = gradingRunsRef.current.get(runKey) ?? Promise.resolve();
+      gradingRunsRef.current.set(
+        runKey,
+        previous.then(() => pollStageGrading(target, isCancelled, handleDone, handleStalled))
+      );
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [gradingKey]);
+
   let earnedTotal = 0;
   const sectionData = ACHIEVEMENT_SECTIONS.map((section) => {
-    const earned = earnedIdsForStage(stageScores, section.stageKey);
+    const row = stageScores.find((score) => score.stage === section.stageKey);
+    const graded = gradedBadges[section.stageKey];
+    const isGrading = graded === undefined && isGradingPending(row);
+    const isStalled = isGrading && stalledStages[section.stageKey] === true;
+    const earned =
+      graded !== undefined ? new Set(graded) : earnedIdsForStage(stageScores, section.stageKey);
     const earnedCount = section.badges.filter((badge) => earned.has(badge.id)).length;
     earnedTotal += earnedCount;
-    return { section, earned, earnedCount };
+    return { section, earned, earnedCount, isGrading, isStalled };
   });
 
   const progressPct =
@@ -205,7 +325,7 @@ export function AchievementProgress({
 
       {/* Stage sections */}
       <div className="space-y-6">
-        {sectionData.map(({ section, earned, earnedCount }) => (
+        {sectionData.map(({ section, earned, earnedCount, isGrading, isStalled }) => (
           <section key={section.stageKey}>
             <div className="flex justify-between items-center mb-2">
               <span className="text-body-md font-medium text-on-surface">{section.label}</span>
@@ -213,6 +333,14 @@ export function AchievementProgress({
                 {earnedCount}/{section.badges.length}
               </span>
             </div>
+            {isGrading ? (
+              // min-h-8 matches the 32px badge row so the card does not jump when badges load.
+              <p role="status" className="min-h-8 flex items-center text-body-md text-on-surface-variant">
+                {isStalled
+                  ? "Badges are still being graded. Refresh in a minute."
+                  : "Grading badges…"}
+              </p>
+            ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(32px,1fr))] gap-2">
               {section.badges.map((badge) => {
                 const isEarned = earned.has(badge.id);
@@ -232,6 +360,7 @@ export function AchievementProgress({
                 );
               })}
             </div>
+            )}
           </section>
         ))}
       </div>
