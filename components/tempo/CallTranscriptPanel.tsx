@@ -1,7 +1,8 @@
 /**
  * CallTranscriptPanel.tsx
  * Docked, display-only call transcript for Discovery and Objection Handling.
- * Dark call-area chrome (opaque) so light text stays readable on both stages.
+ * Live: dark call-area chrome (opaque) so light text stays readable on both stages.
+ * Ended: light chrome that matches the light post-call page, wider, two-row header.
  * Renders beside the call area; never edits or captures transcript data.
  */
 
@@ -27,9 +28,16 @@ type CallTranscriptPanelProps = {
 /** Narrower than the original 360px rail so the call stage stays dominant. */
 const PANEL_WIDTH_CLASS = "w-[280px]";
 
+/** Post-call width: there is no video to protect, so the transcript gets more room. */
+const ENDED_PANEL_WIDTH_CLASS = "w-[360px]";
+
+/** Light version of the thin .call-transcript-scroll scrollbar (4px, rounded thumb). */
+const ENDED_SCROLL_CLASS =
+  "[&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-outline-variant [&::-webkit-scrollbar-thumb]:rounded";
+
 /**
  * Collapsible transcript dock. Open by default at >=1280px; hidden below 1024px.
- * Live and ended share the same dark Stitch panel language.
+ * Live is the dark panel beside the call; ended is the light post-call panel.
  */
 export function CallTranscriptPanel({
   entries,
@@ -98,6 +106,118 @@ export function CallTranscriptPanel({
 
   const isLive = variant === "live";
 
+  // ── Ended variant (light, post-call page) ───
+  if (!isLive) {
+    if (!expanded) {
+      return (
+        <aside className="hidden lg:flex w-12 h-full shrink-0 flex-col items-center pt-3 gap-4 border-l border-outline-variant bg-surface-container-lowest">
+          <button
+            type="button"
+            onClick={handleToggle}
+            aria-label="Expand transcript"
+            className="p-1 rounded transition-colors text-on-surface-variant hover:text-on-surface"
+          >
+            <MaterialIcon name="right_panel_open" className="text-[18px]" />
+          </button>
+          <span className="text-[11px] font-bold uppercase tracking-[0.12em] rotate-90 origin-center whitespace-nowrap mt-8 text-on-surface-variant">
+            Transcript
+          </span>
+        </aside>
+      );
+    }
+
+    return (
+      <aside
+        className={`hidden lg:flex ${ENDED_PANEL_WIDTH_CLASS} h-full shrink-0 flex-col bg-surface-container-lowest border-l border-outline-variant`}
+      >
+        <div className="px-4 pb-3 border-b border-outline-variant shrink-0 flex flex-col">
+          <div className="h-12 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <MaterialIcon name="subtitles" className="text-[18px] text-on-surface-variant" />
+              <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-on-surface-variant">
+                Transcript
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handleToggle}
+              aria-label="Collapse transcript"
+              className="p-1 transition-colors text-on-surface-variant hover:text-on-surface"
+            >
+              <MaterialIcon name="right_panel_close" className="text-[18px]" />
+            </button>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] text-on-surface-variant">
+              Call ended{durationLabel ? ` · ${durationLabel}` : ""}
+            </span>
+            <button
+              type="button"
+              onClick={() => void handleCopy()}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-outline-variant text-[11px] font-medium text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface transition-colors"
+            >
+              <MaterialIcon name="content_copy" className="text-[14px]" />
+              {copied ? "Copied" : "Copy"}
+            </button>
+          </div>
+        </div>
+
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          className={`flex-1 min-h-0 overflow-y-auto p-4 flex flex-col gap-5 ${ENDED_SCROLL_CLASS}`}
+        >
+          {entries.length === 0 ? (
+            <p className="m-auto text-center text-xs text-on-surface-variant">
+              The transcript will appear here once the call starts.
+            </p>
+          ) : (
+            entries.map((entry, index) => {
+              const isStudent = entry.speaker === "student";
+              return (
+                <div
+                  key={`${entry.speaker}-${entry.timestamp}-${index}`}
+                  className={`flex flex-col gap-1 ${isStudent ? "items-end" : "items-start"}`}
+                >
+                  <div className="flex items-center gap-2 px-1">
+                    {isStudent ? (
+                      <>
+                        <span className="font-code-md text-[10px] text-on-surface-variant">
+                          {entry.timestamp}
+                        </span>
+                        <span className="text-xs font-semibold text-secondary">You</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-xs font-semibold text-on-surface">{entry.name}</span>
+                        <span className="font-code-md text-[10px] text-on-surface-variant">
+                          {entry.timestamp}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                  {/* Student border matches its fill so both bubbles keep the live 1px box size. */}
+                  <div
+                    className={`p-3 text-xs leading-relaxed max-w-[92%] text-on-surface ${
+                      isStudent
+                        ? "bg-secondary-fixed border border-secondary-fixed rounded-2xl rounded-tr-none text-left"
+                        : "bg-surface-container-low border border-outline-variant rounded-2xl rounded-tl-none"
+                    }`}
+                  >
+                    {entry.content}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {footer ? <div className="shrink-0">{footer}</div> : null}
+      </aside>
+    );
+  }
+
+  // ── Live variant (dark, beside the call) ───
   if (!expanded) {
     return (
       <aside className="hidden lg:flex w-12 h-full shrink-0 flex-col items-center pt-3 gap-4 border-l border-white/10 bg-[#0a0a0a]">
@@ -128,26 +248,10 @@ export function CallTranscriptPanel({
           </span>
         </div>
         <div className="flex items-center gap-3">
-          {isLive ? (
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-              <span className="text-[11px] font-bold text-red-500 tracking-wider">LIVE</span>
-            </div>
-          ) : (
-            <>
-              <span className="text-[11px] text-white/50">
-                Call ended{durationLabel ? ` · ${durationLabel}` : ""}
-              </span>
-              <button
-                type="button"
-                onClick={() => void handleCopy()}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-white/15 text-[11px] font-medium text-white/70 hover:bg-white/10 hover:text-white transition-colors"
-              >
-                <MaterialIcon name="content_copy" className="text-[14px]" />
-                {copied ? "Copied" : "Copy"}
-              </button>
-            </>
-          )}
+          <div className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            <span className="text-[11px] font-bold text-red-500 tracking-wider">LIVE</span>
+          </div>
           <button
             type="button"
             onClick={handleToggle}
