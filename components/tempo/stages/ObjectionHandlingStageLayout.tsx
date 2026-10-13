@@ -228,8 +228,8 @@ export function ObjectionHandlingStageLayout({
                 <span className="text-label-sm">Call complete</span>
               </div>
               <TempoStageForwardNav
-                forwardLabel="Next"
-                forwardDisabled={isSubmitting}
+                forwardLabel="Submit"
+                isForwardLoading={isSubmitting}
                 onForward={onContinueAfterCall}
               />
             </div>

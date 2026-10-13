@@ -208,8 +208,8 @@ export function DiscoveryStageLayout({
           <section className="flex-1 bg-surface-container-lowest flex flex-col min-w-0">
             <DiscoveryForwardBar statusText="Call complete">
               <TempoStageForwardNav
-                forwardLabel="Next"
-                forwardDisabled={isSubmitting}
+                forwardLabel="Submit"
+                isForwardLoading={isSubmitting}
                 onForward={onContinueAfterCall}
               />
             </DiscoveryForwardBar>
