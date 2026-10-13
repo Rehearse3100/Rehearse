@@ -1171,14 +1171,20 @@ export function CrmAccess({
     }
   }, [attemptId]);
 
+  // Nothing on the page reads this gate data before the CRM is opened (the handoff
+  // gates and floating button that did are gone), so load it on first open instead
+  // of on page load. handleCloseCrm still refreshes it on every close.
+  const hasLoadedGateDataRef = useRef(false);
+
   useEffect(() => {
-    if (!isPageReady) {
+    if (!isCrmOpen || hasLoadedGateDataRef.current) {
       return;
     }
+    hasLoadedGateDataRef.current = true;
     void refreshCrmLogs();
     void refreshLeads();
     void refreshCrmProfile();
-  }, [isPageReady, refreshCrmLogs, refreshLeads, refreshCrmProfile]);
+  }, [isCrmOpen, refreshCrmLogs, refreshLeads, refreshCrmProfile]);
 
   const loggedStages = useMemo(() => new Set(loggedStageIds), [loggedStageIds]);
 
