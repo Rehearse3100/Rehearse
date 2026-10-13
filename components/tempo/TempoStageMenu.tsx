@@ -4,8 +4,9 @@
  * Handoff Note, and Restart, each behaving exactly as the old standalone controls.
  * The panel is portaled into document.body (fixed, z-[70]) so it sits above the
  * TEST MODE banner (z-[60]) and the Reference Library drawer (z-[48]), and below
- * ConfirmModal (z-[100]). It stays mounted while closed (hidden), because
- * RestartSimulationButton holds its confirm popup's state.
+ * ConfirmModal (z-[100]). It stays mounted while closed (invisible), because
+ * RestartSimulationButton holds its confirm popup's state. Opening fades and
+ * drops it into place; reduced-motion users get no animation.
  */
 
 "use client";
@@ -21,6 +22,15 @@ const PANEL_OFFSET_PX = 8;
 
 const MENU_ITEM =
   "w-full flex items-center gap-2 px-3 py-2 text-left font-label-sm text-label-sm text-on-surface hover:bg-surface-container focus:outline-none focus-visible:bg-surface-container transition-colors";
+
+// Open: fade in and drop 4px into place (150ms ease-out). Visibility is not
+// transitioned on open, so it turns visible at once and focus can move in.
+const PANEL_OPEN =
+  "visible opacity-100 translate-y-0 scale-100 transition-[opacity,transform] duration-150 ease-out";
+// Close: the reverse (100ms ease-in). Visibility is transitioned, so the panel stays
+// visible until the fade ends, then hides (out of the Tab order, as `hidden` was).
+const PANEL_CLOSED =
+  "invisible opacity-0 -translate-y-1 scale-[0.98] pointer-events-none transition-[opacity,transform,visibility] duration-100 ease-in";
 
 type TempoStageMenuProps = {
   attemptId: string;
@@ -146,8 +156,8 @@ export function TempoStageMenu({
       role="menu"
       aria-label="Simulation menu"
       style={{ top: position.top, right: position.right }}
-      className={`fixed z-[70] w-[200px] py-1 bg-surface-container-lowest border border-outline-variant rounded-lg shadow-lg ${
-        isOpen ? "" : "hidden"
+      className={`fixed z-[70] w-[200px] py-1 bg-surface-container-lowest border border-outline-variant rounded-lg shadow-lg origin-top-right motion-reduce:transition-none ${
+        isOpen ? PANEL_OPEN : PANEL_CLOSED
       }`}
     >
       <button
@@ -197,7 +207,7 @@ export function TempoStageMenu({
         aria-label="Menu"
         aria-haspopup="menu"
         aria-expanded={isOpen}
-        className={`${buttonBaseClass} ${
+        className={`${buttonBaseClass} transition-colors motion-reduce:transition-none ${
           isOpen
             ? "text-on-surface bg-surface-container border border-outline"
             : "text-on-surface-variant border border-outline-variant hover:bg-surface-container"
