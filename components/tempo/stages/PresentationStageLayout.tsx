@@ -1,7 +1,9 @@
 /**
  * PresentationStageLayout.tsx
- * Presentational 3-column shell for Tempo Stage 3 Presentation —
- * mission panel, pitch form with center-only completion bar, and discovery reference.
+ * Presentational shell for Tempo Stage 3 Presentation — mission panel and pitch form.
+ * The Submit bar (save status left, Submit right) sits at the top of the center
+ * column, matching ProspectingWizard; a center-only completion bar sits at the bottom.
+ * The discovery reference lives in the Reference Library drawer (PresentationStage).
  */
 
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
@@ -53,25 +55,6 @@ export function PresentationStageLayout({
         testBypass ? "pt-28" : "pt-16"
       }`}
     >
-      <div className="h-12 bg-surface-container-low border-b border-outline-variant shrink-0 flex items-center justify-end px-4 lg:px-xl">
-        <TempoStageForwardNav
-          forwardLabel="Submit"
-          forwardDisabled={!canSubmit || isSubmitting}
-          isForwardLoading={isSubmitting}
-          onForward={onSubmit}
-          forwardHint={
-            readyToSubmit ? null : "Finish all sections to submit."
-          }
-          actions={
-            isSaving ? (
-              <span className="text-[12px] text-on-surface-variant hidden sm:inline">
-                Saving...
-              </span>
-            ) : null
-          }
-        />
-      </div>
-
       <main className="flex flex-1 min-h-0 overflow-hidden">
         {/* ── Left column: mission ─── */}
         <aside className="w-[280px] bg-[#1a1a2e] text-white flex flex-col p-6 overflow-y-auto border-r border-outline-variant shrink-0 hidden lg:flex">
@@ -118,8 +101,25 @@ export function PresentationStageLayout({
           </div>
         </aside>
 
-        {/* ── Center column: form + completion bar ─── */}
+        {/* ── Center column: Submit bar + form + completion bar ─── */}
         <section className="flex-1 bg-white flex flex-col min-w-0 min-h-0">
+          <div className="h-12 bg-surface-container-low border-b border-outline-variant shrink-0 flex items-center justify-between px-4 lg:px-xl gap-4">
+            <div className="flex items-center gap-sm text-on-surface-variant min-w-0 shrink-0">
+              <MaterialIcon name="cloud_done" className="text-green-500" />
+              <span className="text-label-sm">{isSaving ? "Saving..." : "Auto-saved"}</span>
+            </div>
+
+            <TempoStageForwardNav
+              forwardLabel="Submit"
+              forwardDisabled={!canSubmit || isSubmitting}
+              isForwardLoading={isSubmitting}
+              onForward={onSubmit}
+              forwardHint={
+                readyToSubmit ? null : "Finish all sections to submit."
+              }
+            />
+          </div>
+
           <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0">
             <div className="max-w-4xl mx-auto py-8 lg:py-12 px-4 lg:px-12">
             <header className="flex flex-col gap-sm mb-base">
