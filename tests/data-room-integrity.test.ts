@@ -277,4 +277,45 @@ describe("data-room integrity (seeded, local PGlite)", () => {
     },
     120_000
   );
+
+  it(
+    "FULL-SETUP adds the background badge grading columns to stage_scores",
+    async () => {
+      db = await createSetupDatabase(dataDir);
+      const result = await db.query<{
+        column_name: string;
+        data_type: string;
+        is_nullable: string;
+        column_default: string | null;
+      }>(
+        `SELECT column_name, data_type, is_nullable, column_default
+           FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'stage_scores'
+            AND column_name IN ('badges_status', 'badges_claimed_at', 'badges_claim_id')
+          ORDER BY column_name`
+      );
+      expect(result.rows).toEqual([
+        {
+          column_name: "badges_claim_id",
+          data_type: "uuid",
+          is_nullable: "YES",
+          column_default: null,
+        },
+        {
+          column_name: "badges_claimed_at",
+          data_type: "timestamp with time zone",
+          is_nullable: "YES",
+          column_default: null,
+        },
+        {
+          column_name: "badges_status",
+          data_type: "text",
+          is_nullable: "NO",
+          column_default: "'done'::text",
+        },
+      ]);
+    },
+    120_000
+  );
 });

@@ -2,14 +2,18 @@
  * complete-stage/route.ts
  * POST /api/student/complete-stage — saves stage score and advances attempt.
  * Uses service role because students do not have Supabase auth sessions.
+ * Tempo attempts save badges as 'pending' and reply with badgesPending: true;
+ * the browser then calls POST /api/student/grade-badges. Legacy attempts still
+ * grade badges inline here.
  */
 
 import { NextResponse } from "next/server";
 import { requireStudentApi } from "@/lib/api-auth";
 import { getNextStage } from "@/lib/stages";
 import { createServiceClient } from "@/lib/supabase/server";
+import { isTempoAttempt, readJoinedSimulationTitle } from "@/lib/tempo-attempt";
+import { buildTempoBadgeInputs } from "@/lib/tempo-badge-inputs";
 import { detectTempoBadges } from "@/lib/tempo-badges";
-import { parseDiscoveryPreCallPrepFromTranscript } from "@/lib/tempo-discovery";
 import { convertLead } from "@/lib/tempo-lead-conversion";
 import type { SimulationStage } from "@/types";
 
@@ -19,6 +23,19 @@ type CompleteStageBody = {
   score?: number;
   feedback?: string;
   transcript?: string;
+};
+
+/** stage_scores upsert row; the grading columns are set only for Tempo stages. */
+type StageScoreUpsert = {
+  attempt_id: string;
+  stage: SimulationStage;
+  score: number;
+  feedback: string;
+  transcript: string;
+  badges_earned: string[];
+  badges_status?: "pending";
+  badges_claimed_at?: null;
+  badges_claim_id?: null;
 };
 
 /**
@@ -42,7 +59,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     const { data: attempt } = await supabase
       .from("attempts")
-      .select("id, student_id, stage_data")
+      .select("id, student_id, stage_data, class_id, simulation_id, simulations(title)")
       .eq("id", attemptId)
       .eq("student_id", auth.session.studentId)
       .single();
@@ -112,66 +129,30 @@ export async function POST(request: Request): Promise<NextResponse> {
       }
     }
 
-    let badgesEarned: string[] = [];
-    if (
+    const isBadgeStage =
       stage === "discovery" ||
       stage === "objections" ||
       stage === "prospecting" ||
       stage === "presentation" ||
-      stage === "close"
-    ) {
-      let crmFields: Record<string, string> | null = null;
+      stage === "close";
+    // Tempo attempts grade badges after this save (grade-badges route), so Submit
+    // never waits on OpenAI. Tempo is decided from the DB row, never the request.
+    const defersBadges =
+      isBadgeStage &&
+      isTempoAttempt(
+        attempt.class_id,
+        attempt.simulation_id,
+        readJoinedSimulationTitle(attempt.simulations)
+      );
 
-      if (stage === "prospecting") {
-        const { data: convertedLead } = await supabase
-          .from("crm_leads")
-          .select("trigger_event, why_fit")
-          .eq("attempt_id", attemptId)
-          .eq("status", "converted")
-          .maybeSingle();
-
-        if (convertedLead) {
-          crmFields = {
-            trigger: String(convertedLead.trigger_event ?? ""),
-            whyFit: String(convertedLead.why_fit ?? ""),
-          };
-        }
-      } else if (stage === "discovery" || stage === "objections") {
-        const { data: crmLog } = await supabase
-          .from("crm_log_entries")
-          .select("fields")
-          .eq("attempt_id", attemptId)
-          .eq("stage", stage)
-          .maybeSingle();
-
-        const rawFields = crmLog?.fields;
-        if (rawFields && typeof rawFields === "object" && !Array.isArray(rawFields)) {
-          const normalized: Record<string, string> = {};
-          for (const [key, value] of Object.entries(rawFields as Record<string, unknown>)) {
-            if (typeof value === "string") {
-              normalized[key] = value;
-            } else if (value != null) {
-              normalized[key] = String(value);
-            }
-          }
-          crmFields = normalized;
-        }
-      }
-
-      const discoveryPrepPayload =
-        stage === "discovery"
-          ? (() => {
-              const prep = parseDiscoveryPreCallPrepFromTranscript(transcriptToStore);
-              if (!prep) {
-                return null;
-              }
-              return {
-                openQuestions: prep.openQuestions.filter((q) => q.trim().length > 0),
-                anticipatedProbe: prep.anticipatedProbe,
-                anticipatedConfirm: prep.anticipatedConfirm,
-              };
-            })()
-          : null;
+    let badgesEarned: string[] = [];
+    if (isBadgeStage && !defersBadges) {
+      const { crmFields, discoveryPrepPayload } = await buildTempoBadgeInputs(
+        supabase,
+        attemptId,
+        stage,
+        transcriptToStore
+      );
 
       badgesEarned = await detectTempoBadges(
         stage,
@@ -181,17 +162,29 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    await supabase.from("stage_scores").upsert(
-      {
-        attempt_id: attemptId,
-        stage,
-        score,
-        feedback,
-        transcript: transcriptToStore,
-        badges_earned: badgesEarned,
-      },
-      { onConflict: "attempt_id,stage" }
-    );
+    // Legacy rows keep today's six columns; Tempo rows also reset the grading state,
+    // so re-submitting a Tempo stage sends it back to pending and it is graded again.
+    const scoreRow: StageScoreUpsert = {
+      attempt_id: attemptId,
+      stage,
+      score,
+      feedback,
+      transcript: transcriptToStore,
+      badges_earned: badgesEarned,
+      ...(defersBadges
+        ? { badges_status: "pending", badges_claimed_at: null, badges_claim_id: null }
+        : {}),
+    };
+    const { error: upsertError } = await supabase
+      .from("stage_scores")
+      .upsert(scoreRow, { onConflict: "attempt_id,stage" });
+
+    if (upsertError) {
+      console.error("[complete-stage] stage_scores upsert failed:", upsertError);
+      return NextResponse.json({ error: "Could not save stage progress." }, { status: 500 });
+    }
+
+    const pendingFlag = defersBadges ? { badgesPending: true } : {};
 
     const { data: scores } = await supabase
       .from("stage_scores")
@@ -212,7 +205,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         })
         .eq("id", attemptId);
 
-      return NextResponse.json({ nextStage: "results", totalScore });
+      return NextResponse.json({ nextStage: "results", totalScore, ...pendingFlag });
     }
 
     await supabase
@@ -220,7 +213,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       .update({ current_stage: next, total_score: totalScore })
       .eq("id", attemptId);
 
-    return NextResponse.json({ nextStage: next, totalScore });
+    return NextResponse.json({ nextStage: next, totalScore, ...pendingFlag });
   } catch {
     return NextResponse.json({ error: "Could not save stage progress." }, { status: 500 });
   }

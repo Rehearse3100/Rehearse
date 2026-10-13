@@ -143,6 +143,15 @@ CREATE TABLE IF NOT EXISTS public.stage_scores (
   UNIQUE (attempt_id, stage)
 );
 
+-- Background Tempo badge grading (POST /api/student/grade-badges).
+-- badges_status values ('pending' | 'grading' | 'done') are validated in app code.
+ALTER TABLE public.stage_scores
+  ADD COLUMN IF NOT EXISTS badges_status text NOT NULL DEFAULT 'done';
+ALTER TABLE public.stage_scores
+  ADD COLUMN IF NOT EXISTS badges_claimed_at timestamptz;
+ALTER TABLE public.stage_scores
+  ADD COLUMN IF NOT EXISTS badges_claim_id uuid;
+
 -- ── CRM: opportunity logs ────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.crm_log_entries (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

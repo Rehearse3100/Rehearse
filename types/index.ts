@@ -60,6 +60,9 @@ export type Attempt = {
   completed_at: string | null;
 };
 
+/** Background badge grading state on a stage_scores row (grade-badges route). */
+export type BadgeGradingStatus = "pending" | "grading" | "done";
+
 export type StageScore = {
   id: string;
   attempt_id: string;
@@ -69,6 +72,10 @@ export type StageScore = {
   transcript: string | null;
   completed_at: string;
   badges_earned: string[];
+  /** Missing on older rows and test mocks; treat a missing value as "done". */
+  badges_status?: BadgeGradingStatus;
+  badges_claimed_at?: string | null;
+  badges_claim_id?: string | null;
 };
 
 /** Saved CRM opportunity log for one Tempo stage. */
