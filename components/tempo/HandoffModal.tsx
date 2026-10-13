@@ -2,20 +2,14 @@
  * HandoffModal.tsx
  * Manager handoff modal for Tempo simulation stages.
  * Overlays the page with blur backdrop; student must click Begin Stage to proceed.
- * Schema-driven CRM hard gate: stages after Discovery that have a log schema
- * require a CRM log for the just-completed stage. Lead conversion is automatic
- * on Prospecting completion — Discovery is not gated on a manual Convert click.
+ * No CRM gates: Begin Stage is always available. The CRM stays reachable from
+ * the top-bar menu and the Prospecting lead step.
  */
 
 "use client";
 
 import { useEffect, useState } from "react";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
-import { useTempoCrmGate } from "@/components/crm/CrmOverlay";
-import {
-  justCompletedStageForHandoff,
-  stageRequiresCrmLog,
-} from "@/lib/tempo-crm-fields";
 
 export type HandoffModalProps = {
   stageNumber: number;
@@ -25,21 +19,18 @@ export type HandoffModalProps = {
   hasAIRestriction: boolean;
   onBegin: () => void;
   onDismiss: () => void;
-  /** Override: stage that must be CRM-logged before Begin (defaults from stageNumber). */
+  /** @deprecated CRM gates removed; ignored. */
   justCompletedStage?: string | null;
-  /** Override: whether a CRM log already exists for that stage. */
+  /** @deprecated CRM gates removed; ignored. */
   crmLogExists?: boolean;
-  /** Override: open CRM deep-linked to the stage that needs logging. */
+  /** @deprecated CRM gates removed; ignored. */
   onOpenCrmForStage?: (stage: string) => void;
-  /**
-   * Server page boolean from TEMPO_TEST_BYPASS_GATES — never from client process.env.
-   * Short-circuits the CRM Account/Contact Begin Stage 2 gate when true.
-   */
+  /** @deprecated CRM gates removed; ignored. */
   testBypass?: boolean;
 };
 
 /**
- * Renders the manager handoff overlay with entry animation and optional CRM gate.
+ * Renders the manager handoff overlay with entry animation and the Begin Stage button.
  */
 export function HandoffModal({
   stageNumber,
@@ -49,65 +40,13 @@ export function HandoffModal({
   hasAIRestriction,
   onBegin,
   onDismiss,
-  justCompletedStage: justCompletedProp,
-  crmLogExists: crmLogExistsProp,
-  onOpenCrmForStage: onOpenCrmProp,
-  testBypass = false,
 }: HandoffModalProps): React.ReactElement {
   const [entered, setEntered] = useState(false);
-  const gate = useTempoCrmGate();
-  const {
-    noteCompletedStage,
-    loggedStages,
-    openCrmForStage,
-    openCrmHome,
-    prospectingCrmComplete,
-    testBypass: contextTestBypass,
-  } = gate;
-  // Prefer explicit prop from ProspectingWizard; fall back to CrmAccess context.
-  const bypassActive = testBypass || contextTestBypass;
 
   useEffect(() => {
     const timer = window.setTimeout(() => setEntered(true), 100);
     return () => window.clearTimeout(timer);
   }, []);
-
-  const inferredCompleted = justCompletedStageForHandoff(stageNumber);
-  const justCompleted =
-    justCompletedProp !== undefined ? justCompletedProp : inferredCompleted;
-
-  const requiresLog =
-    typeof justCompleted === "string" && stageRequiresCrmLog(justCompleted);
-
-  const crmLogExists =
-    crmLogExistsProp !== undefined
-      ? crmLogExistsProp
-      : justCompleted
-        ? loggedStages.has(justCompleted)
-        : true;
-
-  // bypassActive short-circuits CRM log + profile gates; existing conditions stay intact when off.
-  const isGated = requiresLog && !crmLogExists && !bypassActive;
-  const showAccountNudge = !isGated && justCompleted === "prospecting";
-  // Stage 2 gate: Account + primary Contact required fields must be complete.
-  const isProfileGated = showAccountNudge && !prospectingCrmComplete && !bypassActive;
-
-  useEffect(() => {
-    if (isGated && justCompleted) {
-      noteCompletedStage(justCompleted);
-    }
-  }, [isGated, justCompleted, noteCompletedStage]);
-
-  const handleOpenCrm = (): void => {
-    if (!justCompleted) {
-      return;
-    }
-    if (onOpenCrmProp) {
-      onOpenCrmProp(justCompleted);
-      return;
-    }
-    openCrmForStage(justCompleted);
-  };
 
   return (
     <div
@@ -178,65 +117,14 @@ export function HandoffModal({
           </div>
 
           <div className="pt-2 space-y-3">
-            {isGated ? (
-              <>
-                <p className="text-body-md text-on-surface-variant text-center">
-                  Fill out your CRM log for this stage before continuing.
-                </p>
-                <button
-                  type="button"
-                  onClick={handleOpenCrm}
-                  className="w-full h-12 rounded-lg font-headline-md flex items-center justify-center gap-2 bg-[#0f4c4c] text-white font-bold hover:brightness-110 transition-all active:scale-[0.98]"
-                >
-                  <MaterialIcon name="hub" />
-                  Log in CRM to Continue
-                </button>
-                <button
-                  type="button"
-                  disabled
-                  className="w-full h-12 rounded-lg font-headline-md flex items-center justify-center gap-2 bg-outline-variant text-on-surface-variant font-bold opacity-50 cursor-not-allowed"
-                  aria-disabled="true"
-                >
-                  Begin Stage {stageNumber}
-                  <MaterialIcon name="arrow_forward" />
-                </button>
-              </>
-            ) : (
-              <>
-                {isProfileGated ? (
-                  <p className="text-body-md text-on-surface-variant text-center">
-                    Your Account and Contact records still have required fields to fill in.
-                    Complete them in the CRM before starting Stage {stageNumber}.
-                  </p>
-                ) : null}
-                <div className={showAccountNudge ? "grid gap-3 sm:grid-cols-2" : ""}>
-                  {showAccountNudge ? (
-                    <button
-                      type="button"
-                      onClick={openCrmHome}
-                      className="w-full min-h-12 px-3 py-2 rounded-lg flex items-center justify-center gap-2 bg-[#0f4c4c] text-white text-[13px] leading-tight font-bold hover:brightness-110 transition-all active:scale-[0.98]"
-                    >
-                      <MaterialIcon name="business_center" />
-                      Go to CRM: Add Account &amp; Contact Notes
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={onBegin}
-                    disabled={isProfileGated}
-                    aria-disabled={isProfileGated}
-                    className={`w-full min-h-12 rounded-lg font-headline-md flex items-center justify-center gap-2 font-bold transition-all ${
-                      isProfileGated
-                        ? "bg-outline-variant text-on-surface-variant opacity-50 cursor-not-allowed"
-                        : "bg-primary-container text-white hover:bg-primary active:scale-[0.98]"
-                    }`}
-                  >
-                    Begin Stage {stageNumber}
-                    <MaterialIcon name="arrow_forward" />
-                  </button>
-                </div>
-              </>
-            )}
+            <button
+              type="button"
+              onClick={onBegin}
+              className="w-full min-h-12 rounded-lg font-headline-md flex items-center justify-center gap-2 font-bold transition-all bg-primary-container text-white hover:bg-primary active:scale-[0.98]"
+            >
+              Begin Stage {stageNumber}
+              <MaterialIcon name="arrow_forward" />
+            </button>
           </div>
         </div>
 
