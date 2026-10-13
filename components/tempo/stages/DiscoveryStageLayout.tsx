@@ -1,9 +1,10 @@
 /**
  * DiscoveryStageLayout.tsx
- * Presentational shell for Tempo Stage 2 Discovery during lobby, call,
+ * Presentational shell for Tempo Stage 2 Discovery during prep, lobby, call,
  * and post-call submit (mission briefing, center, docked transcript).
  * The top app bar lives in DiscoveryStage; OPC prep gates before the lobby
- * (DiscoveryPreCallPrep → DiscoveryLobby). The active call center is injected
+ * (DiscoveryPreCallPrep → DiscoveryLobby) via a Next bar inside the middle
+ * column that matches ProspectingWizard's. The active call center is injected
  * via callSlot so the mic session only mounts after Join Call.
  */
 
@@ -25,6 +26,10 @@ type DiscoveryStageLayoutProps = {
   transcript: DiscoveryTranscriptEntry[];
   lobbySlot: React.ReactNode;
   callSlot: React.ReactNode;
+  /** Prep Next gate, computed in DiscoveryStage with canBeginDiscoveryCall. */
+  isPrepNextEnabled: boolean;
+  /** Prep Next click: autofill (test bypass), save, then move to the lobby. */
+  onPrepNext: () => void;
   isSubmitting: boolean;
   nextStageName: string;
   onContinueAfterCall: () => void;
@@ -47,6 +52,27 @@ function mapDiscoveryTranscript(
 }
 
 /**
+ * Forward bar at the top of the middle column. Same height, colors, padding,
+ * and border as ProspectingWizard's bar; the left text may wrap to two lines.
+ */
+function DiscoveryForwardBar({
+  statusText,
+  children,
+}: {
+  statusText: string;
+  children: React.ReactNode;
+}): React.ReactElement {
+  return (
+    <div className="h-12 bg-surface-container-low border-b border-outline-variant shrink-0 flex items-center justify-between px-4 lg:px-xl gap-4">
+      <div className="flex items-center gap-sm text-on-surface-variant min-w-0">
+        <span className="text-label-sm">{statusText}</span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/**
  * Renders the Discovery call/submit chrome; center swaps by phase.
  */
 export function DiscoveryStageLayout({
@@ -55,6 +81,8 @@ export function DiscoveryStageLayout({
   transcript,
   lobbySlot,
   callSlot,
+  isPrepNextEnabled,
+  onPrepNext,
   isSubmitting,
   nextStageName,
   onContinueAfterCall,
@@ -162,7 +190,21 @@ export function DiscoveryStageLayout({
         </aside>
 
         {/* ── Center panel ─── */}
-        {(phase === "prep" || phase === "lobby") && lobbySlot}
+        {phase === "prep" && (
+          <section className="flex-1 bg-surface-container-lowest flex flex-col min-w-0">
+            <DiscoveryForwardBar statusText="This plan is required before you can continue. Treat it as a starting point, not a script.">
+              <TempoStageForwardNav
+                forwardLabel="Next"
+                forwardDisabled={!isPrepNextEnabled}
+                onForward={onPrepNext}
+                forwardHint={isPrepNextEnabled ? null : "Fill in your call plan to continue"}
+              />
+            </DiscoveryForwardBar>
+            <div className="flex flex-1 min-h-0">{lobbySlot}</div>
+          </section>
+        )}
+
+        {phase === "lobby" && lobbySlot}
 
         {isCallPhase && (
           <div className="flex flex-1 min-w-0 min-h-0">

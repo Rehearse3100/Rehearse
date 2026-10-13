@@ -26,6 +26,7 @@ import { DiscoveryTopBar } from "@/components/tempo/stages/DiscoveryTopBar";
 import { resumePlaybackContext } from "@/lib/audio-playback";
 import { completeStage } from "@/lib/attempt-actions";
 import {
+  canBeginDiscoveryCall,
   clearDiscoveryPrepFromStorage,
   loadDiscoveryPrepFromStorage,
   saveDiscoveryPrepToStorage,
@@ -91,6 +92,7 @@ export function DiscoveryStage({
 
   const discoveryMeta = TEMPO_HANDOFF_STAGE_META.discovery;
   const presentationMeta = TEMPO_HANDOFF_STAGE_META.presentation;
+  const isPrepNextEnabled = canBeginDiscoveryCall(prepForm, testBypass);
 
   useEffect(() => {
     let nextForm: DiscoveryPreCallPrepForm = {
@@ -247,8 +249,6 @@ export function DiscoveryStage({
                   key="discovery-prep"
                   form={prepForm}
                   onChange={handlePrepChange}
-                  onBegin={handlePrepBegin}
-                  testBypass={testBypass}
                 />
               ) : (
                 <DiscoveryLobby
@@ -276,6 +276,8 @@ export function DiscoveryStage({
                 />
               ) : null
             }
+            isPrepNextEnabled={isPrepNextEnabled}
+            onPrepNext={handlePrepBegin}
             isSubmitting={isSubmitting}
             nextStageName={presentationMeta.stageName}
             onContinueAfterCall={() => setShowPresentationHandoff(true)}

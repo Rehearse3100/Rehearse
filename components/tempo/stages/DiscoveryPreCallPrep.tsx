@@ -8,14 +8,10 @@
 "use client";
 
 import type { DiscoveryPreCallPrep } from "@/lib/tempo-discovery";
-import { canBeginDiscoveryCall } from "@/lib/tempo-discovery";
 
 type DiscoveryPreCallPrepProps = {
   form: DiscoveryPreCallPrep;
   onChange: (next: DiscoveryPreCallPrep) => void;
-  onBegin: () => void;
-  /** Server page boolean from TEMPO_TEST_BYPASS_GATES — never from client env. */
-  testBypass?: boolean;
 };
 
 const FIELD_INPUT =
@@ -25,16 +21,13 @@ const FIELD_TEXTAREA =
   "w-full mt-xs px-md py-sm bg-surface-container-lowest border border-outline-variant rounded focus:outline-none focus:ring-2 focus:ring-secondary focus:border-secondary transition-shadow text-body-md font-body-md text-on-surface placeholder:text-outline-variant resize-y min-h-[80px]";
 
 /**
- * Center-column prep card — gates Begin Discovery Call until OPC fields are filled.
+ * Center-column prep card with the OPC fields. The Next button in the
+ * DiscoveryStageLayout top bar gates the lobby until they are filled.
  */
 export function DiscoveryPreCallPrep({
   form,
   onChange,
-  onBegin,
-  testBypass = false,
 }: DiscoveryPreCallPrepProps): React.ReactElement {
-  const canBegin = canBeginDiscoveryCall(form, testBypass);
-
   const updateOpenQuestion = (index: 0 | 1 | 2, value: string): void => {
     const openQuestions: [string, string, string] = [
       form.openQuestions[0],
@@ -135,33 +128,6 @@ export function DiscoveryPreCallPrep({
             />
           </div>
         </div>
-
-        <footer className="p-xl bg-surface-container-low border-t border-outline-variant rounded-b-lg flex flex-col sm:flex-row items-center justify-between gap-md">
-          <p className="text-label-sm font-label-sm text-on-surface-variant max-w-[480px]">
-            This plan is required before you can begin the call, but treat it as a starting point,
-            not a script.
-          </p>
-          <div
-            className={
-              canBegin
-                ? "w-full sm:w-auto shrink-0"
-                : "w-full sm:w-auto shrink-0 rounded border border-outline-variant/70 p-1.5 bg-surface-container-lowest"
-            }
-          >
-            <button
-              type="button"
-              disabled={!canBegin}
-              onClick={onBegin}
-              className={
-                canBegin
-                  ? "h-[40px] px-md inline-flex items-center justify-center rounded bg-primary-container text-on-primary font-label-md text-label-md hover:bg-primary transition-colors w-full"
-                  : "h-[40px] px-md inline-flex items-center justify-center rounded bg-surface-variant text-outline font-label-md text-label-md cursor-not-allowed select-none w-full"
-              }
-            >
-              Begin Discovery Call
-            </button>
-          </div>
-        </footer>
       </main>
     </section>
   );
