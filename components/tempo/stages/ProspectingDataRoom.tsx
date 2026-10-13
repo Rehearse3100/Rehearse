@@ -1,7 +1,10 @@
 /**
  * ProspectingDataRoom.tsx
- * Prospecting research step: browse 10 roster companies, read Profile/News,
- * AI Assistant chat, and shortlist exactly 3 leads via ProspectingShortlistForm.
+ * Prospecting research step (Data Room): three panes on one screen — the company
+ * list (search the in_data_room roster), the open company's page with a single
+ * shortlist action, and the AI Research Assistant. Below 1360px wide the assistant
+ * becomes a right slide-over (same motion as the Reference Library drawer).
+ * Shortlisting still goes through ProspectingShortlistForm and the crm-leads routes.
  */
 
 "use client";
@@ -13,7 +16,10 @@ import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import type { DataRoomCompany } from "@/app/api/student/data-room/route";
 import type { CrmLead } from "@/types";
 
-type MainTab = "companies" | "assistant";
+/** Shortlist size the research step requires (matches the wizard's research gate). */
+const SHORTLIST_SIZE = 3;
+
+const CARD_CLASS = "bg-white border border-outline-variant rounded-xl p-5 shadow-sm";
 
 function formatVerticalLabel(vertical: string | null): string | null {
   if (!vertical?.trim()) {
@@ -23,6 +29,18 @@ function formatVerticalLabel(vertical: string | null): string | null {
     .split(" ")
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
+}
+
+/** "Industry · N locations · Metro" (sizeLabel when locations is unknown). */
+function companyDetailLine(company: DataRoomCompany): string {
+  const size =
+    company.locations !== null
+      ? `${company.locations} location${company.locations === 1 ? "" : "s"}`
+      : company.sizeLabel;
+  return [company.industry, size, company.metro ?? ""]
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .join(" · ");
 }
 
 type ShortlistEntry = {
@@ -40,7 +58,7 @@ type ProspectingDataRoomProps = {
 };
 
 /**
- * Left roster list + center document viewer + shortlist tray.
+ * Company list + company page + AI Research Assistant.
  */
 export function ProspectingDataRoom({
   attemptId,
@@ -52,10 +70,11 @@ export function ProspectingDataRoom({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [mainTab, setMainTab] = useState<MainTab>("companies");
   const [shortlist, setShortlist] = useState<ShortlistEntry[]>([]);
   const [formCompany, setFormCompany] = useState<DataRoomCompany | null>(null);
   const [removingLeadId, setRemovingLeadId] = useState<string | null>(null);
+  // Slide-over state; only used below 1360px (the assistant is docked above that).
+  const [isAssistantOpen, setIsAssistantOpen] = useState(false);
 
   const syncShortlistFromLeads = useCallback(
     (leads: CrmLead[], roster: DataRoomCompany[]): ShortlistEntry[] => {
@@ -131,6 +150,20 @@ export function ProspectingDataRoom({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attemptId]);
 
+  // Escape closes the assistant slide-over (narrow screens).
+  useEffect(() => {
+    if (!isAssistantOpen) {
+      return;
+    }
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        setIsAssistantOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isAssistantOpen]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) {
@@ -140,7 +173,7 @@ export function ProspectingDataRoom({
       (c) =>
         c.name.toLowerCase().includes(q) ||
         c.industry.toLowerCase().includes(q) ||
-        c.sizeLabel.toLowerCase().includes(q)
+        (c.metro ?? "").toLowerCase().includes(q)
     );
   }, [companies, search]);
 
@@ -153,8 +186,10 @@ export function ProspectingDataRoom({
     () => new Set(shortlist.map((e) => e.companyId)),
     [shortlist]
   );
-  const shortlistFull = shortlist.length >= 3;
-  const selectedIsShortlisted = selected ? shortlistedIds.has(selected.id) : false;
+  const shortlistFull = shortlist.length >= SHORTLIST_SIZE;
+  const selectedEntry = selected
+    ? shortlist.find((entry) => entry.companyId === selected.id) ?? null
+    : null;
 
   const handleShortlistSaved = (lead: CrmLead): void => {
     if (!formCompany) {
@@ -193,347 +228,284 @@ export function ProspectingDataRoom({
     }
   };
 
+  const assistantButton = (
+    <button
+      type="button"
+      onClick={() => setIsAssistantOpen(true)}
+      className="min-[1360px]:hidden inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-outline-variant bg-white text-label-sm font-bold text-on-surface hover:bg-surface-container transition-colors shrink-0"
+    >
+      <MaterialIcon name="smart_toy" className="text-[18px]" />
+      AI Assistant
+    </button>
+  );
+
   return (
-    <div className="flex flex-col h-full min-h-[520px] border border-outline-variant rounded-xl overflow-hidden bg-surface">
-      <div className="px-4 pt-3 pb-2 border-b border-outline-variant bg-surface-container-lowest shrink-0">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="inline-flex rounded-lg border border-outline-variant overflow-hidden shrink-0">
-            {(
-              [
-                { id: "companies" as const, label: "Companies", icon: "business" },
-                { id: "assistant" as const, label: "AI Assistant", icon: "smart_toy" },
-              ] as const
-            ).map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setMainTab(tab.id)}
-                className={`inline-flex items-center gap-1.5 px-4 h-9 text-label-md font-bold transition-colors ${
-                  mainTab === tab.id
-                    ? "bg-primary-container text-on-primary"
-                    : "bg-white text-on-surface hover:bg-surface-container"
-                }`}
-              >
-                <MaterialIcon name={tab.icon} className="text-[18px]" />
-                {tab.label}
-              </button>
-            ))}
+    <div className="relative flex h-full min-h-0 overflow-hidden bg-surface">
+      {/* ── a) Company list ─── */}
+      <section className="w-[260px] shrink-0 flex flex-col min-h-0 bg-surface-container-lowest border-r border-outline-variant">
+        <div className="p-3 border-b border-surface-container shrink-0">
+          <div className="relative">
+            <MaterialIcon
+              name="search"
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant text-[18px] pointer-events-none"
+            />
+            <input
+              className="w-full h-8 pl-8 pr-2.5 bg-surface-container-low border border-surface-container rounded-md text-[12px] text-on-surface placeholder:text-on-surface-variant/70 focus:outline-none focus:border-secondary focus:bg-white transition-all"
+              placeholder="Search name, industry or city…"
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
           </div>
-
-          <div className="flex flex-wrap items-center gap-3 min-w-0 flex-1 justify-end">
-            <div className="flex items-center gap-2 shrink-0">
-              <MaterialIcon name="bookmarks" className="text-secondary text-[18px]" />
-              <span className="font-label-md text-label-md font-bold text-on-surface">
-                My Shortlist ({shortlist.length}/3)
-              </span>
-            </div>
-            <div className="flex flex-wrap gap-2 min-w-0">
-              {shortlist.length === 0 ? (
-                <span className="text-label-sm text-on-surface-variant">
-                  No companies shortlisted yet.
-                </span>
-              ) : (
-                shortlist.map((entry) => (
-                  <span
-                    key={entry.leadId}
-                    className="inline-flex items-center gap-1.5 h-8 pl-3 pr-1.5 rounded-full bg-secondary-container/30 text-on-surface text-label-sm font-bold border border-secondary/20"
-                  >
-                    {entry.companyName}
-                    <button
-                      type="button"
-                      disabled={removingLeadId === entry.leadId}
-                      onClick={() => void handleRemoveShortlist(entry)}
-                      className="w-6 h-6 rounded-full hover:bg-white/70 flex items-center justify-center text-on-surface-variant"
-                      aria-label={`Remove ${entry.companyName}`}
-                    >
-                      <MaterialIcon name="close" className="text-[14px]" />
-                    </button>
-                  </span>
-                ))
-              )}
-            </div>
-          </div>
+          <p className="mt-2 px-0.5 text-[12px] text-on-surface-variant">
+            {search.trim()
+              ? `${filtered.length} of ${companies.length}`
+              : `${companies.length} companies`}
+          </p>
         </div>
-      </div>
 
-      {/* Companies tab — kept mounted so browse/selection state survives tab switches */}
-      <div
-        className={`flex flex-col lg:flex-row flex-1 min-h-0 ${
-          mainTab === "companies" ? "" : "hidden"
-        }`}
-      >
-        {/* Left: company list */}
-        <section className="w-full lg:w-[280px] xl:w-[300px] flex flex-col bg-surface-container-lowest border-b lg:border-b-0 lg:border-r border-outline-variant shrink-0 min-h-0">
-          <div className="p-3 border-b border-outline-variant shrink-0">
-            <div className="mb-2">
-              <nav className="flex items-center gap-0.5 text-[10px] leading-tight text-on-surface-variant mb-0.5">
-                <span>Prospecting</span>
-                <MaterialIcon name="chevron_right" className="text-[12px]" />
-                <span className="text-primary font-bold">Data Room</span>
-              </nav>
-              <div className="flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <h2 className="text-sm font-bold text-primary leading-tight">
-                    Candidate Companies
-                  </h2>
-                  <p className="text-[11px] text-on-surface-variant leading-tight">
-                    Read the documents, then shortlist three accounts.
-                  </p>
-                </div>
-                <span className="shrink-0 bg-surface-container-high px-1.5 py-0.5 rounded text-[10px] text-on-surface-variant">
-                  {companies.length} Companies
-                </span>
-              </div>
-            </div>
-            <div className="relative">
-              <MaterialIcon
-                name="search"
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[18px]"
-              />
-              <input
-                className="w-full h-8 pl-9 pr-3 bg-surface-container border border-outline-variant rounded-lg text-sm focus:ring-2 focus:ring-secondary/50 focus:border-secondary outline-none transition-all"
-                placeholder="Search companies..."
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar">
-            {isLoading ? (
-              <p className="text-body-md text-on-surface-variant py-4 text-center">Loading…</p>
-            ) : error ? (
-              <p className="text-sm text-error py-4 text-center">{error}</p>
-            ) : filtered.length === 0 ? (
-              <p className="text-body-md text-on-surface-variant py-4 text-center">No matches.</p>
-            ) : (
-              filtered.map((company) => {
-                const isSelected = selectedCompanyId === company.id;
-                const isShortlisted = shortlistedIds.has(company.id);
-                return (
-                  <button
-                    key={company.id}
-                    type="button"
-                    onClick={() => {
-                      onSelectCompany(company.id);
-                    }}
-                    className={`w-full text-left p-2.5 rounded-lg cursor-pointer transition-all group active:scale-[0.99] border ${
-                      isSelected
-                        ? "bg-surface border-2 border-secondary shadow-sm"
-                        : "bg-surface border-outline-variant hover:border-outline hover:shadow-sm"
-                    }`}
-                  >
-                    <div className="flex justify-between items-start mb-1 gap-1.5">
-                      <h3
-                        className={`text-[13px] leading-tight font-bold transition-colors ${
-                          isSelected
-                            ? "text-primary"
-                            : "text-on-surface group-hover:text-primary"
-                        }`}
-                      >
-                        {company.name}
-                      </h3>
-                      <span className="text-[9px] leading-tight px-1.5 py-0.5 rounded bg-surface-container-high text-on-surface-variant shrink-0">
-                        {company.industry}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-1 text-[10px] leading-tight text-on-surface-variant">
-                      <span className="inline-flex items-center gap-1">
-                        <MaterialIcon name="groups" className="text-[12px]" />
-                        {company.sizeLabel}
-                      </span>
-                      {isShortlisted ? (
-                        <span className="inline-flex items-center gap-0.5 text-secondary font-bold">
-                          <MaterialIcon name="bookmark" className="text-[12px]" />
-                          Shortlisted
-                        </span>
-                      ) : null}
-                    </div>
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </section>
-
-        {/* Center: documents */}
-        <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-surface-container-low">
-          {selected ? (
-            <div className="flex-1 flex flex-col min-h-0">
-              <div className="px-4 pt-4 pb-3 border-b border-outline-variant bg-surface-container-lowest shrink-0">
-                <h3 className="font-headline-md text-headline-md text-primary mb-1">
-                  {selected.name}
-                </h3>
-                <p className="text-body-md text-on-surface-variant">
-                  {selected.industry}
-                  {selected.locations !== null ? ` · ${selected.locations} locations` : ` · ${selected.sizeLabel}`}
-                  {selected.metro ? ` · ${selected.metro}` : ""}
-                </p>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-                <div className="space-y-lg">
-                    {selected.blurb ? (
-                      <section className="bg-white border border-outline-variant rounded-xl p-5 shadow-sm">
-                        <h4 className="font-headline-md text-headline-md text-on-surface mb-2">
-                          Overview
-                        </h4>
-                        <p className="text-body-md text-on-surface leading-relaxed">{selected.blurb}</p>
-                      </section>
-                    ) : null}
-
-                    <section className="bg-white border border-outline-variant rounded-xl p-5 shadow-sm">
-                      <h4 className="font-headline-md text-headline-md text-on-surface mb-3">
-                        Firmographics
-                      </h4>
-                      <dl className="grid grid-cols-1 sm:grid-cols-2 gap-md text-body-md">
-                        {formatVerticalLabel(selected.vertical) ? (
-                          <div>
-                            <dt className="text-label-sm text-on-surface-variant uppercase">Industry</dt>
-                            <dd className="text-on-surface">{formatVerticalLabel(selected.vertical)}</dd>
-                          </div>
-                        ) : null}
-                        {selected.locations !== null ? (
-                          <div>
-                            <dt className="text-label-sm text-on-surface-variant uppercase">Locations</dt>
-                            <dd className="text-on-surface">{selected.locations}</dd>
-                          </div>
-                        ) : null}
-                        {selected.metro ? (
-                          <div>
-                            <dt className="text-label-sm text-on-surface-variant uppercase">Metro</dt>
-                            <dd className="text-on-surface">{selected.metro}</dd>
-                          </div>
-                        ) : null}
-                        {selected.inTerritory !== null ? (
-                          <div>
-                            <dt className="text-label-sm text-on-surface-variant uppercase">Territory</dt>
-                            <dd className="text-on-surface">
-                              {selected.inTerritory ? "In territory" : "Out of territory"}
-                            </dd>
-                          </div>
-                        ) : null}
-                        {selected.onlineBooking !== null ? (
-                          <div>
-                            <dt className="text-label-sm text-on-surface-variant uppercase">
-                              Online booking
-                            </dt>
-                            <dd className="text-on-surface">
-                              {selected.onlineBooking ? "Yes" : "No"}
-                            </dd>
-                          </div>
-                        ) : null}
-                        {selected.sizeNote ? (
-                          <div className="sm:col-span-2">
-                            <dt className="text-label-sm text-on-surface-variant uppercase">Size note</dt>
-                            <dd className="text-on-surface">{selected.sizeNote}</dd>
-                          </div>
-                        ) : null}
-                      </dl>
-                    </section>
-
-                    {selected.publicSignals.length > 0 ? (
-                      <section className="bg-white border border-outline-variant rounded-xl p-5 shadow-sm">
-                        <h4 className="font-headline-md text-headline-md text-on-surface mb-3">
-                          Public signals
-                        </h4>
-                        <ul className="space-y-sm">
-                          {selected.publicSignals.map((signal) => (
-                            <li
-                              key={signal}
-                              className="flex items-start gap-sm text-body-md text-on-surface"
-                            >
-                              <MaterialIcon
-                                name="radio_button_checked"
-                                className="text-secondary text-[14px] mt-1 shrink-0"
-                              />
-                              <span>{signal}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </section>
-                    ) : null}
-
-                    {selected.contacts.length > 0 ? (
-                      <section className="bg-white border border-outline-variant rounded-xl p-5 shadow-sm">
-                        <h4 className="font-headline-md text-headline-md text-on-surface mb-3">
-                          Known contacts
-                        </h4>
-                        <ul className="space-y-md">
-                          {selected.contacts.map((contact) => (
-                            <li
-                              key={`${contact.name}-${contact.title}`}
-                              className="border border-outline-variant/60 rounded-lg p-md"
-                            >
-                              <p className="font-label-md text-label-md text-on-surface">{contact.name}</p>
-                              <p className="text-body-md text-on-surface-variant">
-                                {contact.title}
-                                {contact.department ? ` · ${contact.department}` : ""}
-                              </p>
-                            </li>
-                          ))}
-                        </ul>
-                      </section>
-                    ) : null}
-                </div>
-              </div>
-
-              <div className="p-4 border-t border-outline-variant bg-surface-container-lowest shrink-0 flex flex-wrap items-center justify-between gap-3">
-                <p className="text-label-sm text-on-surface-variant">
-                  {shortlistFull && !selectedIsShortlisted
-                    ? "3/3 — remove one to add another"
-                    : selectedIsShortlisted
-                      ? "This company is already on your shortlist."
-                      : "Shortlist up to three companies after reviewing their research."}
-                </p>
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+          {isLoading ? (
+            <p className="text-body-md text-on-surface-variant py-4 text-center">Loading…</p>
+          ) : error ? (
+            <p className="text-sm text-error py-4 text-center">{error}</p>
+          ) : filtered.length === 0 ? (
+            <p className="text-body-md text-on-surface-variant py-4 text-center">No matches.</p>
+          ) : (
+            filtered.map((company) => {
+              const isOpen = selectedCompanyId === company.id;
+              const isShortlisted = shortlistedIds.has(company.id);
+              return (
                 <button
+                  key={company.id}
                   type="button"
-                  disabled={selectedIsShortlisted || shortlistFull}
-                  onClick={() => setFormCompany(selected)}
-                  className={`h-10 px-5 rounded-lg font-bold text-label-md transition-colors ${
-                    selectedIsShortlisted || shortlistFull
-                      ? "bg-surface-container-highest text-on-surface-variant/40 cursor-not-allowed"
-                      : "bg-primary-container text-on-primary hover:bg-primary"
+                  onClick={() => onSelectCompany(company.id)}
+                  aria-current={isOpen ? "true" : undefined}
+                  className={`w-full min-h-[52px] flex items-center justify-between gap-2 py-2 pr-3 text-left border-b border-surface-container transition-colors ${
+                    isOpen ? "border-l-[3px] border-l-primary-container pl-[9px]" : "pl-3"
+                  } ${
+                    isShortlisted
+                      ? "bg-secondary-fixed"
+                      : isOpen
+                        ? "bg-surface-container-low"
+                        : "bg-surface-container-lowest hover:bg-surface-container-low"
                   }`}
                 >
-                  Shortlist This Company
+                  <span className="min-w-0">
+                    <span className="block truncate text-[13px] font-semibold leading-snug text-on-surface">
+                      {company.name}
+                    </span>
+                    <span className="block truncate text-[12px] leading-tight text-on-surface-variant">
+                      {companyDetailLine(company)}
+                    </span>
+                  </span>
+                  {isShortlisted ? (
+                    <>
+                      <MaterialIcon name="check" className="text-[18px] text-secondary shrink-0" />
+                      <span className="sr-only">Shortlisted</span>
+                    </>
+                  ) : null}
                 </button>
-              </div>
-            </div>
-          ) : (
-            <div className="flex-1 flex flex-col items-center justify-center p-xl relative overflow-hidden">
-              <div
-                className="absolute inset-0 opacity-20 pointer-events-none"
-                style={{
-                  backgroundImage:
-                    "radial-gradient(circle at 2px 2px, #e2e8f0 1px, transparent 0)",
-                  backgroundSize: "24px 24px",
-                }}
-              />
-              <div className="relative z-10 text-center max-w-md">
-                <div className="w-24 h-24 bg-surface rounded-2xl border border-outline-variant shadow-lg flex items-center justify-center mx-auto mb-lg">
-                  <MaterialIcon name="folder_open" className="text-[48px] text-outline" />
-                </div>
-                <h3 className="font-display text-display text-primary mb-md">Open the Data Room</h3>
-                <p className="text-body-lg text-on-surface-variant leading-relaxed">
-                  Select a company to review its visible research card, then shortlist the three
-                  accounts you want to pursue.
-                </p>
-              </div>
-            </div>
+              );
+            })
           )}
         </div>
+      </section>
+
+      {/* ── b) Company page ─── */}
+      <div className="flex-1 min-w-0 min-h-0 overflow-y-auto custom-scrollbar bg-surface-container-low p-6">
+        {selected ? (
+          <div className="space-y-4">
+            <div className={`${CARD_CLASS} flex flex-wrap items-start justify-between gap-3`}>
+              <div className="min-w-0">
+                <h3 className="font-headline-md text-headline-md text-on-surface">
+                  {selected.name}
+                </h3>
+                <p className="mt-1 text-body-md text-on-surface-variant">
+                  {companyDetailLine(selected)}
+                </p>
+              </div>
+              <div className="flex flex-col items-end gap-1.5 shrink-0">
+                <div className="flex items-center gap-2">
+                  {assistantButton}
+                  {selectedEntry ? (
+                    <button
+                      type="button"
+                      disabled={removingLeadId === selectedEntry.leadId}
+                      onClick={() => void handleRemoveShortlist(selectedEntry)}
+                      className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg border border-outline-variant bg-white text-label-md font-bold text-on-surface hover:bg-surface-container transition-colors disabled:opacity-50"
+                    >
+                      <MaterialIcon name="remove" className="text-[16px]" />
+                      Remove from shortlist
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={shortlistFull}
+                      onClick={() => setFormCompany(selected)}
+                      className={`inline-flex items-center gap-1.5 h-9 px-4 rounded-lg text-label-md font-bold transition-colors ${
+                        shortlistFull
+                          ? "bg-surface-container-highest text-on-surface-variant/40 cursor-not-allowed"
+                          : "bg-secondary text-white hover:bg-secondary/90 shadow-sm"
+                      }`}
+                    >
+                      <MaterialIcon name="add" className="text-[16px]" />
+                      Add to shortlist
+                    </button>
+                  )}
+                </div>
+                {shortlistFull && !selectedEntry ? (
+                  <p className="text-label-sm text-on-surface-variant">
+                    Shortlist full. Remove one to add another.
+                  </p>
+                ) : null}
+              </div>
+            </div>
+
+            {selected.blurb ? (
+              <section className={CARD_CLASS}>
+                <h4 className="font-headline-md text-headline-md text-on-surface mb-2">
+                  Overview
+                </h4>
+                <p className="text-body-md text-on-surface leading-relaxed">{selected.blurb}</p>
+              </section>
+            ) : null}
+
+            <section className={CARD_CLASS}>
+              <h4 className="font-headline-md text-headline-md text-on-surface mb-3">
+                Firmographics
+              </h4>
+              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-md text-body-md">
+                {formatVerticalLabel(selected.vertical) ? (
+                  <div>
+                    <dt className="text-label-sm text-on-surface-variant uppercase">Industry</dt>
+                    <dd className="text-on-surface">{formatVerticalLabel(selected.vertical)}</dd>
+                  </div>
+                ) : null}
+                {selected.locations !== null ? (
+                  <div>
+                    <dt className="text-label-sm text-on-surface-variant uppercase">Locations</dt>
+                    <dd className="text-on-surface">{selected.locations}</dd>
+                  </div>
+                ) : null}
+                {selected.metro ? (
+                  <div>
+                    <dt className="text-label-sm text-on-surface-variant uppercase">Metro</dt>
+                    <dd className="text-on-surface">{selected.metro}</dd>
+                  </div>
+                ) : null}
+                {selected.inTerritory !== null ? (
+                  <div>
+                    <dt className="text-label-sm text-on-surface-variant uppercase">Territory</dt>
+                    <dd className="text-on-surface">
+                      {selected.inTerritory ? "In territory" : "Out of territory"}
+                    </dd>
+                  </div>
+                ) : null}
+                {selected.onlineBooking !== null ? (
+                  <div>
+                    <dt className="text-label-sm text-on-surface-variant uppercase">
+                      Online booking
+                    </dt>
+                    <dd className="text-on-surface">{selected.onlineBooking ? "Yes" : "No"}</dd>
+                  </div>
+                ) : null}
+                {selected.sizeNote ? (
+                  <div className="sm:col-span-2">
+                    <dt className="text-label-sm text-on-surface-variant uppercase">Size note</dt>
+                    <dd className="text-on-surface">{selected.sizeNote}</dd>
+                  </div>
+                ) : null}
+              </dl>
+            </section>
+
+            {selected.publicSignals.length > 0 ? (
+              <section className={CARD_CLASS}>
+                <h4 className="font-headline-md text-headline-md text-on-surface mb-3">
+                  Public signals
+                </h4>
+                <ul className="space-y-sm">
+                  {selected.publicSignals.map((signal) => (
+                    <li key={signal} className="flex items-start gap-sm text-body-md text-on-surface">
+                      <MaterialIcon
+                        name="radio_button_checked"
+                        className="text-secondary text-[14px] mt-1 shrink-0"
+                      />
+                      <span>{signal}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+
+            {selected.contacts.length > 0 ? (
+              <section className={CARD_CLASS}>
+                <h4 className="font-headline-md text-headline-md text-on-surface mb-3">Contacts</h4>
+                <ul className="space-y-md">
+                  {selected.contacts.map((contact) => (
+                    <li
+                      key={`${contact.name}-${contact.title}`}
+                      className="border border-outline-variant/60 rounded-lg p-md"
+                    >
+                      <p className="font-label-md text-label-md text-on-surface">{contact.name}</p>
+                      <p className="text-body-md text-on-surface-variant">
+                        {contact.title}
+                        {contact.department ? ` · ${contact.department}` : ""}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+          </div>
+        ) : (
+          <div className="h-full flex flex-col">
+            <div className="flex justify-end">{assistantButton}</div>
+            <div className="flex-1 flex flex-col items-center justify-center text-center">
+              <div className="w-24 h-24 bg-surface rounded-2xl border border-outline-variant shadow-lg flex items-center justify-center mx-auto mb-lg">
+                <MaterialIcon name="folder_open" className="text-[48px] text-outline" />
+              </div>
+              <h3 className="font-display text-display text-primary mb-md">Open the Data Room</h3>
+              <p className="text-body-lg text-on-surface-variant leading-relaxed max-w-md">
+                Select a company on the left to read its profile.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* AI Assistant tab — kept mounted so attach chips + chat history survive tab switches */}
-      <div
-        className={`flex-1 flex flex-col min-h-0 min-w-0 ${
-          mainTab === "assistant" ? "" : "hidden"
+      {/* ── c) AI Research Assistant: docked at ≥1360px, slide-over below ─── */}
+      <button
+        type="button"
+        aria-label="Close AI Assistant"
+        tabIndex={-1}
+        onClick={() => setIsAssistantOpen(false)}
+        className={`min-[1360px]:hidden absolute inset-0 z-20 bg-black/35 border-0 cursor-default transition-opacity motion-reduce:transition-none ${
+          isAssistantOpen
+            ? "opacity-100 duration-200 ease-out"
+            : "opacity-0 pointer-events-none duration-[180ms] ease-in"
         }`}
+      />
+      <aside
+        aria-label="AI Research Assistant"
+        className={`absolute inset-y-0 right-0 z-30 w-[340px] max-w-full flex flex-col min-h-0 bg-surface-container-lowest border-l border-outline-variant shadow-[-8px_0_24px_rgba(0,0,0,0.08)] motion-reduce:transition-none ${
+          isAssistantOpen
+            ? "visible translate-x-0 transition-transform duration-[220ms] ease-[cubic-bezier(0.32,0.72,0,1)]"
+            : "invisible translate-x-full transition-[transform,visibility] duration-[180ms] ease-in"
+        } min-[1360px]:static min-[1360px]:z-auto min-[1360px]:shrink-0 min-[1360px]:visible min-[1360px]:translate-x-0 min-[1360px]:shadow-none min-[1360px]:transition-none`}
       >
+        <div className="min-[1360px]:hidden flex justify-end px-2 pt-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => setIsAssistantOpen(false)}
+            className="w-8 h-8 rounded-lg text-on-surface-variant hover:bg-surface-container flex items-center justify-center"
+            aria-label="Close AI Assistant"
+          >
+            <MaterialIcon name="close" className="text-[18px]" />
+          </button>
+        </div>
         <ProspectingDataRoomChat attemptId={attemptId} companies={companies} />
-      </div>
+      </aside>
 
       {formCompany ? (
         <ProspectingShortlistForm

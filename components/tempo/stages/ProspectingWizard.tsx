@@ -270,12 +270,23 @@ export function ProspectingWizard({
 
         <section className="flex-1 bg-surface-container-lowest flex flex-col min-w-0">
           <div className="h-12 bg-surface-container-low border-b border-outline-variant shrink-0 flex items-center justify-between px-4 lg:px-xl gap-4">
-            <div className="flex items-center gap-sm text-on-surface-variant min-w-0 shrink-0">
-              <MaterialIcon name="cloud_done" className="text-green-500" />
-              <span className="text-label-sm">
-                {wizard.isSaving ? "Saving..." : "Auto-saved"}
-              </span>
-            </div>
+            {currentStepId === "research" ? (
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="text-label-md font-semibold text-on-surface truncate">
+                  Shortlist 3 companies that fit your ICP
+                </span>
+                <span className="shrink-0 px-2.5 py-0.5 rounded-full bg-surface-container-lowest border border-outline-variant text-[12px] font-medium text-on-surface-variant">
+                  {state.shortlistedCompanyIds.length} of 3 shortlisted
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-sm text-on-surface-variant min-w-0 shrink-0">
+                <MaterialIcon name="cloud_done" className="text-green-500" />
+                <span className="text-label-sm">
+                  {wizard.isSaving ? "Saving..." : "Auto-saved"}
+                </span>
+              </div>
+            )}
 
             <TempoStageForwardNav
               forwardLabel={upcomingStepId ? "Next" : "Submit"}
@@ -327,11 +338,11 @@ export function ProspectingWizard({
 
           <div
             className={`flex-1 min-h-0 overflow-y-auto ${
-              currentStepId === "onboarding" || currentStepId === "icp"
+              currentStepId === "onboarding" ||
+              currentStepId === "icp" ||
+              currentStepId === "research"
                 ? "p-0"
-                : currentStepId === "research"
-                  ? "p-2 lg:p-3"
-                  : "p-4 lg:p-xl"
+                : "p-4 lg:p-xl"
             }`}
           >
             <ProspectingStepPanels
