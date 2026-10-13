@@ -47,34 +47,64 @@ export default async function StudentSimulationPage({
 
   const supabase = createServiceClient();
 
-  const { data: enrollment } = await supabase
-    .from("student_classes")
-    .select("id")
-    .eq("student_id", session.studentId)
-    .eq("class_id", classId)
-    .single();
+  /** In-progress attempts for this student, class, and simulation (newest first, max 20). */
+  const searchInProgressAttempts = async (): Promise<unknown[] | null> => {
+    const { data } = await supabase
+      .from("attempts")
+      .select("*")
+      .eq("simulation_id", params.id)
+      .eq("student_id", session.studentId)
+      .eq("class_id", classId)
+      .eq("status", ATTEMPT_STATUS.IN_PROGRESS)
+      .order("started_at", { ascending: false })
+      .limit(20);
+    return data;
+  };
+
+  // ── Batch 1: independent reads, run together ───
+  // Reads only; nothing is acted on until the redirect checks below pass, in
+  // the same order as before. The attempt read is by id when ?attempt= is set,
+  // otherwise the in-progress search.
+  const [
+    { data: enrollment },
+    { data: classRow },
+    { data: assignment },
+    attemptByIdResult,
+    inProgressRows,
+  ] = await Promise.all([
+    supabase
+      .from("student_classes")
+      .select("id")
+      .eq("student_id", session.studentId)
+      .eq("class_id", classId)
+      .single(),
+    supabase.from("classes").select("name").eq("id", classId).single(),
+    supabase
+      .from("class_simulations")
+      .select(
+        `
+      simulation_id,
+      simulations (*)
+    `
+      )
+      .eq("class_id", classId)
+      .eq("simulation_id", params.id)
+      .single(),
+    searchParams.attempt
+      ? supabase
+          .from("attempts")
+          .select("*")
+          .eq("id", searchParams.attempt)
+          .eq("student_id", session.studentId)
+          .eq("class_id", classId)
+          .single()
+      : null,
+    searchParams.attempt ? null : searchInProgressAttempts(),
+  ]);
 
   if (!enrollment) {
     redirect("/student/dashboard");
   }
-
-  const { data: classRow } = await supabase
-    .from("classes")
-    .select("name")
-    .eq("id", classId)
-    .single();
-
-  const { data: assignment } = await supabase
-    .from("class_simulations")
-    .select(
-      `
-      simulation_id,
-      simulations (*)
-    `
-    )
-    .eq("class_id", classId)
-    .eq("simulation_id", params.id)
-    .single();
 
   const simRaw = assignment?.simulations;
   const simulation = (Array.isArray(simRaw) ? simRaw[0] : simRaw) as Simulation | null;
@@ -86,28 +116,15 @@ export default async function StudentSimulationPage({
   let attempt: Attempt | null = null;
 
   if (searchParams.attempt) {
-    const { data } = await supabase
-      .from("attempts")
-      .select("*")
-      .eq("id", searchParams.attempt)
-      .eq("student_id", session.studentId)
-      .eq("class_id", classId)
-      .single();
+    const data = attemptByIdResult?.data;
     if (data && data.status !== "abandoned") {
       attempt = data as Attempt;
     }
   }
 
   if (!attempt) {
-    const { data: existingRows } = await supabase
-      .from("attempts")
-      .select("*")
-      .eq("simulation_id", params.id)
-      .eq("student_id", session.studentId)
-      .eq("class_id", classId)
-      .eq("status", ATTEMPT_STATUS.IN_PROGRESS)
-      .order("started_at", { ascending: false })
-      .limit(20);
+    // Batch 1 already searched when ?attempt= was not set; otherwise search now, as before.
+    const existingRows = searchParams.attempt ? await searchInProgressAttempts() : inProgressRows;
 
     const existing = pickPreferredInProgressAttempt(
       (existingRows ?? []) as Array<{
@@ -143,22 +160,6 @@ export default async function StudentSimulationPage({
     redirect(`/student/simulation/${params.id}/complete?attempt=${attempt.id}`);
   }
 
-  const { data: stageScores } = await supabase
-    .from("stage_scores")
-    .select("*")
-    .eq("attempt_id", attempt.id);
-
-  const scores = (stageScores ?? []) as StageScore[];
-
-  const { data: crmLogRows } = await supabase
-    .from("crm_log_entries")
-    .select("stage")
-    .eq("attempt_id", attempt.id);
-
-  const initialLoggedStages = (crmLogRows ?? []).map((row) => row.stage as string);
-  const completedStages = scores.map((s) => s.stage);
-
-  const hasProspectingScore = scores.some((s) => s.stage === "prospecting");
   const isTempoDefault =
     classId === DEFAULT_CLASS_ID && isTempoDefaultSimulation(simulation.id, simulation.title);
   // Dev shortcuts for testing individual Tempo stages — exclusive when set.
@@ -178,33 +179,43 @@ export default async function StudentSimulationPage({
   // Never NEXT_PUBLIC_; client code must never read this env var.
   const testBypass = isGateBypassEnabled();
 
-  // Ensure stale icpGateComplete flags never skip the ICP step.
+  // Ensure stale icpGateComplete flags never skip the ICP step. Decided here;
+  // written in Batch 2 alongside the reads.
+  let nextStageData: Record<string, unknown> | null = null;
   if (isTempoDefault) {
     const stageData =
       ((attempt as unknown as { stage_data?: Record<string, unknown> | null }).stage_data ??
         {}) as Record<string, unknown>;
     const icp = parseProspectingIcpState(stageData.icp);
-    let nextStageData: Record<string, unknown> | null = null;
 
     if (testStageProspecting) {
       nextStageData = stripIcpFromStageData(stageData);
     } else if (icp?.feedbackSeen !== true && stageData.icpGateComplete === true) {
       nextStageData = { ...stageData, icpGateComplete: false };
     }
-
-    if (nextStageData) {
-      const { error: icpResetError } = await supabase
-        .from("attempts")
-        .update({ stage_data: nextStageData })
-        .eq("id", attempt.id);
-      if (!icpResetError) {
-        attempt = {
-          ...attempt,
-          stage_data: nextStageData,
-        } as unknown as Attempt;
-      }
-    }
   }
+
+  // ── Batch 2: this attempt's reads and the ICP reset, run together ───
+  const [{ data: stageScores }, { data: crmLogRows }, icpResetResult] = await Promise.all([
+    supabase.from("stage_scores").select("*").eq("attempt_id", attempt.id),
+    supabase.from("crm_log_entries").select("stage").eq("attempt_id", attempt.id),
+    nextStageData
+      ? supabase.from("attempts").update({ stage_data: nextStageData }).eq("id", attempt.id)
+      : null,
+  ]);
+
+  // Same as before: apply the in-memory update only when the reset was written.
+  if (nextStageData && icpResetResult && !icpResetResult.error) {
+    attempt = {
+      ...attempt,
+      stage_data: nextStageData,
+    } as unknown as Attempt;
+  }
+
+  const scores = (stageScores ?? []) as StageScore[];
+  const initialLoggedStages = (crmLogRows ?? []).map((row) => row.stage as string);
+  const completedStages = scores.map((s) => s.stage);
+  const hasProspectingScore = scores.some((s) => s.stage === "prospecting");
 
   // Completing Stage 1 advances current_stage immediately, but Stage 2 should
   // not render until the student explicitly accepts its manager handoff.
