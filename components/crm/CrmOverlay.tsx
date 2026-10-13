@@ -21,7 +21,6 @@ import { AccountRecordView } from "@/components/crm/AccountRecordView";
 import { ContactRecordView } from "@/components/crm/ContactRecordView";
 import { CrmHelperWidget } from "@/components/crm/CrmHelperWidget";
 import { CrmHomeView } from "@/components/crm/CrmHomeView";
-import { GoToCrmButton } from "@/components/crm/GoToCrmButton";
 import { LeadDetailForm } from "@/components/crm/LeadDetailForm";
 import { LeadsListView } from "@/components/crm/LeadsListView";
 import { OpportunityRecordView } from "@/components/crm/OpportunityRecordView";
@@ -1267,32 +1266,23 @@ export function CrmAccess({
   return (
     <TempoCrmGateContext.Provider value={gateValue}>
       {children}
+      {/* The floating Go to CRM button is no longer rendered (GoToCrmButton.tsx is kept);
+          the CRM opens from the top-bar menu and the Prospecting lead step. */}
       {isPageReady ? (
-        <>
-          <GoToCrmButton
-            needsLogging={needsLoggingStage !== null}
-            onClick={() => {
-              setDeepLinkLeads(false);
-              setDeepLinkStage(null);
-              setDeepLinkView(null);
-              setIsCrmOpen(true);
-            }}
-          />
-          <CrmOverlay
-            isOpen={isCrmOpen}
-            onClose={handleCloseCrm}
-            simulationId={simulationId}
-            classId={classId}
-            attemptId={attemptId}
-            currentStage={currentStage}
-            displayName={displayName}
-            deepLinkStage={deepLinkStage}
-            deepLinkView={deepLinkView}
-            deepLinkLeads={deepLinkLeads}
-            onLogEntriesChange={handleLogEntriesChange}
-            onLeadsChange={handleLeadsChange}
-          />
-        </>
+        <CrmOverlay
+          isOpen={isCrmOpen}
+          onClose={handleCloseCrm}
+          simulationId={simulationId}
+          classId={classId}
+          attemptId={attemptId}
+          currentStage={currentStage}
+          displayName={displayName}
+          deepLinkStage={deepLinkStage}
+          deepLinkView={deepLinkView}
+          deepLinkLeads={deepLinkLeads}
+          onLogEntriesChange={handleLogEntriesChange}
+          onLeadsChange={handleLeadsChange}
+        />
       ) : null}
     </TempoCrmGateContext.Provider>
   );
