@@ -535,9 +535,6 @@ export function ProspectingDataRoomChat({
             <MaterialIcon name="arrow_upward" className="text-[16px]" />
           </button>
         </div>
-        <p className="px-0.5 text-[11px] text-on-surface-variant/80">
-          Tab to pick a suggested company · Enter to send
-        </p>
       </div>
     </section>
   );
