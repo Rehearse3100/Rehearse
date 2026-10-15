@@ -316,9 +316,11 @@ export function ProspectingDataRoom({
       <div className="flex-1 min-w-0 min-h-0 overflow-y-auto custom-scrollbar bg-surface-container-low p-6">
         {selected ? (
           <div className="space-y-4">
-            <div className={`${CARD_CLASS} flex flex-wrap items-start justify-between gap-3`}>
-              <div className="min-w-0">
-                <h3 className="font-headline-md text-headline-md text-on-surface">
+            {/* No wrap: the name column shrinks (and wraps itself), so the shortlist
+                button always stays on the top row at the right. */}
+            <div className={`${CARD_CLASS} flex items-start justify-between gap-3`}>
+              <div className="min-w-0 flex-1">
+                <h3 className="font-headline-md text-headline-md text-on-surface break-words">
                   {selected.name}
                 </h3>
                 <p className="mt-1 text-body-md text-on-surface-variant">
