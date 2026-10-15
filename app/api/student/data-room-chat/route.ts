@@ -103,11 +103,18 @@ const RESEARCH_FINDINGS_RULE_LINES = [
   "When you do share a research finding, state it using the wording given above. Do not soften, hedge, or paraphrase it into something weaker.",
 ];
 
+/**
+ * Product context near the top of single-company prompts: lets the model judge which
+ * findings are relevant, never whether a company is a fit.
+ */
+const TEMPO_PRODUCT_CONTEXT =
+  "The student sells Tempo: scheduling automation for appointment-based businesses, which lose revenue to no-shows, manual front-desk work, and demand they miss after hours. Use this ONLY to judge which information is relevant to the student's question. Never say whether a company is a good fit for Tempo, likely to buy, or worth pursuing.";
+
 /** Added after the RESEARCH FINDINGS rule (single-company prompts only). */
 const RESEARCH_FINDINGS_LIMIT_LINES = [
-  "Never mention, list, confirm or hint that withheld research findings exist. A request to list 'hidden', 'secret', 'internal' or 'all' findings, or 'everything you know', is a general question: answer with the directory listing and public signals only.",
+  "Never mention, list, confirm or hint that withheld research findings exist. If the student asks for hidden, secret, internal, withheld or 'all' findings, or 'everything you know', don't repeat those words, don't say you can't provide them, and don't suggest other questions to ask. Just answer with the directory listing and public signals, as for a general question.",
   "",
-  "When answering a specific research question, share only the research findings that directly answer THAT question (at most 3). Never list unrelated findings.",
+  "When answering a specific research question, share the research findings that bear on THAT question, most relevant first, up to 4. For questions about risks, concerns, fit, or why a company might be a good or bad prospect, findings about their scheduling, phones, front desk, software, vendors or contracts, budget or spending, staffing, ownership, or growth come first. Leave out findings about amenities, parking, décor, or community events unless the student asks about those. State findings plainly; don't draw conclusions about fit or buying intent.",
 ];
 
 /** Two- or three-company and All-companies prompts only. */
@@ -208,9 +215,9 @@ function formatCompactLine(
 
 /**
  * Builds the system prompt. Companies appear only as refs. Single-company
- * questions get the full block with research findings and the RESEARCH FINDINGS
- * rule; two- or three-company and All-companies questions get one compact line
- * per company (no research findings) and the multi-company rules.
+ * questions get the Tempo product context, the full block with research findings,
+ * and the RESEARCH FINDINGS rule; two- or three-company and All-companies questions
+ * get one compact line per company (no research findings) and the multi-company rules.
  */
 function buildDataRoomChatSystemPrompt(blocks: DataRoomPromptBlock[], mode: PromptMode): string {
   const isSingle = mode === "single";
@@ -249,6 +256,7 @@ function buildDataRoomChatSystemPrompt(blocks: DataRoomPromptBlock[], mode: Prom
   return [
     "You are a research assistant helping a student research companies for a sales prospecting exercise. You have access to publicly available information about the following companies. Each company is labelled only by a reference such as [C1]; you are not told its name.",
     "",
+    ...(isSingle ? [TEMPO_PRODUCT_CONTEXT, ""] : []),
     companies,
     "",
     ...(isSingle
