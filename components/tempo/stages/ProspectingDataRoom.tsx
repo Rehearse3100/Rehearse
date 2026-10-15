@@ -264,10 +264,7 @@ export function ProspectingDataRoom({
           </p>
         </div>
 
-        {/* Right-to-left direction puts the list's scrollbar on the left; the inner
-            wrapper switches back to left-to-right so the rows read normally. */}
-        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar [direction:rtl]">
-          <div className="[direction:ltr]">
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
           {isLoading ? (
             <p className="text-body-md text-on-surface-variant py-4 text-center">Loading…</p>
           ) : error ? (
@@ -312,7 +309,6 @@ export function ProspectingDataRoom({
               );
             })
           )}
-          </div>
         </div>
       </section>
 
