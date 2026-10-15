@@ -333,7 +333,7 @@ export function ProspectingDataRoom({
                       type="button"
                       disabled={removingLeadId === selectedEntry.leadId}
                       onClick={() => void handleRemoveShortlist(selectedEntry)}
-                      className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg border border-outline-variant bg-white text-label-md font-bold text-on-surface hover:bg-surface-container transition-colors disabled:opacity-50"
+                      className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-error text-white text-label-md font-bold hover:bg-error/90 shadow-sm transition-colors disabled:opacity-50"
                     >
                       <MaterialIcon name="remove" className="text-[16px]" />
                       Remove from shortlist
@@ -488,7 +488,7 @@ export function ProspectingDataRoom({
       />
       <aside
         aria-label="AI Research Assistant"
-        className={`absolute inset-y-0 right-0 z-30 w-[340px] max-w-full flex flex-col min-h-0 bg-surface-container-lowest border-l border-outline-variant shadow-[-8px_0_24px_rgba(0,0,0,0.08)] motion-reduce:transition-none ${
+        className={`absolute inset-y-0 right-0 z-30 w-[388px] max-w-full flex flex-col min-h-0 bg-surface-container-lowest border-l border-outline-variant shadow-[-8px_0_24px_rgba(0,0,0,0.08)] motion-reduce:transition-none ${
           isAssistantOpen
             ? "visible translate-x-0 transition-transform duration-[220ms] ease-[cubic-bezier(0.32,0.72,0,1)]"
             : "invisible translate-x-full transition-[transform,visibility] duration-[180ms] ease-in"
