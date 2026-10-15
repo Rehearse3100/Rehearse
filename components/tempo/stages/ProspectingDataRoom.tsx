@@ -268,7 +268,7 @@ export function ProspectingDataRoom({
         </div>
 
         {/* Each company is its own bordered card on a light gray list background. */}
-        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar bg-surface-container-low p-2 space-y-1.5">
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar bg-surface-container-low p-2 space-y-1">
           {isLoading ? (
             <p className="text-body-md text-on-surface-variant py-4 text-center">Loading…</p>
           ) : error ? (
