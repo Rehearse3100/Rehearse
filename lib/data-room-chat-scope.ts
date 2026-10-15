@@ -308,6 +308,55 @@ export function detectCompanies(
   return { companyIds, ambiguous };
 }
 
+/** Out-of-scope companies a question mentions (see findOutOfScopeMentions). */
+export type OutOfScopeMention = {
+  companies: ScopeCompany[];
+  /** True for one first word shared by 2+ companies: they are alternatives ("A or B"). */
+  isEitherOr: boolean;
+};
+
+/**
+ * Companies the text mentions that are NOT in scope, using the same detection as
+ * the redaction (full names, and identifying first words; generic words never
+ * count). A first word shared by an in-scope company counts as in scope. Null
+ * when the text mentions no out-of-scope company.
+ */
+export function findOutOfScopeMentions(
+  index: ScopeIndex,
+  text: string,
+  scopeIds: readonly string[]
+): OutOfScopeMention | null {
+  const inScope = new Set(scopeIds);
+  const detection = detectCompanies(index, text, scopeIds);
+  const companies = detection.companyIds
+    .filter((id) => !inScope.has(id))
+    .map((id) => index.byId.get(id))
+    .filter((company): company is ScopeCompany => Boolean(company));
+  if (companies.length > 0) {
+    return { companies, isEitherOr: false };
+  }
+  return detection.ambiguous ? { companies: detection.ambiguous.options, isEitherOr: true } : null;
+}
+
+function joinNames(names: readonly string[], conjunction: "and" | "or"): string {
+  if (names.length <= 1) {
+    return names[0] ?? "";
+  }
+  return `${names.slice(0, -1).join(", ")} ${conjunction} ${names[names.length - 1]}`;
+}
+
+/**
+ * The fixed reply for a question that mentions an unselected company (names come
+ * from the roster): "Your question mentions {Name}, which isn't selected. …"
+ */
+export function buildOutOfScopeMessage(mention: OutOfScopeMention): string {
+  const names = mention.companies.map((company) => company.name);
+  if (names.length > 1 && !mention.isEitherOr) {
+    return `Your question mentions ${joinNames(names, "and")}, which aren't selected. Type their names and press Tab, or open them from the list, and I'll answer about them.`;
+  }
+  return `Your question mentions ${joinNames(names, "or")}, which isn't selected. Type its name and press Tab, or open it from the list, and I'll answer about it.`;
+}
+
 // ── Scope on send ───
 
 export type ScopeInput = {
@@ -644,4 +693,13 @@ export function finalizeModelAnswer(
     (text) => findCompanyNameMentions(text, index).length > 0
   );
   return leaked ? null : { intro, items };
+}
+
+/**
+ * True when a finalized answer says nothing: no items and a blank intro, or the
+ * model wrote items but every one was dropped (ref not in scope, duplicate, or
+ * empty text), which leaves at most an intro that introduces nothing.
+ */
+export function isEmptyModelAnswer(parsed: ModelAnswer, finalized: ScopedAnswer): boolean {
+  return finalized.items.length === 0 && (finalized.intro.length === 0 || parsed.items.length > 0);
 }

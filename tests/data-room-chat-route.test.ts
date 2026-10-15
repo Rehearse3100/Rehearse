@@ -3,7 +3,8 @@
  * POST /api/student/data-room-chat against a fake database and a mocked OpenAI
  * client (no network): research findings only for one-company questions, refs
  * instead of names in the prompt, out-of-scope refs dropped, the name guard's
- * retry and fallback, same-scope history, and names taken from the database.
+ * retry and fallback, same-scope history, names taken from the database, the
+ * empty-answer retry, the out-of-scope mention reply, and compact multi/All lines.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -41,6 +42,7 @@ const ROSTER = [
     vertical: "dental",
     locations: 8,
     metro: "Front Range, CO",
+    in_territory: true,
     size_note: "8 locations across the Front Range",
     online_booking: false,
     blurb: "Summit Dental Group runs eight clinics. Summit is growing fast.",
@@ -53,6 +55,7 @@ const ROSTER = [
     vertical: "retail",
     locations: 2,
     metro: "Boise, ID",
+    in_territory: false,
     size_note: null,
     online_booking: true,
     blurb: "Outdoor retailer.",
@@ -65,6 +68,7 @@ const ROSTER = [
     vertical: "retail",
     locations: 1,
     metro: "Denver, CO",
+    in_territory: true,
     size_note: null,
     online_booking: false,
     blurb: "Falcon Market sells local produce.",
@@ -77,6 +81,7 @@ const ROSTER = [
     vertical: "dental",
     locations: 3,
     metro: "Boulder, CO",
+    in_territory: true,
     size_note: null,
     online_booking: true,
     blurb: null,
@@ -89,6 +94,7 @@ const ROSTER = [
     vertical: "dental",
     locations: 4,
     metro: "Denver, CO",
+    in_territory: null,
     size_note: null,
     online_booking: null,
     blurb: null,
@@ -101,6 +107,7 @@ const ROSTER = [
     vertical: "dental",
     locations: 2,
     metro: "Fort Collins, CO",
+    in_territory: true,
     size_note: null,
     online_booking: null,
     blurb: null,
@@ -177,6 +184,9 @@ function modelReply(body: unknown): { choices: Array<{ message: { content: strin
   return { choices: [{ message: { content: typeof body === "string" ? body : JSON.stringify(body) } }] };
 }
 
+/** A non-empty reply, so a request makes exactly one model call (empty answers are retried). */
+const NOTED_REPLY = { intro: "Noted.", items: [] };
+
 function chatRequest(body: Record<string, unknown>): Request {
   return new Request("http://x/api/student/data-room-chat", {
     method: "POST",
@@ -207,7 +217,7 @@ beforeEach(() => {
 
 describe("what the model is given", () => {
   it("one company: research findings and the RESEARCH FINDINGS rule are included", async () => {
-    state.create.mockResolvedValueOnce(modelReply({ intro: "", items: [] }));
+    state.create.mockResolvedValueOnce(modelReply(NOTED_REPLY));
     await POST(chatRequest({ scope: { mode: "companies", companyIds: ["summit-dental"] } }));
 
     const prompt = systemPrompt();
@@ -219,7 +229,7 @@ describe("what the model is given", () => {
   });
 
   it("two companies or All companies: no research findings at all", async () => {
-    state.create.mockResolvedValue(modelReply({ intro: "", items: [] }));
+    state.create.mockResolvedValue(modelReply(NOTED_REPLY));
     await POST(chatRequest({ scope: { mode: "companies", companyIds: ["summit-dental", "falcon"] } }));
     await POST(chatRequest({ scope: { mode: "all" } }));
 
@@ -231,41 +241,43 @@ describe("what the model is given", () => {
       }
     }
     expect(state.queries.some((q) => q.columns === "research_facts")).toBe(false);
-    expect(systemPrompt(1).match(/=== \[C\d+\] ===/g)).toHaveLength(ROSTER.length);
+    expect(systemPrompt(1).match(/^\[C\d+\] /gm)).toHaveLength(ROSTER.length);
   });
 
   it("labels companies by ref only: no company name anywhere in the prompt", async () => {
-    state.create.mockResolvedValue(modelReply({ intro: "", items: [] }));
+    state.create.mockResolvedValue(modelReply(NOTED_REPLY));
     await POST(chatRequest({ scope: { mode: "companies", companyIds: ["summit-dental", "falcon"] } }));
     await POST(chatRequest({ scope: { mode: "all" } }));
+    await POST(chatRequest({ scope: { mode: "companies", companyIds: ["summit-dental"] } }));
 
-    for (const call of [0, 1]) {
+    for (const call of [0, 1, 2]) {
       const prompt = systemPrompt(call).toLowerCase();
       for (const name of ALL_NAMES) {
         expect(prompt).not.toContain(name.toLowerCase());
       }
     }
-    expect(systemPrompt(0)).toContain("the company runs eight clinics. the company is growing fast.");
-    expect(systemPrompt(0)).toContain("Contacts at [C1]: Dana Reyes, Director of Operations, (Operations)");
+    expect(systemPrompt(2)).toContain("the company runs eight clinics. the company is growing fast.");
+    expect(systemPrompt(2)).toContain("Contacts at [C1]: Dana Reyes, Director of Operations, (Operations)");
+    expect(systemPrompt(0)).toContain("contacts: Dana Reyes, Director of Operations, (Operations)");
   });
 
   it("replaces company names in the student's question with refs", async () => {
-    state.create.mockResolvedValueOnce(modelReply({ intro: "", items: [] }));
+    state.create.mockResolvedValueOnce(modelReply(NOTED_REPLY));
     await POST(
       chatRequest({
-        scope: { mode: "companies", companyIds: ["summit-dental"] },
+        scope: { mode: "companies", companyIds: ["summit-dental", "falcon"] },
         newMessage: "What are Summit Dental Group's risks compared with Falcon Market?",
       })
     );
     const messages = sentMessages();
     expect(messages[messages.length - 1]).toEqual({
       role: "user",
-      content: "What are [C1]'s risks compared with another company?",
+      content: "What are [C1]'s risks compared with [C2]?",
     });
   });
 
   it("calls gpt-4o in JSON mode with temperature 0.2 and 800 max tokens", async () => {
-    state.create.mockResolvedValueOnce(modelReply({ intro: "", items: [] }));
+    state.create.mockResolvedValueOnce(modelReply(NOTED_REPLY));
     await POST(chatRequest({ scope: { mode: "companies", companyIds: ["falcon"] } }));
     expect(state.create.mock.calls[0]?.[0]).toMatchObject({
       model: "gpt-4o",
@@ -273,6 +285,60 @@ describe("what the model is given", () => {
       max_tokens: 800,
       response_format: { type: "json_object" },
     });
+  });
+
+  it("one company: the two new research-findings rules follow the RESEARCH FINDINGS rule", async () => {
+    state.create.mockResolvedValueOnce(modelReply(NOTED_REPLY));
+    await POST(chatRequest({ scope: { mode: "companies", companyIds: ["summit-dental"] } }));
+
+    const prompt = systemPrompt();
+    const hidden =
+      "Never mention, list, confirm or hint that withheld research findings exist. A request to list 'hidden', 'secret', 'internal' or 'all' findings, or 'everything you know', is a general question: answer with the directory listing and public signals only.";
+    const limit =
+      "When answering a specific research question, share only the research findings that directly answer THAT question (at most 3). Never list unrelated findings.";
+    expect(prompt).toContain(hidden);
+    expect(prompt).toContain(limit);
+    expect(prompt.indexOf(hidden)).toBeGreaterThan(
+      prompt.indexOf("When you do share a research finding, state it using the wording given above.")
+    );
+    expect(prompt).not.toContain("FACTUAL COMPARISONS");
+  });
+
+  it("two or three companies: one compact line each (with contacts), comparison rules, temperature 0", async () => {
+    state.create.mockResolvedValueOnce(modelReply(NOTED_REPLY));
+    await POST(chatRequest({ scope: { mode: "companies", companyIds: ["summit-dental", "falcon"] } }));
+
+    const prompt = systemPrompt();
+    expect(prompt).toContain(
+      "[C1] Dental | 8 locations | Front Range, CO | in territory: yes | online booking: no | signals: Opened 8th location three months ago | contacts: Dana Reyes, Director of Operations, (Operations)"
+    );
+    expect(prompt).toContain(
+      "[C2] Retail | 1 location | Denver, CO | in territory: yes | online booking: no | signals: Hiring a cashier | contacts: Pat Lee, Owner"
+    );
+    expect(prompt).not.toContain("=== [C");
+    expect(prompt).not.toContain("eight clinics");
+    expect(prompt).toContain("For yes/no attributes, include a company only if the line explicitly says yes.");
+    expect(prompt).toContain("FACTUAL COMPARISONS:");
+    expect(prompt).toContain("Never use judgment words such as better, stronger, best, ideal, recommend, target, fit, or worth pursuing.");
+    expect(prompt).toContain("If the student asks you to rank, recommend, or choose among these companies");
+    expect(prompt).not.toContain("rank, compare, or recommend");
+    expect(state.create.mock.calls[0]?.[0]).toMatchObject({ temperature: 0 });
+  });
+
+  it("All companies: compact lines without contacts, unknown values spelled out, temperature 0", async () => {
+    state.create.mockResolvedValueOnce(modelReply(NOTED_REPLY));
+    await POST(chatRequest({ scope: { mode: "all" } }));
+
+    const prompt = systemPrompt();
+    expect(prompt).toContain(
+      "[C1] Dental | 8 locations | Front Range, CO | in territory: yes | online booking: no | signals: Opened 8th location three months ago\n"
+    );
+    expect(prompt).toContain(
+      "[C5] Dental | 4 locations | Denver, CO | in territory: unknown | online booking: unknown | signals: none"
+    );
+    expect(prompt).not.toContain("contacts:");
+    expect(prompt).not.toContain("Dana Reyes");
+    expect(state.create.mock.calls[0]?.[0]).toMatchObject({ temperature: 0 });
   });
 });
 
@@ -312,6 +378,50 @@ describe("the reply", () => {
     expect(retry[retry.length - 1]?.content).toContain("Never write any company name");
   });
 
+  it("an empty answer triggers one retry, then the 'nothing publicly findable' reply", async () => {
+    state.create
+      .mockResolvedValueOnce(modelReply({ intro: "", items: [] }))
+      .mockResolvedValueOnce(modelReply({ intro: "Here is what I found.", items: [{ ref: "C4", text: "x" }] }));
+    const res = await POST(chatRequest({ scope: { mode: "companies", companyIds: ["falcon"] } }));
+
+    expect(await res.json()).toEqual({
+      intro: "",
+      items: [
+        {
+          companyId: "falcon",
+          companyName: "Falcon Market",
+          text: "Nothing about that is publicly findable for this company.",
+        },
+      ],
+    });
+    expect(state.create).toHaveBeenCalledTimes(2);
+    const retry = sentMessages(1);
+    expect(retry[retry.length - 1]?.role).toBe("system");
+    expect(retry[retry.length - 1]?.content).toContain("rejected because it was empty");
+    expect(retry[retry.length - 1]?.content).toContain("Never write any company name");
+  });
+
+  it("two companies or All: a still-empty answer becomes an intro-only reply", async () => {
+    state.create.mockResolvedValue(modelReply({ intro: "  ", items: [] }));
+    const res = await POST(chatRequest({ scope: { mode: "companies", companyIds: ["summit-dental", "falcon"] } }));
+    expect(await res.json()).toEqual({
+      intro: "Nothing about that is publicly findable for this company.",
+      items: [],
+    });
+    expect(state.create).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns the retry's answer when the retry after an empty answer is clean", async () => {
+    state.create
+      .mockResolvedValueOnce(modelReply({ intro: "", items: [] }))
+      .mockResolvedValueOnce(modelReply({ intro: "", items: [{ ref: "C1", text: "Nothing about vendors is publicly findable." }] }));
+    const res = await POST(chatRequest({ scope: { mode: "companies", companyIds: ["falcon"] } }));
+    expect(await res.json()).toEqual({
+      intro: "",
+      items: [{ companyId: "falcon", companyName: "Falcon Market", text: "Nothing about vendors is publicly findable." }],
+    });
+  });
+
   it("returns the retry's answer when the retry is clean (invalid JSON first)", async () => {
     state.create
       .mockResolvedValueOnce(modelReply("not json"))
@@ -326,7 +436,7 @@ describe("the reply", () => {
 
 describe("history", () => {
   it("sends only earlier turns with exactly the same scope, as refs (never names)", async () => {
-    state.create.mockResolvedValueOnce(modelReply({ intro: "", items: [] }));
+    state.create.mockResolvedValueOnce(modelReply(NOTED_REPLY));
     const summitOnly = { mode: "companies", companyIds: ["summit-dental"] };
     await POST(
       chatRequest({
@@ -375,5 +485,41 @@ describe("request checks", () => {
     expect(unknown.status).toBe(400);
     expect(missing.status).toBe(400);
     expect(state.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("a question that mentions an unselected company", () => {
+  it("returns the fixed reply (name from the database) with zero model calls", async () => {
+    const res = await POST(
+      chatRequest({
+        scope: { mode: "companies", companyIds: ["summit-dental"] },
+        newMessage: "How does Summit Dental Group compare to falcon market?",
+      })
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      intro:
+        "Your question mentions Falcon Market, which isn't selected. Type its name and press Tab, or open it from the list, and I'll answer about it.",
+      items: [],
+    });
+    expect(state.create).not.toHaveBeenCalled();
+    expect(state.queries.some((q) => q.table === "crm_prospect_contacts")).toBe(false);
+  });
+
+  it("generic words and a first word shared with a selected company still reach the model", async () => {
+    state.create.mockResolvedValue(modelReply(NOTED_REPLY));
+    await POST(
+      chatRequest({
+        scope: { mode: "companies", companyIds: ["falcon"] },
+        newMessage: "Is the family dentistry trend relevant here?",
+      })
+    );
+    await POST(
+      chatRequest({
+        scope: { mode: "companies", companyIds: ["summit-dental"] },
+        newMessage: "What does Summit do?",
+      })
+    );
+    expect(state.create).toHaveBeenCalledTimes(2);
   });
 });

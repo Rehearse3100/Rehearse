@@ -1,20 +1,24 @@
 /**
  * data-room-chat-scope.test.ts
  * Data Room assistant scope helpers: generic words derived from the roster,
- * type-to-pick suggestions, company detection, and scope priority on send.
+ * type-to-pick suggestions, company detection, scope priority on send, the
+ * out-of-scope mention reply, and the empty-answer check.
  * Fixture roster uses names from the directory generator's real name pools.
  */
 
 import { describe, expect, it } from "vitest";
 import {
   buildGenericWords,
+  buildOutOfScopeMessage,
   buildRefLabels,
   buildScopeIndex,
   detectCompanies,
   filterHistoryForScope,
   finalizeModelAnswer,
   findCompanyNameMentions,
+  findOutOfScopeMentions,
   insertPickedName,
+  isEmptyModelAnswer,
   parseChatScope,
   parseModelAnswer,
   previewScope,
@@ -261,6 +265,19 @@ describe("server helpers", () => {
     });
   });
 
+  it("an empty answer: no items and a blank intro, or every item dropped", () => {
+    const labels = buildRefLabels(["falcon"]);
+    const check = (raw: unknown): boolean => {
+      const parsed = parseModelAnswer(JSON.stringify(raw));
+      return isEmptyModelAnswer(parsed!, finalizeModelAnswer(parsed!, labels, index)!);
+    };
+    expect(check({ intro: "", items: [] })).toBe(true);
+    expect(check({ intro: "Here is what I found.", items: [{ ref: "C9", text: "x" }] })).toBe(true);
+    expect(check({ intro: "", items: [{ ref: "C1", text: "   " }] })).toBe(true);
+    expect(check({ intro: "I can't rank these companies.", items: [] })).toBe(false);
+    expect(check({ intro: "", items: [{ ref: "C1", text: "It sells produce." }] })).toBe(false);
+  });
+
   it("keeps only same-scope history, last 10", () => {
     const one = { mode: "companies" as const, companyIds: ["falcon"] };
     const history: HistoryEntry[] = Array.from({ length: 14 }, (_, i) => ({
@@ -271,5 +288,41 @@ describe("server helpers", () => {
     const kept = filterHistoryForScope([...history, ...history], one);
     expect(kept).toHaveLength(10);
     expect(kept.every((entry) => scopesEqual(entry.scope, one))).toBe(true);
+  });
+});
+
+describe("out-of-scope mentions", () => {
+  it("finds an unselected company by full name or identifying first word", () => {
+    expect(
+      findOutOfScopeMentions(index, "How does Summit Dental Group compare to Falcon Market?", ["summit-dental"])
+    ).toEqual({ companies: [ROSTER.find((c) => c.id === "falcon")], isEitherOr: false });
+    expect(names(findOutOfScopeMentions(index, "Is oasis busier?", ["falcon"])?.companies ?? [])).toEqual([
+      "Oasis Supply Co.",
+    ]);
+  });
+
+  it("selected companies, a first word shared with a selected company, and generic words don't count", () => {
+    expect(findOutOfScopeMentions(index, "Summit Dental Group vs falcon?", ["summit-dental", "falcon"])).toBeNull();
+    expect(findOutOfScopeMentions(index, "What does Summit do?", ["summit-dental"])).toBeNull();
+    expect(findOutOfScopeMentions(index, "Is the family dentistry group busy?", ["falcon"])).toBeNull();
+  });
+
+  it("a first word shared by two unselected companies names both as alternatives", () => {
+    const mention = findOutOfScopeMentions(index, "And juniper?", ["falcon"]);
+    expect(mention?.isEitherOr).toBe(true);
+    expect(buildOutOfScopeMessage(mention!)).toBe(
+      "Your question mentions Juniper Eye Care or Juniper Ridge Vision Group, which isn't selected. Type its name and press Tab, or open it from the list, and I'll answer about it."
+    );
+  });
+
+  it("builds the fixed reply with names from the roster", () => {
+    const falcon = ROSTER.find((c) => c.id === "falcon")!;
+    const oasis = ROSTER.find((c) => c.id === "oasis")!;
+    expect(buildOutOfScopeMessage({ companies: [falcon], isEitherOr: false })).toBe(
+      "Your question mentions Falcon Market, which isn't selected. Type its name and press Tab, or open it from the list, and I'll answer about it."
+    );
+    expect(buildOutOfScopeMessage({ companies: [falcon, oasis], isEitherOr: false })).toBe(
+      "Your question mentions Falcon Market and Oasis Supply Co., which aren't selected. Type their names and press Tab, or open them from the list, and I'll answer about them."
+    );
   });
 });
