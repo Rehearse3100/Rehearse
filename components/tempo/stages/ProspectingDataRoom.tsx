@@ -264,7 +264,8 @@ export function ProspectingDataRoom({
           </p>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+        {/* Each company is its own bordered card on a light gray list background. */}
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar bg-surface-container-low p-2 space-y-2">
           {isLoading ? (
             <p className="text-body-md text-on-surface-variant py-4 text-center">Loading…</p>
           ) : error ? (
@@ -281,15 +282,11 @@ export function ProspectingDataRoom({
                   type="button"
                   onClick={() => onSelectCompany(company.id)}
                   aria-current={isOpen ? "true" : undefined}
-                  className={`w-full min-h-[52px] flex items-center justify-between gap-2 py-2 pr-3 text-left border-b border-surface-container transition-colors ${
-                    isOpen ? "border-l-[3px] border-l-primary-container pl-[9px]" : "pl-3"
-                  } ${
-                    isShortlisted
-                      ? "bg-secondary-fixed"
-                      : isOpen
-                        ? "bg-surface-container-low"
-                        : "bg-surface-container-lowest hover:bg-surface-container-low"
-                  }`}
+                  className={`w-full min-h-[52px] flex items-center justify-between gap-2 px-3 py-2.5 text-left rounded-lg border transition-[box-shadow,border-color,background-color] duration-150 ${
+                    isOpen
+                      ? "border-secondary ring-1 ring-secondary shadow-sm"
+                      : "border-on-surface hover:shadow-md"
+                  } ${isShortlisted ? "bg-secondary-fixed" : "bg-white"}`}
                 >
                   <span className="min-w-0">
                     <span className="block truncate text-[13px] font-semibold leading-snug text-on-surface">
