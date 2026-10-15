@@ -521,7 +521,7 @@ export function ProspectingDataRoomChat({
               setCaret(event.currentTarget.selectionStart ?? event.currentTarget.value.length)
             }
             onKeyDown={handleKeyDown}
-            placeholder="Ask about this company, or type another company's name…"
+            placeholder="Type a message"
             aria-label="Ask the AI Research Assistant"
             className="w-full h-10 pl-3.5 pr-10 text-[13px] bg-surface-container-low border border-outline-variant rounded-lg text-on-surface placeholder:text-on-surface-variant/70 focus:outline-none focus:border-secondary focus:bg-white transition-all"
           />
