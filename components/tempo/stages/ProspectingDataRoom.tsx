@@ -328,7 +328,7 @@ export function ProspectingDataRoom({
                 </p>
               </div>
               <div className="flex flex-col items-end gap-1.5 shrink-0">
-                <div className="flex items-center gap-2">
+                <div className="flex items-start gap-2">
                   {assistantButton}
                   {selectedEntry ? (
                     <button
@@ -341,26 +341,29 @@ export function ProspectingDataRoom({
                       Remove from shortlist
                     </button>
                   ) : (
-                    <button
-                      type="button"
-                      disabled={shortlistFull}
-                      onClick={() => setFormCompany(selected)}
-                      className={`inline-flex items-center gap-1.5 h-9 px-4 rounded-lg text-label-md font-bold transition-colors ${
-                        shortlistFull
-                          ? "bg-surface-container-highest text-on-surface-variant/40 cursor-not-allowed"
-                          : "bg-secondary text-white hover:bg-secondary/90 shadow-sm"
-                      }`}
-                    >
-                      <MaterialIcon name="add" className="text-[16px]" />
-                      Add to shortlist
-                    </button>
+                    // Grid sized by the button: the note starts at the button's left edge and wraps to its width.
+                    <div className="inline-grid gap-1.5">
+                      <button
+                        type="button"
+                        disabled={shortlistFull}
+                        onClick={() => setFormCompany(selected)}
+                        className={`inline-flex items-center gap-1.5 h-9 px-4 rounded-lg text-label-md font-bold transition-colors ${
+                          shortlistFull
+                            ? "bg-surface-container-highest text-on-surface-variant/40 cursor-not-allowed"
+                            : "bg-secondary text-white hover:bg-secondary/90 shadow-sm"
+                        }`}
+                      >
+                        <MaterialIcon name="add" className="text-[16px]" />
+                        Add to shortlist
+                      </button>
+                      {shortlistFull ? (
+                        <p className="w-0 min-w-full text-label-sm text-on-surface-variant">
+                          Shortlist full. Remove one to add another.
+                        </p>
+                      ) : null}
+                    </div>
                   )}
                 </div>
-                {shortlistFull && !selectedEntry ? (
-                  <p className="text-label-sm text-on-surface-variant">
-                    Shortlist full. Remove one to add another.
-                  </p>
-                ) : null}
               </div>
             </div>
 
