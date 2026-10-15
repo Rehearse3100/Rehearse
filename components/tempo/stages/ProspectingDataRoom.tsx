@@ -31,13 +31,16 @@ function formatVerticalLabel(vertical: string | null): string | null {
     .join(" ");
 }
 
-/** "Industry · N locations · Metro" (sizeLabel when locations is unknown). */
-function companyDetailLine(company: DataRoomCompany): string {
+/**
+ * "Industry · N locations · Metro" (sizeLabel when locations is unknown).
+ * The company list leaves the metro out to keep cards short.
+ */
+function companyDetailLine(company: DataRoomCompany, includeMetro = true): string {
   const size =
     company.locations !== null
       ? `${company.locations} location${company.locations === 1 ? "" : "s"}`
       : company.sizeLabel;
-  return [company.industry, size, company.metro ?? ""]
+  return [company.industry, size, includeMetro ? company.metro ?? "" : ""]
     .map((part) => part.trim())
     .filter((part) => part.length > 0)
     .join(" · ");
@@ -265,7 +268,7 @@ export function ProspectingDataRoom({
         </div>
 
         {/* Each company is its own bordered card on a light gray list background. */}
-        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar bg-surface-container-low p-2 space-y-2">
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar bg-surface-container-low p-2 space-y-1.5">
           {isLoading ? (
             <p className="text-body-md text-on-surface-variant py-4 text-center">Loading…</p>
           ) : error ? (
@@ -282,10 +285,10 @@ export function ProspectingDataRoom({
                   type="button"
                   onClick={() => onSelectCompany(company.id)}
                   aria-current={isOpen ? "true" : undefined}
-                  className={`w-full min-h-[52px] flex items-center justify-between gap-2 px-3 py-2.5 text-left rounded-lg border transition-[box-shadow,border-color,background-color] duration-150 ${
+                  className={`w-full flex items-center justify-between gap-2 px-3 py-1.5 text-left rounded-lg border transition-[box-shadow,border-color,background-color] duration-150 ${
                     isOpen
                       ? "border-secondary ring-1 ring-secondary shadow-sm"
-                      : "border-on-surface hover:shadow-md"
+                      : "border-outline-variant hover:border-outline hover:shadow-sm"
                   } ${isShortlisted ? "bg-secondary-fixed" : "bg-white"}`}
                 >
                   <span className="min-w-0">
@@ -293,7 +296,7 @@ export function ProspectingDataRoom({
                       {company.name}
                     </span>
                     <span className="block truncate text-[12px] leading-tight text-on-surface-variant">
-                      {companyDetailLine(company)}
+                      {companyDetailLine(company, false)}
                     </span>
                   </span>
                   {isShortlisted ? (
