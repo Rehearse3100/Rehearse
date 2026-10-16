@@ -24,7 +24,7 @@ import {
   toSelectableFacts,
   type CompanyFactSource,
 } from "@/lib/data-room-chat-render";
-import type { ResearchFinding } from "@/lib/tempo-research-topics";
+import type { ResearchFinding } from "@/lib/data-room-research-topics";
 
 const TOOLS: ResearchFinding = { text: "Signed a multi-year agreement with a scheduling vendor last year.", topics: ["current_tools"] };
 const BUDGET: ResearchFinding = { text: "Finance memo cites a freeze on discretionary software spend.", topics: ["budget"] };

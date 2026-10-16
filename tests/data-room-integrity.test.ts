@@ -18,7 +18,7 @@ import {
   FACT_TOPICS,
   parseResearchFindings,
   type QuestionTopic,
-} from "../lib/tempo-research-topics";
+} from "../lib/data-room-research-topics";
 import { TEMPO_ICP } from "../scripts/config/tempo-icp";
 import { tempoDirectorySeed } from "../scripts/config/tempo-directory-seed";
 import {

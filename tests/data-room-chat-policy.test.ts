@@ -21,7 +21,7 @@ import {
   QUESTION_TOPIC_FACT_TOPICS,
   QUESTION_TOPICS,
   type ResearchFinding,
-} from "@/lib/tempo-research-topics";
+} from "@/lib/data-room-research-topics";
 
 // One finding per fact topic, in stored order, plus an untagged (older data) finding.
 const FINDINGS: ResearchFinding[] = [

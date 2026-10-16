@@ -15,7 +15,7 @@
 import type { CompanyAllowance } from "@/lib/data-room-chat-policy";
 import type { RouterAttribute, RouterDecision } from "@/lib/data-room-chat-router";
 import type { ScopedAnswer } from "@/lib/data-room-chat-scope";
-import type { ResearchFinding } from "@/lib/tempo-research-topics";
+import type { ResearchFinding } from "@/lib/data-room-research-topics";
 
 /** The reply for a company when no fact answers the question (or none is allowed). */
 export const NOTHING_FINDABLE_REPLY = "Nothing about that is publicly findable for this company.";

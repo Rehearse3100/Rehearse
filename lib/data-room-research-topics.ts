@@ -1,10 +1,10 @@
 /**
- * tempo-research-topics.ts
- * Topic tags for Tempo Data Room research findings (data). Every finding stored in
- * crm_prospect_directory.research_facts carries 1–2 fact topics; question topics
- * map to the fact topics that answer them (used by the Data Room assistant in
- * Phase 2). Read by the directory seed config, the Data Room chat route, the
- * integrity tests and the local eval.
+ * data-room-research-topics.ts
+ * Topic tags for Data Room research findings (simulation-neutral). Every finding
+ * stored in crm_prospect_directory.research_facts carries 1–2 fact topics; question
+ * topics map to the fact topics that answer them, which the Data Room assistant's
+ * router and fact policy use. Read by the directory seed config and generator, the
+ * Data Room chat route and modules, the integrity tests and the local eval.
  */
 
 // ── Fact topics ───
@@ -27,8 +27,8 @@ export type FactTopic = (typeof FACT_TOPICS)[number];
 export const FACT_TOPIC_DESCRIPTIONS: Record<FactTopic, string> = {
   current_tools: "software, systems, vendors, contracts, recent rollouts",
   budget: "spending, budget, cost pressure, freezes",
-  staffing: "hiring, cuts, turnover, front-desk staffing",
-  operations: "scheduling, phones, wait times, capacity, processes",
+  staffing: "hiring, cuts, turnover, team changes",
+  operations: "processes, hours, wait times, capacity, how work gets done",
   growth: "new locations, expansion, acquisitions",
   ownership: "owner, franchise, corporate structure, who decides",
   customer_feedback: "reviews, complaints, sentiment",

@@ -7,7 +7,7 @@
  */
 
 import { TEMPO_SIMULATION_ID } from "../../lib/constants";
-import { FACT_TOPICS, type FactTopic } from "../../lib/tempo-research-topics";
+import { FACT_TOPICS, type FactTopic } from "../../lib/data-room-research-topics";
 import type {
   FactPoolEntry,
   TempoDirectoryContentConfig,
@@ -750,7 +750,7 @@ const MERGED_RESEARCH_FACTS_BY_VERTICAL = mergeResearchFactPools(
 );
 
 /**
- * Topics for every fact-pool theme (1–2 each, from lib/tempo-research-topics.ts).
+ * Topics for every fact-pool theme (1–2 each, from lib/data-room-research-topics.ts).
  * Rules of thumb: job posts / training → staffing; reviews and forums →
  * customer_feedback (+ operations for waits, hours, check-in; + amenities for
  * rooms, parking, facilities); events, promotions, outreach and educational posts →

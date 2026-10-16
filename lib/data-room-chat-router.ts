@@ -16,7 +16,7 @@ import {
   FACT_TOPIC_DESCRIPTIONS,
   QUESTION_TOPICS,
   type QuestionTopic,
-} from "@/lib/tempo-research-topics";
+} from "@/lib/data-room-research-topics";
 import type { ChatScope } from "@/lib/data-room-chat-scope";
 
 // ── Decision shape ───

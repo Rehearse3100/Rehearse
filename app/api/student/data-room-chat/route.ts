@@ -62,7 +62,7 @@ import {
   type ScopedAnswer,
 } from "@/lib/data-room-chat-scope";
 import { createServiceClient } from "@/lib/supabase/server";
-import { parseResearchFindings } from "@/lib/tempo-research-topics";
+import { parseResearchFindings } from "@/lib/data-room-research-topics";
 
 type DataRoomChatBody = {
   attemptId?: unknown;

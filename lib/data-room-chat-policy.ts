@@ -15,7 +15,7 @@ import {
   QUESTION_TOPIC_FACT_TOPICS,
   type QuestionTopic,
   type ResearchFinding,
-} from "@/lib/tempo-research-topics";
+} from "@/lib/data-room-research-topics";
 import type { ChatScope } from "@/lib/data-room-chat-scope";
 import { scopeKindOf, type RouterIntent } from "@/lib/data-room-chat-router";
 

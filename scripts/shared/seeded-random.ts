@@ -2,7 +2,8 @@
  * seeded-random.ts
  * Deterministic random numbers for the seed scripts: the same seed always gives the
  * same sequence, so a generator run is reproducible. Used by
- * generate-prospect-directory.ts (seeded from its config) and the integrity tests.
+ * generate-prospect-directory.ts (seeded from the secret TEMPO_DIRECTORY_SEED env
+ * var, never from the config) and the integrity tests (their own fixed test seeds).
  */
 
 /**

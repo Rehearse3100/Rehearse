@@ -16,7 +16,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { MAX_SHARED_FINDINGS } from "../lib/data-room-chat-policy";
-import { QUESTION_TOPIC_FACT_TOPICS, type QuestionTopic } from "../lib/tempo-research-topics";
+import { QUESTION_TOPIC_FACT_TOPICS, type QuestionTopic } from "../lib/data-room-research-topics";
 import {
   failsVisibleIcpAxis,
   scoreIcpFit,
