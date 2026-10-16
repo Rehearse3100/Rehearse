@@ -3,8 +3,9 @@
  * Extractive answers (pure): fact ids and display sentences built from stored
  * values, the findings and public facts the policy allows, the answer path per
  * router decision (compare is an overview), the renderers (overview, attribute,
- * selected facts, nothing-findable, the exact-detail intro), the router's opening
- * (every drop rule, and where it shows), and the selection call's messages (allowed
+ * selected facts, nothing-findable, the exact-detail intro), the opening sentence
+ * (its call's input: question and shown answer only, names as Company 1…; its
+ * prompt; every drop rule; where it shows), and the selection call's messages (allowed
  * findings and public facts) and reply parsing (only given ids survive, in order;
  * exact_answer).
  */
@@ -18,11 +19,15 @@ import {
   answerPathFor,
   attributeLines,
   buildCompanyFacts,
+  buildOpeningMessages,
   buildSelectionMessages,
   checkOpening,
   EXACT_DETAIL_MISSING_INTRO,
+  hasFacts,
   NOTHING_FINDABLE_REPLY,
+  OPENING_SYSTEM_PROMPT,
   overviewLines,
+  parseOpening,
   parseSelection,
   publicFacts,
   renderAnswer,
@@ -32,7 +37,7 @@ import {
   withOpening,
   type CompanyFactSource,
 } from "@/lib/data-room-chat-render";
-import { buildScopeIndex } from "@/lib/data-room-chat-scope";
+import { buildScopeIndex, type ScopedAnswer } from "@/lib/data-room-chat-scope";
 import type { ResearchFinding } from "@/lib/data-room-research-topics";
 
 const TOOLS: ResearchFinding = { text: "Signed a multi-year agreement with a scheduling vendor last year.", topics: ["current_tools"] };
@@ -192,19 +197,110 @@ describe("rendering", () => {
   });
 });
 
-describe("the router's opening sentence", () => {
+describe("the opening sentence (written from the finished answer)", () => {
   const index = buildScopeIndex([
     { id: "summit-dental", name: "Summit Dental Group", industry: "Dental" },
+    { id: "summit-outdoor", name: "Summit Outdoor Gear", industry: "Retail" },
     { id: "falcon", name: "Falcon Market", industry: "Retail" },
     { id: "maple", name: "Maple Family Dentistry", industry: "Dental" },
     { id: "cedar", name: "Cedar Grove Family Dentistry", industry: "Dental" },
     { id: "harbor", name: "Harbor Family Dentistry", industry: "Dental" },
   ]);
-  const check = (opening: string, question = "What software do they use?"): string | null =>
-    checkOpening(opening, question, index);
+  const ANSWER: ScopedAnswer = {
+    intro: "",
+    items: [
+      {
+        companyId: "summit-dental",
+        companyName: "Summit Dental Group",
+        text: "Dental · 8 locations · Front Range, CO\nSummit Dental Group runs eight clinics. Summit is growing fast.",
+      },
+      { companyId: "falcon", companyName: "Falcon Market", text: "Retail · 1 location · Denver, CO\nNo online booking." },
+    ],
+  };
+  const check = (opening: string, question = "Compare them", answer: ScopedAnswer = ANSWER): string | null =>
+    checkOpening(opening, question, answer, index);
 
-  it("keeps one short framing sentence (trimmed)", () => {
-    expect(check("  Here's what's on record about their software.  ")).toBe("Here's what's on record about their software.");
+  it("the call sees only the question and the answer text, companies as Company 1, Company 2… in answer order", () => {
+    expect(buildOpeningMessages("How does Falcon Market compare with Summit Dental Group?", ANSWER, index)).toEqual([
+      { role: "system", content: OPENING_SYSTEM_PROMPT },
+      {
+        role: "user",
+        content: [
+          "Question: How does Company 2 compare with Company 1?",
+          "",
+          "Answer:",
+          "Company 1",
+          "Dental · 8 locations · Front Range, CO",
+          "Company 1 runs eight clinics. Company 1 is growing fast.",
+          "",
+          "Company 2",
+          "Retail · 1 location · Denver, CO",
+          "No online booking.",
+        ].join("\n"),
+      },
+    ]);
+  });
+
+  it("an intro line comes first; other companies become 'another company'; a first word two shown companies share, 'a company'", () => {
+    const list: ScopedAnswer = {
+      intro: "2 companies match.",
+      items: [
+        { companyId: "summit-dental", companyName: "Summit Dental Group", text: "Dental · 8 locations · Front Range, CO" },
+        { companyId: "summit-outdoor", companyName: "Summit Outdoor Gear", text: "Retail · 2 locations · Boise, ID" },
+      ],
+    };
+    const content = buildOpeningMessages("Is Summit in Colorado, unlike Falcon Market or maple?", list, index)[1]?.content ?? "";
+    expect(content).toBe(
+      [
+        "Question: Is a company in Colorado, unlike another company or another company?",
+        "",
+        "Answer:",
+        "2 companies match.",
+        "",
+        "Company 1",
+        "Dental · 8 locations · Front Range, CO",
+        "",
+        "Company 2",
+        "Retail · 2 locations · Boise, ID",
+      ].join("\n")
+    );
+    for (const name of ["summit", "falcon", "maple", "outdoor"]) {
+      expect(content.toLowerCase(), name).not.toContain(name);
+    }
+    const exact: ScopedAnswer = {
+      intro: EXACT_DETAIL_MISSING_INTRO,
+      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: BUDGET.text }],
+    };
+    expect(buildOpeningMessages("What's their revenue?", exact, index)[1]?.content).toBe(
+      `Question: What's their revenue?\n\nAnswer:\n${EXACT_DETAIL_MISSING_INTRO}\n\nCompany 1\n${BUDGET.text}`
+    );
+  });
+
+  it("the prompt: one short sentence that may summarise the answer; no new facts, judgments or names; the call is the student's", () => {
+    for (const line of [
+      '{"opening": string}',
+      '- opening: ONE short, friendly sentence (at most 30 words) that introduces the answer. It may summarise what the answer shows (for example "Four dental companies in Colorado offer online booking.").',
+      "- Never add a fact, number or detail that isn't in the answer.",
+      '- Never judge, rank or recommend a company. Never write "better than", "the best", "recommend", "go with", "I\'d pick", "strong fit" or "good fit".',
+      '- Never name a company, and never refer to one as "Company 1", "Company 2" and so on.',
+      '- If the student asks which company is better, which one to pick, or whether one is a good prospect, say that call is theirs and the facts below can help (for example "Which one to pursue is your call; the facts below can help you compare.").',
+    ]) {
+      expect(OPENING_SYSTEM_PROMPT, line).toContain(line);
+    }
+  });
+
+  it("reads {\"opening\": string}, trimmed; anything else is empty", () => {
+    expect(parseOpening(JSON.stringify({ opening: "  Here's what's on record.  " }))).toBe("Here's what's on record.");
+    for (const raw of ["not json", "", null, undefined, JSON.stringify(["x"]), JSON.stringify({ opening: 7 }), JSON.stringify({})]) {
+      expect(parseOpening(raw), String(raw)).toBe("");
+    }
+  });
+
+  it("keeps one short sentence, including a summary of what the answer shows", () => {
+    expect(check("  Here's what's on record for both companies.  ")).toBe("Here's what's on record for both companies.");
+    expect(check("Four dental companies in Colorado offer online booking.")).toBe(
+      "Four dental companies in Colorado offer online booking."
+    );
     expect(check("Which one to pursue is your call; the facts below can help you compare.")).toBe(
       "Which one to pursue is your call; the facts below can help you compare."
     );
@@ -218,9 +314,11 @@ describe("the router's opening sentence", () => {
     expect(check("Here's what's on record\nabout their software.")).toBeNull();
   });
 
-  it("drops a ref, a full roster name, or a distinctive name word — unless the student used that word", () => {
+  it("drops a ref, a Company 1-style placeholder, a full roster name, or a distinctive name word — unless the student used that word", () => {
     expect(check("Here's what's on record about C1.")).toBeNull();
     expect(check("Here's what's on record about [C2]'s software.")).toBeNull();
+    expect(check("Company 1 runs eight clinics.")).toBeNull();
+    expect(check("Here's how company 2 compares.")).toBeNull();
     expect(check("Here's what's on record about Falcon Market.")).toBeNull();
     expect(check("Here's what's on record about maple family dentistry.")).toBeNull();
     expect(check("Here's what's on record about Summit's software.")).toBeNull();
@@ -234,9 +332,13 @@ describe("the router's opening sentence", () => {
     );
   });
 
-  it("drops a number that isn't in the student's question", () => {
+  it("drops a number that is in neither the answer nor the question", () => {
+    expect(check("Both have 8 locations or 1 location on record.")).toBe("Both have 8 locations or 1 location on record.");
     expect(check("Here are the 3 contacts on record.")).toBeNull();
     expect(check("Here are the 3 contacts on record.", "Who are the 3 contacts?")).toBe("Here are the 3 contacts on record.");
+    const list: ScopedAnswer = { intro: "27 companies match.", items: ANSWER.items };
+    expect(check("27 companies match your question.", "Which ones?", list)).toBe("27 companies match your question.");
+    expect(check("28 companies match your question.", "Which ones?", list)).toBeNull();
   });
 
   it("drops anything that judges a company", () => {
@@ -248,31 +350,38 @@ describe("the router's opening sentence", () => {
       "You should go with this one.",
       "I'd pick this one.",
       "I’d pick this one.",
+      "This looks like a strong fit.",
+      "Both could be a good fit.",
     ]) {
       expect(check(judging), judging).toBeNull();
     }
   });
 
-  it("shows above the facts, or above an intro line already there", () => {
+  it("shows above the facts, above a count line, and above the exact-detail line (which stays)", () => {
     const facts = { intro: "", items: [{ companyId: "a", companyName: "A", text: "In territory." }] };
     expect(withOpening(facts, "Here's what's on record.")).toEqual({ ...facts, intro: "Here's what's on record." });
     const list = { intro: "2 companies match.", items: facts.items };
     expect(withOpening(list, "Here's who matches.").intro).toBe("Here's who matches.\n2 companies match.");
+    const exact = { intro: EXACT_DETAIL_MISSING_INTRO, items: [{ companyId: "a", companyName: "A", text: BUDGET.text }] };
+    expect(withOpening(exact, "Revenue isn't on record, but budget facts are.").intro).toBe(
+      `Revenue isn't on record, but budget facts are.\n${EXACT_DETAIL_MISSING_INTRO}`
+    );
     expect(withOpening(facts, null)).toEqual(facts);
   });
 
-  it("never above a nothing-findable answer, the exact-detail intro, or a fixed reply", () => {
+  it("never on an answer with no facts: the nothing-findable reply or a fixed reply", () => {
     const opening = "Here's what's on record.";
     for (const answer of [
       { intro: NOTHING_FINDABLE_REPLY, items: [] },
       { intro: "", items: [{ companyId: "a", companyName: "A", text: NOTHING_FINDABLE_REPLY }] },
-      { intro: EXACT_DETAIL_MISSING_INTRO, items: [{ companyId: "a", companyName: "A", text: BUDGET.text }] },
       { intro: OFF_TOPIC_REPLY, items: [] },
       { intro: ALL_MODE_REPLY, items: [] },
       { intro: NO_FILTER_MATCHES_REPLY, items: [] },
     ]) {
+      expect(hasFacts(answer), answer.intro).toBe(false);
       expect(withOpening(answer, opening), answer.intro).toEqual(answer);
     }
+    expect(hasFacts(ANSWER)).toBe(true);
   });
 });
 

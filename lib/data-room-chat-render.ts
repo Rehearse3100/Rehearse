@@ -10,16 +10,20 @@
  * to add, and says whether any fact states the exact detail asked for (the selection
  * call's messages and reply parsing live here). Code keeps the ids that are in the
  * set it was given, and the renderers turn facts into the { intro, items } answer.
- * The only model-written text is the router's one-sentence opening, which is
- * checked here (checkOpening) and placed above the facts (withOpening; also used for
+ * The only model-written text is a one-sentence opening, written last by a separate
+ * call that sees only the question and the finished answer text (companies as
+ * "Company 1", "Company 2"…; its messages are built here), checked here
+ * (checkOpening) and placed above the facts (withOpening; also used for
  * All-companies lists). Used by POST /api/student/data-room-chat.
  */
 
 import type { CompanyAllowance } from "@/lib/data-room-chat-policy";
 import type { RouterAttribute, RouterDecision } from "@/lib/data-room-chat-router";
 import {
+  redactCompanyMentions,
   textContainsCompanyName,
   toWords,
+  type FirstWordReplacement,
   type ScopedAnswer,
   type ScopeIndex,
 } from "@/lib/data-room-chat-scope";
@@ -277,12 +281,15 @@ export function withExactDetailIntro(answer: ScopedAnswer): ScopedAnswer {
   return hasFacts(answer) ? { ...answer, intro: EXACT_DETAIL_MISSING_INTRO } : answer;
 }
 
-/** True when the answer shows at least one fact (not only nothing-findable blocks or a fixed reply). */
-function hasFacts(answer: ScopedAnswer): boolean {
+/**
+ * True when the answer shows at least one fact (a company block that isn't the
+ * nothing-findable reply). Fixed replies and the nothing-findable reply have none.
+ */
+export function hasFacts(answer: ScopedAnswer): boolean {
   return answer.items.some((item) => item.text !== NOTHING_FINDABLE_REPLY);
 }
 
-// ── Opening sentence (written by the router, checked here) ───
+// ── Opening sentence (written from the finished answer, checked here) ───
 
 /** Longest opening sentence shown. */
 export const MAX_OPENING_LENGTH = 200;
@@ -291,8 +298,105 @@ export const MAX_OPENING_LENGTH = 200;
 const MIN_DISTINCTIVE_NAME_WORD_LETTERS = 3;
 
 const REF_PATTERN = /\bC\d+\b/i;
-const JUDGMENT_PATTERN = /\b(?:better than|the best|recommend\w*|go with|i['’]?d pick|i would pick)\b/i;
+/** "Company 1"-style placeholders, as the opening call sees companies. */
+const PLACEHOLDER_PATTERN = /\bcompany\s*\d+\b/i;
+const JUDGMENT_PATTERN =
+  /\b(?:better than|the best|recommend\w*|go with|i['’]?d pick|i would pick|strong fit|good fit)\b/i;
 const NUMBER_PATTERN = /\d+/g;
+
+/** The opening call's instructions: one sentence introducing the answer it sees; no new fact, judgment or name. */
+export const OPENING_SYSTEM_PROMPT = [
+  'You write the opening sentence of an answer a student sees while researching companies in a sales-training Data Room. You are given the student\'s question and the exact answer text shown below your sentence; companies appear only as "Company 1", "Company 2" and so on. Reply with a single JSON object and nothing else:',
+  '{"opening": string}',
+  "",
+  "Rules:",
+  '- opening: ONE short, friendly sentence (at most 30 words) that introduces the answer. It may summarise what the answer shows (for example "Four dental companies in Colorado offer online booking.").',
+  "- Never add a fact, number or detail that isn't in the answer.",
+  '- Never judge, rank or recommend a company. Never write "better than", "the best", "recommend", "go with", "I\'d pick", "strong fit" or "good fit".',
+  '- Never name a company, and never refer to one as "Company 1", "Company 2" and so on.',
+  '- If the student asks which company is better, which one to pick, or whether one is a good prospect, say that call is theirs and the facts below can help (for example "Which one to pursue is your call; the facts below can help you compare.").',
+].join("\n");
+
+/** The answer as the student sees it: the intro, then each company's name over its lines. */
+function shownAnswerText(intro: string, blocks: ReadonlyArray<{ name: string; text: string }>): string {
+  return [intro, ...blocks.map((block) => `${block.name}\n${block.text}`)].filter((part) => part.length > 0).join("\n\n");
+}
+
+/** "Company 1", "Company 2"… for the answer's companies, in the order they appear. */
+function companyLabels(answer: ScopedAnswer): Map<string, string> {
+  const labels = new Map<string, string>();
+  for (const item of answer.items) {
+    if (!labels.has(item.companyId)) {
+      labels.set(item.companyId, `Company ${labels.size + 1}`);
+    }
+  }
+  return labels;
+}
+
+/**
+ * Replaces company names for the opening call: a company in the answer becomes its
+ * label, any other company "another company". An identifying first word ("Summit")
+ * becomes the company whose lines it is in (ownId), else the one answer company
+ * with that word, else "another company" (none in the answer) or "a company" (several).
+ */
+function redactForOpening(
+  text: string,
+  index: ScopeIndex,
+  labels: ReadonlyMap<string, string>,
+  ownId: string | null
+): string {
+  const firstWords: FirstWordReplacement[] = [];
+  index.firstWordIds.forEach((ids, word) => {
+    const labelled = ids.filter((id) => labels.has(id));
+    const owner = ownId !== null && ids.includes(ownId) ? ownId : labelled.length === 1 ? labelled[0] : null;
+    const replacement = owner
+      ? labels.get(owner) ?? "a company"
+      : labelled.length === 0
+        ? "another company"
+        : "a company";
+    firstWords.push({ word, replacement, caseSensitive: false });
+  });
+  return redactCompanyMentions(text, index, (companyId) => labels.get(companyId) ?? "another company", firstWords);
+}
+
+/**
+ * The opening call's messages, built once the answer is final: only the student's
+ * question and the exact answer text they will see, with company names replaced
+ * by "Company 1", "Company 2"… in the order the answer shows them. Nothing else
+ * (no finding the answer doesn't show, no answer key).
+ */
+export function buildOpeningMessages(
+  question: string,
+  answer: ScopedAnswer,
+  index: ScopeIndex
+): Array<{ role: "system" | "user"; content: string }> {
+  const labels = companyLabels(answer);
+  const shown = shownAnswerText(
+    redactForOpening(answer.intro, index, labels, null),
+    answer.items.map((item) => ({
+      name: labels.get(item.companyId) ?? "",
+      text: redactForOpening(item.text, index, labels, item.companyId),
+    }))
+  );
+  return [
+    { role: "system", content: OPENING_SYSTEM_PROMPT },
+    { role: "user", content: `Question: ${redactForOpening(question, index, labels, null)}\n\nAnswer:\n${shown}` },
+  ];
+}
+
+/** The opening call's sentence (trimmed), or "" when the reply isn't {"opening": string}. */
+export function parseOpening(raw: string | null | undefined): string {
+  try {
+    const parsed: unknown = JSON.parse(raw ?? "");
+    const opening =
+      parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>).opening
+        : undefined;
+    return typeof opening === "string" ? opening.trim() : "";
+  } catch {
+    return "";
+  }
+}
 
 /** More than one sentence: a sentence end (. ! ?) before the end of the text, or a line break. */
 function isMoreThanOneSentence(text: string): boolean {
@@ -314,19 +418,25 @@ function distinctiveNameWords(index: ScopeIndex): Set<string> {
 }
 
 /**
- * The router's opening sentence if it passes every check, else null (then no intro
- * is shown — never a fallback). Dropped when it is over 200 characters or more than
- * one sentence; mentions a ref (C1, [C1]), a full roster company name, or a
- * distinctive company-name word (words the student used in the question are
- * allowed); has a number that isn't in the question; or judges a company (better
- * than, the best, recommend, go with, I'd pick).
+ * The opening sentence if it passes every check, else null (then no opening is
+ * shown — never a fallback). Dropped when it is over 200 characters or more than
+ * one sentence; mentions a ref (C1, [C1]), a "Company 1"-style placeholder, a full
+ * roster company name, or a distinctive company-name word (words the student used
+ * in the question are allowed); has a number that isn't in the answer (as the
+ * student sees it) or the question; or judges a company (better than, the best,
+ * recommend, go with, I'd pick, strong fit, good fit).
  */
-export function checkOpening(opening: string, question: string, index: ScopeIndex): string | null {
+export function checkOpening(
+  opening: string,
+  question: string,
+  answer: ScopedAnswer,
+  index: ScopeIndex
+): string | null {
   const text = opening.trim();
   if (!text || text.length > MAX_OPENING_LENGTH || isMoreThanOneSentence(text)) {
     return null;
   }
-  if (REF_PATTERN.test(text) || JUDGMENT_PATTERN.test(text)) {
+  if (REF_PATTERN.test(text) || PLACEHOLDER_PATTERN.test(text) || JUDGMENT_PATTERN.test(text)) {
     return null;
   }
   if (index.companies.some((company) => textContainsCompanyName(index, text, company.id))) {
@@ -337,8 +447,12 @@ export function checkOpening(opening: string, question: string, index: ScopeInde
   if (toWords(text).some((word) => distinctive.has(word) && !questionWords.has(word))) {
     return null;
   }
-  const questionNumbers = new Set(question.match(NUMBER_PATTERN) ?? []);
-  if ((text.match(NUMBER_PATTERN) ?? []).some((number) => !questionNumbers.has(number))) {
+  const shown = shownAnswerText(
+    answer.intro,
+    answer.items.map((item) => ({ name: item.companyName, text: item.text }))
+  );
+  const knownNumbers = new Set([...(question.match(NUMBER_PATTERN) ?? []), ...(shown.match(NUMBER_PATTERN) ?? [])]);
+  if ((text.match(NUMBER_PATTERN) ?? []).some((number) => !knownNumbers.has(number))) {
     return null;
   }
   return text;
@@ -346,12 +460,12 @@ export function checkOpening(opening: string, question: string, index: ScopeInde
 
 /**
  * Puts the checked opening above an answer that shows facts — above the facts, or
- * above an intro line already there (e.g. "{n} companies match."). Never above a
- * nothing-findable reply or the exact-detail intro (they stay instead), nor on a
- * fixed reply with no facts (off-topic, the All-companies reply, no matches).
+ * above an intro line already there ("{n} companies match.", or the exact-detail
+ * line, which stays). Never on an answer with no facts: the nothing-findable reply
+ * or a fixed reply (off-topic, out of scope, the All-companies reply, no matches).
  */
 export function withOpening(answer: ScopedAnswer, opening: string | null): ScopedAnswer {
-  if (!opening || !hasFacts(answer) || answer.intro.startsWith(EXACT_DETAIL_MISSING_INTRO)) {
+  if (!opening || !hasFacts(answer)) {
     return answer;
   }
   return { ...answer, intro: answer.intro ? `${opening}\n${answer.intro}` : opening };

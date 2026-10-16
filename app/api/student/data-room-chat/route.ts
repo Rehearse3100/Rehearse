@@ -2,14 +2,17 @@
  * data-room-chat/route.ts
  * POST — Data Room AI Research Assistant, extractive: every answer is rendered by
  * code from stored facts; the model never writes a fact. The only model-written text
- * is the router's one-sentence opening (written without company data, checked by
- * code, shown above facts — never above a nothing-findable or fixed reply). The client sends a
+ * is a one-sentence opening, written last by its own call from the question and the
+ * finished answer text only (companies as "Company 1", "Company 2"…), checked by
+ * code and shown above the facts — never on a nothing-findable or fixed reply; if it
+ * fails or is dropped, the answer goes out unchanged. The client sends a
  * scope (1–3 company ids, or all companies) and the question; facts are loaded
  * server-side. Flow: unselected-company mention or company-names question → server
  * reply; otherwise a router call (lib/data-room-chat-router.ts; sees only the
  * redacted question, recent questions and scope kind) labels the question. All
- * companies: the model never sees company data — one validated filter runs over the
- * roster in code, and anything else gets a fixed reply (lib/data-room-chat-filter.ts).
+ * companies: no model picks or reads company data — one validated filter runs over
+ * the roster in code (only the opening call sees the finished list), and anything
+ * else gets a fixed reply (lib/data-room-chat-filter.ts).
  * One to three companies: the code-side policy (lib/data-room-chat-policy.ts)
  * decides which facts are allowed; overview, compare and attribute questions are
  * rendered with no further model call; specific research and filter questions show
@@ -35,12 +38,15 @@ import {
   answerPathFor,
   attributeLines,
   buildCompanyFacts,
+  buildOpeningMessages,
   buildSelectionMessages,
+  checkOpening,
+  hasFacts,
   overviewLines,
+  parseOpening,
   parseSelection,
   renderAnswer,
   toSelectableFacts,
-  checkOpening,
   withExactDetailIntro,
   withOpening,
   type CompanyBlock,
@@ -102,11 +108,15 @@ const ROSTER_COLUMNS =
   "id, company_name, industry, vertical, locations, metro, in_territory, size_note, online_booking, blurb, public_signals";
 
 const ROUTER_TEMPERATURE = 0;
-/** Room for the decision, an All-companies filter and the one-sentence opening. */
+/** Room for the decision and its All-companies filter. */
 const ROUTER_MAX_TOKENS = 300;
 const SELECTION_TEMPERATURE = 0;
 /** Room for every fact id of up to three companies. */
 const SELECTION_MAX_TOKENS = 500;
+/** A little variety in the opening's wording; the facts never come from it. */
+const OPENING_TEMPERATURE = 0.3;
+/** Room for one sentence of at most 30 words, in JSON. */
+const OPENING_MAX_TOKENS = 100;
 
 /**
  * Parses a jsonb string array defensively.
@@ -219,6 +229,38 @@ async function selectFacts(openai: OpenAI, question: string, facts: SelectableFa
     messages: buildSelectionMessages(question, facts),
   });
   return parseSelection(response.choices[0]?.message?.content, facts);
+}
+
+/**
+ * The opening call (gpt-4o, temperature 0.3, JSON), made once the answer is final
+ * and only when it shows facts: it sees the question and the answer text the
+ * student will see (companies as "Company 1"…). Its sentence goes above the answer
+ * if it passes the checks; a failed call or a dropped sentence leaves the answer
+ * unchanged.
+ */
+async function withWrittenOpening(
+  openai: OpenAI,
+  question: string,
+  answer: ScopedAnswer,
+  index: ScopeIndex
+): Promise<ScopedAnswer> {
+  if (!hasFacts(answer)) {
+    return answer;
+  }
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      temperature: OPENING_TEMPERATURE,
+      max_tokens: OPENING_MAX_TOKENS,
+      response_format: { type: "json_object" },
+      messages: buildOpeningMessages(question, answer, index),
+    });
+    const opening = parseOpening(response.choices[0]?.message?.content);
+    return withOpening(answer, checkOpening(opening, question, answer, index));
+  } catch (error) {
+    console.error("[data-room-chat] opening:", error);
+    return answer;
+  }
 }
 
 /**
@@ -337,7 +379,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     const singleCompanyId =
       scope.mode === "companies" && scope.companyIds.length === 1 ? scope.companyIds[0] : null;
     const refLabels = buildRefLabels(scopedIds);
-    const question = redactStudentText(newMessage.slice(0, 8_000), index, refLabels);
+    const openingQuestion = newMessage.slice(0, 8_000);
+    const question = redactStudentText(openingQuestion, index, refLabels);
     const openai = new OpenAI({ apiKey });
 
     // The router never sees facts or company data.
@@ -350,16 +393,12 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
 
     // All companies: one validated filter runs over the roster in code (results from
-    // the database), under the checked opening; anything else gets the fixed
-    // one-thing-at-a-time reply (no opening).
+    // the database), then the opening is written for the list; anything else gets
+    // the fixed one-thing-at-a-time reply (no opening call).
     if (scope.mode === "all") {
       const decision = await classifyQuestion(openai, routerMessages);
-      return NextResponse.json(
-        withOpening(
-          answerAllCompanies(decision, roster.map(toListCompany)),
-          checkOpening(decision.intro, newMessage, index)
-        )
-      );
+      const answer = answerAllCompanies(decision, roster.map(toListCompany));
+      return NextResponse.json(await withWrittenOpening(openai, openingQuestion, answer, index));
     }
 
     // One to three companies: the router runs alongside the data loads.
@@ -509,8 +548,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       }
     }
 
-    // The router's opening, if it passes the checks, above the facts (every path).
-    return NextResponse.json(withOpening(answer, checkOpening(decision.intro, newMessage, index)));
+    // Written last, from the finished answer; above the facts if it passes the checks (every path).
+    return NextResponse.json(await withWrittenOpening(openai, openingQuestion, answer, index));
   } catch (error) {
     console.error("[data-room-chat] unexpected:", error);
     return NextResponse.json(

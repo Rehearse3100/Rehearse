@@ -43,7 +43,6 @@ function decision(overrides: Partial<RouterDecision>): RouterDecision {
     filter: null,
     criteriaCount: 1,
     exactValue: false,
-    intro: "",
     ...overrides,
   };
 }
