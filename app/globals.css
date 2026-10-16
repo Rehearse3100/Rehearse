@@ -302,10 +302,16 @@ body {
     @apply absolute inset-0 overflow-hidden bg-black;
   }
 
+  /* Whole video inside the box (Tempo calls); the frame's black fills any empty sides. */
   .call-persona-video {
-    @apply absolute inset-0 block h-full w-full object-cover;
+    @apply absolute inset-0 block h-full w-full object-contain;
     transform: translateZ(0);
     backface-visibility: hidden;
+  }
+
+  /* The legacy full-screen call keeps a cover fill (no black side bars on wide screens). */
+  .call-screen-root .call-persona-video {
+    @apply object-cover;
   }
 
   .call-persona-video-gradient {
