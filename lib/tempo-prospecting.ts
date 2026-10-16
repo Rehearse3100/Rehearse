@@ -460,6 +460,28 @@ export function clearProspectingWizardFromStorage(attemptId: string): void {
 }
 
 /**
+ * Data Room AI assistant transcript key (one per attempt). It lives in
+ * localStorage until Restart clears it; earlier versions used sessionStorage.
+ */
+export const DATA_ROOM_CHAT_STORAGE_PREFIX = "tempo-data-room-chat-v2-";
+
+/**
+ * Removes the Data Room AI assistant transcript (simulation restart only), from
+ * localStorage and from the older sessionStorage copy.
+ */
+export function clearDataRoomChatFromStorage(attemptId: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.removeItem(`${DATA_ROOM_CHAT_STORAGE_PREFIX}${attemptId}`);
+    window.sessionStorage.removeItem(`${DATA_ROOM_CHAT_STORAGE_PREFIX}${attemptId}`);
+  } catch {
+    /* storage unavailable: nothing was saved */
+  }
+}
+
+/**
  * Clears all prospecting wizard drafts from localStorage (Test → Stage 1).
  */
 export function clearAllProspectingWizardFromStorage(): void {

@@ -186,7 +186,8 @@ Model call: `gpt-4o`, `temperature: 0.2` (single) or `0` (multi/All), `max_token
 
 ## 4. History
 
-- The client keeps one transcript for the whole Data Room (in memory, mirrored to `sessionStorage` key `tempo-data-room-chat-v2-{attemptId}`; works without storage). Every message stores its scope.
+- The client keeps one transcript for the whole Data Room (in memory, mirrored to `localStorage` key `tempo-data-room-chat-v2-{attemptId}`; works without storage). Every message stores its scope.
+- The transcript survives leaving the Data Room, moving between Prospecting steps, reloading and closing the tab. **Only Restart clears it** (`clearDataRoomChatFromStorage` in `RestartSimulationButton`). Before 2026-10-15 it lived in `sessionStorage`; an existing copy there is still read once and removed on Restart.
 - The client sends ids and text only: `{ role: "user", content, scope }` and `{ role: "assistant", intro, items: [{ companyId, text }], scope }`. Any name it might send is ignored.
 - The server keeps only turns whose scope **exactly** matches the current scope (same mode; same set of ids), the **last 10 messages**. Assistant turns go back to the model in the same JSON/ref form, with refs re-mapped for this request; texts pass through the same name redaction as the question.
 

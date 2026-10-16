@@ -26,9 +26,7 @@ import {
   type ScopeCompany,
   type ScopeIndex,
 } from "@/lib/data-room-chat-scope";
-import { sanitizeAiResearchReply } from "@/lib/tempo-prospecting";
-
-const STORAGE_PREFIX = "tempo-data-room-chat-v2-";
+import { DATA_ROOM_CHAT_STORAGE_PREFIX, sanitizeAiResearchReply } from "@/lib/tempo-prospecting";
 
 // Dropdown motion, the same as the ☰ menu (TempoStageMenu). Open: fade in and drop
 // 4px into place (150ms ease-out); visibility isn't transitioned, so it shows at once.
@@ -150,7 +148,7 @@ function newMessageId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** Loose check for a transcript restored from sessionStorage. */
+/** Loose check for a transcript restored from browser storage. */
 function isTranscript(value: unknown): value is TranscriptMessage[] {
   return (
     Array.isArray(value) &&
@@ -166,9 +164,13 @@ function isTranscript(value: unknown): value is TranscriptMessage[] {
   );
 }
 
+// The transcript lives in localStorage until Restart clears it
+// (clearDataRoomChatFromStorage), so leaving the Data Room or reloading keeps it.
 function loadTranscript(attemptId: string): TranscriptMessage[] {
   try {
-    const raw = window.sessionStorage.getItem(`${STORAGE_PREFIX}${attemptId}`);
+    const key = `${DATA_ROOM_CHAT_STORAGE_PREFIX}${attemptId}`;
+    // Earlier versions kept it in sessionStorage; read that copy once if needed.
+    const raw = window.localStorage.getItem(key) ?? window.sessionStorage.getItem(key);
     const parsed: unknown = raw ? JSON.parse(raw) : [];
     return isTranscript(parsed) ? parsed : [];
   } catch {
@@ -178,7 +180,7 @@ function loadTranscript(attemptId: string): TranscriptMessage[] {
 
 function saveTranscript(attemptId: string, messages: TranscriptMessage[]): void {
   try {
-    window.sessionStorage.setItem(`${STORAGE_PREFIX}${attemptId}`, JSON.stringify(messages));
+    window.localStorage.setItem(`${DATA_ROOM_CHAT_STORAGE_PREFIX}${attemptId}`, JSON.stringify(messages));
   } catch {
     /* storage unavailable: the transcript still lives in memory */
   }
@@ -281,7 +283,7 @@ export function ProspectingDataRoomChat({
     [companies]
   );
 
-  // Restore after mount (sessionStorage is browser-only), then mirror every change.
+  // Restore after mount (browser storage is client-only), then mirror every change.
   useEffect(() => {
     setMessages(loadTranscript(attemptId));
     setHasRestored(true);

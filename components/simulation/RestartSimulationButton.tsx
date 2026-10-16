@@ -15,7 +15,10 @@ import { useToast } from "@/hooks/useToast";
 import { buildRestartRedirectHref } from "@/lib/simulation-restart";
 import { clearDiscoveryPrepFromStorage } from "@/lib/tempo-discovery";
 import { clearNegotiationFromStorage } from "@/lib/tempo-negotiation";
-import { clearProspectingWizardFromStorage } from "@/lib/tempo-prospecting";
+import {
+  clearDataRoomChatFromStorage,
+  clearProspectingWizardFromStorage,
+} from "@/lib/tempo-prospecting";
 import { clearPresentationFromStorage } from "@/lib/tempo-presentation";
 import type { RestartSimulationResponse } from "@/types";
 
@@ -75,6 +78,8 @@ export function RestartSimulationButton({
 
     const data = (await res.json()) as RestartSimulationResponse;
     clearProspectingWizardFromStorage(attemptId);
+    // The Data Room assistant transcript is kept across steps; only Restart clears it.
+    clearDataRoomChatFromStorage(attemptId);
     clearDiscoveryPrepFromStorage(attemptId);
     clearPresentationFromStorage(attemptId);
     clearNegotiationFromStorage(attemptId);
