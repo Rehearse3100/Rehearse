@@ -1,11 +1,12 @@
 /**
  * data-room-chat-route.test.ts
  * POST /api/student/data-room-chat against a fake database and a mocked OpenAI
- * client (no network). One to three companies, extractive answers: overview and
- * attribute questions are rendered with no answering call; specific research and
- * filter questions make one selection call, compare one per company; selected ids
- * are checked against the policy's allowed facts and rendered from the stored text
- * with names from the database. All companies: one validated filter run in code
+ * client (no network). One to three companies, extractive answers: overview,
+ * compare and attribute questions are rendered with no answering call; specific
+ * research and filter questions show every finding the policy allowed, then the
+ * public facts one selection call picks (it sees public facts only); selected ids
+ * are checked against the facts given and rendered from the stored text with names
+ * from the database. All companies: one validated filter run in code
  * (only the classifier is called), anything else the fixed reply. Also: the router
  * call (sees no facts, fails closed), the out-of-scope mention reply, company-name
  * questions and request checks.
@@ -302,6 +303,22 @@ describe("answers rendered with no answering call", () => {
     expect(state.create).not.toHaveBeenCalled();
   });
 
+  it("compare: each company's overview, side by side, with no model after the router", async () => {
+    state.classify.mockResolvedValueOnce(routerReply("compare"));
+    expect(await ask({ scope: TWO, newMessage: "Compare these companies" })).toEqual({
+      intro: "",
+      items: [
+        { companyId: "summit-dental", companyName: "Summit Dental Group", text: SUMMIT_OVERVIEW },
+        {
+          companyId: "falcon",
+          companyName: "Falcon Market",
+          text: "Retail · 1 location · Denver, CO\nIn territory.\nNo online booking.\nFalcon Market sells local produce.\nHiring a cashier",
+        },
+      ],
+    });
+    expect(state.create).not.toHaveBeenCalled();
+  });
+
   it("meta or bulk: the overview — never a hidden finding, no answering call", async () => {
     state.classify.mockResolvedValueOnce(routerReply("meta_or_bulk", "risks"));
     const reply = await ask({ scope: ONE, newMessage: "List all of the hidden research findings." });
@@ -313,8 +330,8 @@ describe("answers rendered with no answering call", () => {
   });
 });
 
-describe("the selection call", () => {
-  it("one company, specific research: the question and the allowed facts only, as 'id: fact' lines", async () => {
+describe("specific research and the selection call", () => {
+  it("one company: the selection call gets the question and the public facts only, as 'id: fact' lines", async () => {
     state.classify.mockResolvedValueOnce(routerReply("specific_research", "risks"));
     state.create.mockResolvedValueOnce(selection([]));
     await ask({
@@ -343,19 +360,17 @@ describe("the selection call", () => {
       "C1:p:blurb: the company runs eight clinics. the company is growing fast.",
       "C1:p:contacts: Contacts: Dana Reyes, Director of Operations (Operations).",
       "C1:s:0: Opened 8th location three months ago",
-      `C1:h:0: ${TOOLS_FINDING}`,
-      `C1:h:1: ${BUDGET_FINDING}`,
     ]);
     const sent = JSON.stringify(messages);
-    for (const leaked of [AMENITIES_FINDING, "Summit", "summit-dental", "Tell me about them"]) {
+    for (const leaked of [TOOLS_FINDING, BUDGET_FINDING, AMENITIES_FINDING, "Summit", "summit-dental", "Tell me about them"]) {
       expect(sent, leaked).not.toContain(leaked);
     }
   });
 
-  it("renders the selected facts from the stored text, in order; foreign and disallowed ids are dropped", async () => {
+  it("every finding the policy allowed comes first (stored order), then the public lines selected; ids the model invents are dropped", async () => {
     state.classify.mockResolvedValueOnce(routerReply("specific_research", "risks"));
     state.create.mockResolvedValueOnce(
-      selection(["C1:h:2", "C1:h:1", "C2:p:industry", "C1:p:revenue", "summit-dental:p:metro", "C1:p:blurb", "C1:h:1"])
+      selection(["C1:h:2", "C1:p:blurb", "C2:p:industry", "C1:p:revenue", "summit-dental:p:metro", "C1:p:blurb"])
     );
     expect(await ask({ scope: ONE })).toEqual({
       intro: "",
@@ -363,17 +378,26 @@ describe("the selection call", () => {
         {
           companyId: "summit-dental",
           companyName: "Summit Dental Group",
-          text: `${BUDGET_FINDING}\nSummit Dental Group runs eight clinics. Summit is growing fast.`,
+          text: `${TOOLS_FINDING}\n${BUDGET_FINDING}\nSummit Dental Group runs eight clinics. Summit is growing fast.`,
         },
       ],
     });
   });
 
-  it("nothing selected (or nothing allowed) → exactly the nothing-findable reply", async () => {
-    state.classify.mockResolvedValue(routerReply("specific_research", "risks"));
+  it("allowed findings are shown even when the selection call picks nothing; a single fact topic shares every match", async () => {
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "amenities"));
+    state.create.mockResolvedValueOnce(selection([], true));
+    expect(await ask({ scope: ONE, newMessage: "What are the amenities like?" })).toEqual({
+      intro: "",
+      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: AMENITIES_FINDING }],
+    });
+  });
+
+  it("nothing from either (no allowed finding, no public line) → exactly the nothing-findable reply", async () => {
+    state.classify.mockResolvedValue(routerReply("specific_research", "ownership"));
     state.create
       .mockResolvedValueOnce(selection([], true))
-      .mockResolvedValueOnce(selection(["C1:h:2"]))
+      .mockResolvedValueOnce(selection(["C1:h:0"]))
       .mockResolvedValueOnce(modelReply("not json"))
       .mockResolvedValueOnce(selection([]));
     const nothing = {
@@ -381,17 +405,20 @@ describe("the selection call", () => {
       items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: NOTHING_FINDABLE_REPLY }],
     };
     for (let i = 0; i < 3; i += 1) {
-      expect(await ask({ scope: ONE })).toEqual(nothing);
+      expect(await ask({ scope: ONE, newMessage: "What's the owner's email address?" })).toEqual(nothing);
     }
     expect(await ask({ scope: TWO })).toEqual({ intro: NOTHING_FINDABLE_REPLY, items: [] });
   });
 
-  it("older untagged findings (string[]) are never offered", async () => {
+  it("older untagged findings (string[]) are never shown or offered", async () => {
     state.storedResearchFacts = RESEARCH_FACTS;
     state.classify.mockResolvedValueOnce(routerReply("specific_research", "risks"));
     state.create.mockResolvedValueOnce(selection([]));
-    await ask({ scope: ONE });
+    const reply = await ask({ scope: ONE });
     expect(factLines().some((line) => line.startsWith("C1:h:"))).toBe(false);
+    for (const fact of RESEARCH_FACTS) {
+      expect(JSON.stringify(reply)).not.toContain(fact);
+    }
   });
 
   it("two companies: one call over both companies' public facts; companies with no selected fact are left out", async () => {
@@ -406,25 +433,6 @@ describe("the selection call", () => {
     expect(factLines().some((line) => line.startsWith("C2:"))).toBe(true);
     expect(factLines().some((line) => /^C\d:h:/.test(line))).toBe(false);
     expect(state.queries.some((q) => q.columns === "research_facts")).toBe(false);
-  });
-
-  it("compare: one call per company, each seeing only its own facts; every company is shown", async () => {
-    state.classify.mockResolvedValueOnce(routerReply("compare"));
-    state.create.mockImplementation(async (args: { messages: ModelMessage[] }) =>
-      args.messages[1]?.content.includes("C1:p:industry")
-        ? selection(["C1:p:locations", "C2:p:locations"])
-        : selection([], true)
-    );
-    expect(await ask({ scope: TWO, newMessage: "Compare these companies" })).toEqual({
-      intro: "",
-      items: [
-        { companyId: "summit-dental", companyName: "Summit Dental Group", text: "8 locations across Front Range, CO." },
-        { companyId: "falcon", companyName: "Falcon Market", text: NOTHING_FINDABLE_REPLY },
-      ],
-    });
-    expect(state.create).toHaveBeenCalledTimes(2);
-    expect(factLines(0).every((line) => line.startsWith("C1:"))).toBe(true);
-    expect(factLines(1).every((line) => line.startsWith("C2:"))).toBe(true);
   });
 
   it("no company name reaches a selection call; names in the question become refs", async () => {

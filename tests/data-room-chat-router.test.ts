@@ -63,6 +63,23 @@ describe("classifier input", () => {
     }
   });
 
+  it("off_topic is only for clearly unrelated questions; anything about a company is specific_research", () => {
+    expect(ROUTER_SYSTEM_PROMPT).toContain(
+      "- off_topic: only questions clearly unrelated to researching companies (for example the weather, homework or jokes)."
+    );
+    expect(ROUTER_SYSTEM_PROMPT).toContain(
+      "- Anything about a company is never off_topic: questions about its revenue, finances, email addresses, metrics or patients are specific_research with the closest topic (revenue or finances → budget; emails or people → ownership)."
+    );
+    expect(ROUTER_SYSTEM_PROMPT).not.toContain("not about researching these companies");
+    // The topics it points to are real question topics.
+    expect(
+      parseRouterReply(reply({ intent: "specific_research", topic: "budget", attribute: null, confidence: "high" })).topic
+    ).toBe("budget");
+    expect(
+      parseRouterReply(reply({ intent: "specific_research", topic: "ownership", attribute: null, confidence: "high" })).topic
+    ).toBe("ownership");
+  });
+
   it("knows the scope kind", () => {
     expect(scopeKindOf({ mode: "all" })).toBe("all");
     expect(scopeKindOf({ mode: "companies", companyIds: ["a"] })).toBe("one");

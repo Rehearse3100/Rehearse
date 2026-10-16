@@ -1,14 +1,16 @@
 /**
  * data-room-chat-render.test.ts
  * Extractive answers (pure): fact ids and display sentences built from stored
- * values, the facts the policy allows, the answer path per router decision, the
- * renderers (overview, attribute, selected facts, nothing-findable), and the
- * selection call's messages and reply parsing (only allowed ids survive, in order).
+ * values, the findings and public facts the policy allows, the answer path per
+ * router decision (compare is an overview), the renderers (overview, attribute,
+ * selected facts, nothing-findable), and the selection call's messages (public
+ * facts only) and reply parsing (only given ids survive, in order).
  */
 
 import { describe, expect, it } from "vitest";
 import {
-  allowedCompanyFacts,
+  allowedFindings,
+  allowedPublicFacts,
   answerPathFor,
   attributeLines,
   buildCompanyFacts,
@@ -95,14 +97,21 @@ describe("facts", () => {
     );
   });
 
-  it("allowed facts: public facts plus only the hidden findings the policy allows", () => {
-    expect(allowedCompanyFacts(summit, { public: true, hidden: [BUDGET] }).map((f) => f.id)).toEqual([
-      ...publicFacts(summit).map((f) => f.id),
+  it("allowed findings: only the ones the policy allows, in stored order", () => {
+    expect(allowedFindings(summit, { public: true, hidden: [BUDGET, TOOLS] }).map((f) => f.id)).toEqual([
+      "summit:h:0",
       "summit:h:1",
     ]);
-    expect(allowedCompanyFacts(summit, { public: true, hidden: [] }).some((f) => f.kind === "h")).toBe(false);
-    expect(allowedCompanyFacts(summit, { public: false, hidden: [] })).toEqual([]);
-    expect(allowedCompanyFacts(summit, undefined)).toEqual([]);
+    expect(allowedFindings(summit, { public: true, hidden: [BUDGET] }).map((f) => f.id)).toEqual(["summit:h:1"]);
+    expect(allowedFindings(summit, { public: true, hidden: [] })).toEqual([]);
+    expect(allowedFindings(summit, undefined)).toEqual([]);
+  });
+
+  it("allowed public facts: every public fact (never a finding) when the policy allows them", () => {
+    expect(allowedPublicFacts(summit, { public: true, hidden: [BUDGET] })).toEqual(publicFacts(summit));
+    expect(allowedPublicFacts(summit, { public: true, hidden: [BUDGET] }).some((f) => f.kind === "h")).toBe(false);
+    expect(allowedPublicFacts(summit, { public: false, hidden: [] })).toEqual([]);
+    expect(allowedPublicFacts(summit, undefined)).toEqual([]);
   });
 });
 
@@ -114,9 +123,9 @@ describe("answer paths", () => {
     expect(path("meta_or_bulk")).toEqual({ kind: "overview" });
     expect(path("attribute_lookup", "locations")).toEqual({ kind: "attribute", attribute: "locations" });
     expect(path("attribute_lookup")).toEqual({ kind: "overview" });
-    expect(path("specific_research")).toEqual({ kind: "select_once" });
-    expect(path("filter_list")).toEqual({ kind: "select_once" });
-    expect(path("compare")).toEqual({ kind: "select_each" });
+    expect(path("specific_research")).toEqual({ kind: "select" });
+    expect(path("filter_list")).toEqual({ kind: "select" });
+    expect(path("compare")).toEqual({ kind: "overview" });
   });
 });
 
@@ -161,29 +170,36 @@ describe("rendering", () => {
 
 describe("selection call", () => {
   const facts = toSelectableFacts(
-    allowedCompanyFacts(summit, { public: true, hidden: [BUDGET] }),
+    allowedPublicFacts(summit, { public: true, hidden: [BUDGET] }),
     "C1",
     (text) => text.replace("Summit Dental Group", "the company")
   );
 
-  it("sends the question and the allowed facts as 'id: fact' lines with ref-based ids and redacted text", () => {
+  it("sends the question and the public facts as 'id: fact' lines with ref-based ids and redacted text — never a finding", () => {
     const messages = buildSelectionMessages("What are [C1]'s risks?", facts);
     expect(messages[0]).toEqual({ role: "system", content: SELECTION_SYSTEM_PROMPT });
     const lines = messages[1]?.content.split("\n") ?? [];
     expect(lines.slice(0, 3)).toEqual(["Question: What are [C1]'s risks?", "Facts:", "C1:p:industry: Industry: Dental Group."]);
     expect(lines).toContain("C1:p:blurb: the company runs eight clinics.");
-    expect(lines).toContain(`C1:h:1: ${BUDGET.text}`);
+    expect(lines.some((line) => line.startsWith("C1:h:"))).toBe(false);
+    expect(messages[1]?.content).not.toContain(BUDGET.text);
     expect(messages[1]?.content).not.toContain(TOOLS.text);
     expect(messages[1]?.content).not.toContain("summit:");
     expect(SELECTION_SYSTEM_PROMPT).toContain('{"fact_ids": string[], "no_relevant_facts": boolean}');
   });
 
-  it("keeps only ids it was given, in the model's order; foreign, disallowed, invented and repeated ids are dropped", () => {
+  it("asks for no facts when the exact thing asked for isn't stated", () => {
+    expect(SELECTION_SYSTEM_PROMPT).toContain(
+      "- If the exact thing asked for (for example an email address, a revenue number or a count) isn't stated in the facts, return no facts rather than loosely related ones."
+    );
+  });
+
+  it("keeps only ids it was given, in the model's order; findings, foreign, invented and repeated ids are dropped", () => {
     const raw = JSON.stringify({
-      fact_ids: ["C1:h:1", "C1:h:0", "C2:p:industry", "C1:p:revenue", "summit:p:metro", "C1:p:locations", "C1:h:1", 4],
+      fact_ids: ["C1:h:1", "C1:p:blurb", "C2:p:industry", "C1:p:revenue", "summit:p:metro", "C1:p:locations", "C1:p:blurb", 4],
       no_relevant_facts: false,
     });
-    expect(parseSelection(raw, facts).map((f) => f.id)).toEqual(["summit:h:1", "summit:p:locations"]);
+    expect(parseSelection(raw, facts).map((f) => f.id)).toEqual(["summit:p:blurb", "summit:p:locations"]);
   });
 
   it("no_relevant_facts, invalid JSON or a wrong shape select nothing", () => {

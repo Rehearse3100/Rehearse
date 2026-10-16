@@ -1,13 +1,14 @@
 /**
  * data-room-chat-policy.ts
  * Code-side fact policy for the Data Room assistant (pure). From the router's
- * decision (lib/data-room-chat-router.ts) it decides which facts may be offered to a
- * selection call and shown, for each company in scope. Research findings are
- * allowed only for a specific research question about exactly one company, only
- * when their topics answer the question's topic, at most 4 in stored order;
- * findings that aren't allowed never reach the model or the student. Off-topic
- * questions get a fixed reply.
- * Used by POST /api/student/data-room-chat and the local eval.
+ * decision (lib/data-room-chat-router.ts) it decides which facts may be shown for
+ * each company in scope. Research findings are allowed only for a specific research
+ * question about exactly one company, only when their topics answer the question's
+ * topic, in stored order — at most 4 for a broad topic (risks, fit, recent
+ * changes), every match for a single fact topic; allowed findings are shown as they
+ * are, and findings that aren't allowed never reach the model or the student.
+ * Off-topic questions get a fixed reply. Used by POST /api/student/data-room-chat,
+ * the directory generator (trap placement) and the local eval.
  */
 
 import {
@@ -21,8 +22,11 @@ import { scopeKindOf, type RouterIntent } from "@/lib/data-room-chat-router";
 /** Fixed reply to an off-topic question (no facts, no further model call). */
 export const OFF_TOPIC_REPLY = "I can only help with researching these companies.";
 
-/** Most research findings shared in one answer. */
+/** Most research findings shared for one broad question topic. */
 export const MAX_SHARED_FINDINGS = 4;
+
+/** Question topics that span several fact topics: their findings are capped at MAX_SHARED_FINDINGS. */
+export const BROAD_QUESTION_TOPICS: readonly QuestionTopic[] = ["risks", "fit", "recent_changes"];
 
 export type PolicyCompany = {
   id: string;
@@ -53,8 +57,9 @@ export type PolicyInput = {
 /**
  * The facts allowed for the answer, per company:
  * - off_topic → no facts and OFF_TOPIC_REPLY;
- * - specific_research about exactly one company → public facts plus up to 4
- *   findings (stored order) whose topics answer the question's topic;
+ * - specific_research about exactly one company → public facts plus the findings
+ *   (stored order) whose topics answer the question's topic: the first 4 for a
+ *   broad topic (risks, fit, recent_changes), every one for a single fact topic;
  * - everything else (overview, attribute_lookup, compare, filter_list, and
  *   meta_or_bulk, which is answered as an overview) → public facts only.
  */
@@ -75,6 +80,8 @@ export function allowedFacts(input: PolicyInput): AllowedFacts {
     input.companies.length === 1
       ? new Set<string>(QUESTION_TOPIC_FACT_TOPICS[input.topic])
       : null;
+  const cap =
+    input.topic !== null && BROAD_QUESTION_TOPICS.includes(input.topic) ? MAX_SHARED_FINDINGS : Infinity;
 
   return {
     reply: null,
@@ -86,7 +93,7 @@ export function allowedFacts(input: PolicyInput): AllowedFacts {
           hidden: answeringTopics
             ? company.findings
                 .filter((finding) => finding.topics.some((topic) => answeringTopics.has(topic)))
-                .slice(0, MAX_SHARED_FINDINGS)
+                .slice(0, cap)
             : [],
         },
       ])

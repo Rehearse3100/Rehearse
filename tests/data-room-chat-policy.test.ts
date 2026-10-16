@@ -2,12 +2,18 @@
  * data-room-chat-policy.test.ts
  * Data Room fact policy (pure), table-tested over every intent × scope kind × topic:
  * findings only for specific_research about exactly one company, only when their
- * topics answer the question's topic, at most 4 in stored order; off_topic gets the
- * fixed reply and no facts; everything else gets public facts only.
+ * topics answer the question's topic, in stored order — at most 4 for a broad topic
+ * (risks, fit, recent_changes), every match for a single fact topic; off_topic gets
+ * the fixed reply and no facts; everything else gets public facts only.
  */
 
 import { describe, expect, it } from "vitest";
-import { allowedFacts, MAX_SHARED_FINDINGS, OFF_TOPIC_REPLY } from "@/lib/data-room-chat-policy";
+import {
+  allowedFacts,
+  BROAD_QUESTION_TOPICS,
+  MAX_SHARED_FINDINGS,
+  OFF_TOPIC_REPLY,
+} from "@/lib/data-room-chat-policy";
 import { ROUTER_INTENTS } from "@/lib/data-room-chat-router";
 import type { ChatScope } from "@/lib/data-room-chat-scope";
 import {
@@ -59,10 +65,10 @@ describe("allowedFacts table (intent × scope kind × topic)", () => {
               continue;
             }
             const answering = new Set<string>(QUESTION_TOPIC_FACT_TOPICS[topic]);
-            const expected = FINDINGS.filter((f) => f.topics.some((t) => answering.has(t))).slice(
-              0,
-              MAX_SHARED_FINDINGS
-            );
+            const matching = FINDINGS.filter((f) => f.topics.some((t) => answering.has(t)));
+            const expected = BROAD_QUESTION_TOPICS.includes(topic)
+              ? matching.slice(0, MAX_SHARED_FINDINGS)
+              : matching;
             expect(allowance?.hidden).toEqual(expected);
             expect(allowance?.hidden.length).toBeGreaterThan(0);
           }
@@ -88,6 +94,16 @@ describe("allowedFacts details", () => {
       "staffing finding",
       "operations finding",
     ]);
+  });
+
+  it("the cap applies only to broad topics: a single fact topic shares every matching finding", () => {
+    const staffing = Array.from({ length: 6 }, (_, i) => ({ text: `staffing ${i}`, topics: ["staffing" as const] }));
+    const share = (topic: "staffing" | "risks"): string[] =>
+      allowedFacts({ intent: "specific_research", topic, scope: one, companies: [{ id: "a", findings: staffing }] })
+        .companies.a?.hidden.map((f) => f.text) ?? [];
+    expect(share("staffing")).toEqual(staffing.map((f) => f.text));
+    expect(share("risks")).toEqual(staffing.slice(0, MAX_SHARED_FINDINGS).map((f) => f.text));
+    expect(BROAD_QUESTION_TOPICS).toEqual(["risks", "fit", "recent_changes"]);
   });
 
   it("a specific topic shares only findings tagged with it; untagged findings are never shared", () => {

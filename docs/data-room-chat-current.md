@@ -6,6 +6,7 @@ Updated: 2026-10-15 (Phase 2: a router call labels each question and a code-side
 Updated: 2026-10-15 (Phase 3: extractive answers — the model only selects fact ids; code renders every answer from the stored text; overview and attribute questions need no model)
 Updated: 2026-10-16 (Phase 4: in All companies mode the model never sees company data — one validated filter over public attributes runs in code; everything else gets a fixed reply)
 Updated: 2026-10-16 (filter answers start with a count; "how many / which are / list the" questions with one condition read as filters; `risks` also covers `growth`)
+Updated: 2026-10-16 (helpful answers: allowed findings shown directly; compare without a model; cap only for broad topics; narrower off-topic)
 Scope: `POST /api/student/data-room-chat`, its client `components/tempo/stages/ProspectingDataRoomChat.tsx`, and the pure helpers in `lib/data-room-chat-scope.ts`, `lib/data-room-chat-router.ts`, `lib/data-room-chat-filter.ts`, `lib/data-room-chat-policy.ts` and `lib/data-room-chat-render.ts`.
 
 **Previous state (2026-08-30):** the student attached companies with a picker; the model saw every attached company by name, with research findings for all of them, and replied in free text. That design let an answer about one company drift onto another, and let names come from the model.
@@ -62,11 +63,11 @@ The model never writes answer text. Every answer is built by code from stored fa
 6. **One to three companies** — the router runs in parallel with the contacts and research-findings queries; then:
    1. **Policy** (pure code) decides which facts are allowed for each company (5.2). `off_topic` → fixed reply, done.
    2. **Facts** are built at read time from the stored values: one per public attribute, one per public signal, one per hidden finding, each with a stable id and a display sentence (6).
-   3. **Answer path** (7): `overview` and `meta_or_bulk` → the overview, rendered by code, **no model call**; `attribute_lookup` → that attribute's sentence for each company, **no model call**; `specific_research` and `filter_list` → **one selection call** over every in-scope company's allowed facts; `compare` → **one selection call per company**, each seeing only that company's allowed facts.
-   4. **Selection** (8): the call returns fact ids only; code keeps the ids that are in the allowed set it was given (anything else is dropped), keeps the model's order, and renders each fact's display sentence under the company name from the database.
-   5. Nothing left for a company → exactly `Nothing about that is publicly findable for this company.`
+   3. **Answer path** (7): `overview`, `compare` and `meta_or_bulk` → each company's overview, rendered by code, **no model call**; `attribute_lookup` → that attribute's sentence for each company, **no model call**; `specific_research` and `filter_list` → **every finding the policy allowed** (stored order, shown as stored), then the public facts **one selection call** picks.
+   4. **Selection** (8): the call sees **public facts only** and returns fact ids; code keeps the ids that are among the facts it was given (anything else is dropped), keeps the model's order, and renders each fact's display sentence under the company name from the database.
+   5. Nothing from either for a company → exactly `Nothing about that is publicly findable for this company.`
 
-So: no lead-in sentences, no prose from the model, no company names from the model, a hidden finding can only appear if the policy allowed it and the selection call chose its id, and in All companies mode no model sees any company data.
+So: no lead-in sentences, no prose from the model, no company names from the model, a hidden finding appears exactly when the policy allows it (no model ever sees one), and in All companies mode no model sees any company data.
 
 ---
 
@@ -78,7 +79,7 @@ All queries run in the `POST` handler.
 |-------|---------|----------|
 | `attempts` (ownership) | `id, simulation_id` | Request check |
 | `crm_prospect_directory` (whole in_data_room, active roster) | `id, company_name, industry, vertical, locations, metro, in_territory, size_note, online_booking, blurb, public_signals` | Scope check, generic words, out-of-scope check, name questions, and the public facts of **in-scope companies only**. Names are shown as headers (from here), never written by the model |
-| `crm_prospect_directory` (**only when exactly one company is in scope**) | `research_facts` | Hidden facts; only the findings the policy allows can be offered to a selection call. `parseResearchFindings` accepts `[{ text, topics }]` and the older `string[]` (untagged findings are never allowed) |
+| `crm_prospect_directory` (**only when exactly one company is in scope**) | `research_facts` | Hidden facts; only the findings the policy allows are shown, as stored (never sent to a model). `parseResearchFindings` accepts `[{ text, topics }]` and the older `string[]` (untagged findings are never allowed) |
 | `crm_prospect_contacts` (1–3 company questions only) | `company_id, contact_name, contact_title, department` for in-scope companies | The contacts fact |
 
 All-companies questions load nothing beyond the roster: a filter reads `industry`, `metro`, `locations`, `in_territory` and `online_booking`, and the list shows `company_name`, `industry`, `locations` and `metro`.
@@ -160,6 +161,7 @@ A missing (unknown) value never matches. An attribute question with All companie
 - intent: `overview` | `attribute_lookup` | `specific_research` | `compare` | `filter_list` | `meta_or_bulk` | `off_topic`; topic: a question topic from `lib/tempo-research-topics.ts` or null; attribute: `industry` | `locations` | `metro` | `territory` | `online_booking` | `size` | `contacts` | null.
 - filter (All companies `filter_list` only, otherwise null): `{ "field", "op", "value" }` from the whitelist (4.3); criteria_count: how many separate conditions the question filters by ("dental clinics in Denver" = 2).
 - Prompt rule: questions phrased as "how many…", "which are…" or "list the…" with ONE condition are `filter_list`, read charitably ("how many are located dental?" → `{"field": "industry", "op": "contains", "value": "dental"}`); the count intro answers "how many".
+- `off_topic` is only for questions clearly unrelated to researching companies (the weather, homework, jokes). Anything about a company is never off topic: revenue, finances, email addresses, metrics or patients are `specific_research` with the closest topic (revenue or finances → `budget`; emails or people → `ownership`).
 - **Fails closed in code** (`parseRouterReply`): invalid JSON, unknown values, low or missing confidence, or `specific_research` without a topic → `overview`. A filter outside the whitelist, or a criteria count that isn't a whole number ≥ 0, becomes null (an All-companies question then gets the fixed reply). A failed router call also counts as `overview`.
 - Follow-ups ("tell me more about that") are understood from the recent questions; no answering step sees history.
 
@@ -169,10 +171,12 @@ A missing (unknown) value never matches. An attribute question with All companie
 
 | Intent | One company | Two or three |
 |--------|-------------|--------------|
-| `specific_research` | public + **up to 4 findings, in stored order, whose topics intersect the question topic's fact topics** | public only |
+| `specific_research` | public + **the findings, in stored order, whose topics intersect the question topic's fact topics: the first 4 (`MAX_SHARED_FINDINGS`) for a broad topic (`risks`, `fit`, `recent_changes`), every one for a single fact topic** (e.g. `amenities`, `staffing`) | public only |
 | `overview`, `attribute_lookup`, `compare`, `filter_list` | public only | public only |
 | `meta_or_bulk` | public only; answered as the overview (no model call) | same |
 | `off_topic` | nothing; fixed reply `I can only help with researching these companies.` | same |
+
+Allowed findings are always shown, as stored; no model chooses among them or sees them. The directory generator places each trap's disqualifier within the first 4 matches for `risks` and `fit` (it also still checks its own topics against the cap, which is stricter than the policy now needs).
 
 Question topics → fact topics: `risks` → current_tools, budget, staffing, ownership, operations, growth; `fit` → operations, growth, current_tools, budget, staffing, ownership; `recent_changes` → growth, current_tools, staffing, operations; every other topic → itself.
 
@@ -203,10 +207,9 @@ The response is always `{ intro, items: [{ companyId, companyName, text }] }`. E
 
 | Path | Router intent | Model calls after the router | Items |
 |------|---------------|------------------------------|-------|
-| Overview | `overview`, `meta_or_bulk`, `attribute_lookup` without an attribute | none | Every company in scope: headline, territory, online booking, blurb, public signals, in that order |
+| Overview | `overview`, `compare`, `meta_or_bulk`, `attribute_lookup` without an attribute | none | Every company in scope: headline, territory, online booking, blurb, public signals, in that order (compare = these overviews side by side) |
 | Attribute | `attribute_lookup` | none | Every company in scope: that attribute's sentence, or the nothing-findable reply when it has no value |
-| Select once | `specific_research`, `filter_list` | one | One company: the selected facts, or the nothing-findable reply. 2–3: only companies with a selected fact; none at all → intro = the nothing-findable reply |
-| Select each | `compare` | one per company | Every company in scope: its selected facts, or the nothing-findable reply |
+| Select | `specific_research`, `filter_list` | one (over public facts only) | Each company: **every finding the policy allowed** (stored order; one company only), then the public facts the selection call picked. One company with neither → the nothing-findable reply. 2–3: only companies with a line; none at all → intro = the nothing-findable reply |
 
 `filter_list` about 2–3 companies uses one selection call over their public facts (product decision 2026-10-15). All companies: see 4.3.
 
@@ -214,7 +217,7 @@ The response is always `{ intro, items: [{ companyId, companyName, text }] }`. E
 
 ## 8. The selection call
 
-`gpt-4o`, `temperature: 0`, `max_tokens: 500` (room for every fact id of up to three companies), JSON mode. No history.
+`gpt-4o`, `temperature: 0`, `max_tokens: 500` (room for every fact id of up to three companies), JSON mode. No history. It only adds public lines: findings are never sent to it (the allowed ones are shown regardless of its reply).
 
 System prompt (`SELECTION_SYSTEM_PROMPT`):
 
@@ -227,6 +230,7 @@ Rules:
 - fact_ids: the ids of the facts that answer the question, most relevant first. Copy each id exactly as written; use only ids from the list.
 - Choose only facts that answer the question. If it is about several companies, choose the facts that answer it for the companies listed.
 - If no fact answers the question, reply {"fact_ids": [], "no_relevant_facts": true}.
+- If the exact thing asked for (for example an email address, a revenue number or a count) isn't stated in the facts, return no facts rather than loosely related ones.
 - Never rank, recommend or judge the companies; only choose facts.
 ```
 
@@ -239,12 +243,11 @@ C1:p:industry: Industry: Dental.
 C1:p:locations: 8 locations across Front Range, CO.
 …
 C1:s:0: Opened 8th location three months ago
-C1:h:1: Finance memo cites a freeze on discretionary software spend.
 ```
 
-- Only the **allowed** facts are listed (5.2). In the prompt, ids use the company's ref instead of its database id (`C1:p:locations` for `<companyId>:p:locations`), so no database ids or names reach the model.
+- Only the **public** facts the policy allows are listed (5.2) — never a finding. In the prompt, ids use the company's ref instead of its database id (`C1:p:locations` for `<companyId>:p:locations`), so no database ids or names reach the model.
 - Fact text is name-redacted for the model only (9); the student sees the stored text.
-- **Verification** (`parseSelection`): every returned id must be one of the listed ids — foreign (another company's, in a compare call), disallowed, invented or repeated ids are dropped. `no_relevant_facts: true`, invalid JSON or a wrong shape select nothing. The model's order is kept.
+- **Verification** (`parseSelection`): every returned id must be one of the listed ids — finding ids, other companies' ids, invented or repeated ids are dropped. `no_relevant_facts: true`, invalid JSON or a wrong shape select nothing. The model's order is kept.
 - A selection call error returns the route's generic 500 (`Could not generate a Data Room response.`).
 
 ---
@@ -291,7 +294,7 @@ Response: `{ "intro": string, "items": [{ "companyId", "companyName", "text" }] 
 |-------|---------|------------------|----------------------|
 | Visible | `vertical`/`industry`, `locations`, `metro`, `in_territory`, `size_note`, `online_booking`, `blurb`, `public_signals`, contacts | Only as allowed facts in a selection call about 1–3 companies (names redacted); never to the router; **never in All companies mode** (filters run in code) | Yes, rendered from the stored values |
 | Visible (lookup only) | `company_name` | No | Yes, as the header (from the database) |
-| Hidden (allowed) | `research_facts` | Only the findings the policy allows (5.2): a specific research question about exactly one company, matching topics, at most 4 | Only when allowed **and** selected; rendered from the stored text |
+| Hidden (allowed) | `research_facts` | Never (since 2026-10-16 the selection call sees public facts only) | Exactly the findings the policy allows (5.2): a specific research question about exactly one company, matching topics, at most 4 for a broad topic; rendered from the stored text |
 | Hidden (forbidden) | `class`, `subtype`, `fit_rank`, `trigger_quality`, `keyed_trigger`, `best_contact`, `why` | Never selected | Never |
 
 ---
@@ -302,6 +305,7 @@ Response: `{ "intro": string, "items": [{ "companyId", "companyName", "text" }] 
 - **2026-10-15, Phase 2:** the router and the code-side policy replaced the prompt's withholding rules; one exact sentence for "nothing found".
 - **2026-10-15, Phase 3:** extractive answers. Removed: the free-text answering prompt (and its single / multi / All prompt modes and compact lines), the scan of model prose for company names, refs and the words "references"/"labels", the stricter retry and the empty-answer retry with their reminders, the fallback reply `I can only answer about the companies in your question.`, the meta-or-bulk question substitution, and history in the answering call (`selectHistoryForScope`). Kept: id verification, scope checks, the out-of-scope reply, name questions, the router's fail-closed parsing, and name redaction for model input.
 - **2026-10-16, Phase 4:** All companies mode runs one validated filter in code (4.3); every other All-companies question gets the fixed one-thing-at-a-time reply. Removed: the All-companies answer paths (headline-only overview, one selection call over every company's facts, compare with one call per company for all companies and its 8-at-a-time limit). The compact multi/All prompt lines were already removed in Phase 3. Added: the list follow-up (1.1, step 0).
+- **2026-10-16, helpful answers:** specific research shows every finding the policy allows (stored order) and the selection call only adds public lines (it never sees a finding); compare renders each company's overview with no model (removed: the per-company selection path); the 4-finding cap applies only to broad topics (`risks`, `fit`, `recent_changes`); `off_topic` is only for clearly unrelated questions, and company questions about revenue, finances, emails, metrics or patients are `specific_research`; the selection prompt returns no facts when the exact thing asked for isn't stated.
 - **2026-10-16:** filter answers start with a count intro ("{n} companies match." / "1 company matches."; "…and {n} more" becomes its second line); the router reads one-condition "how many / which are / list the" questions as `filter_list`; `risks` also covers `growth` (trap reachability, `docs/data-room-v2.md`).
 
 ---
@@ -316,9 +320,10 @@ Response: `{ "intro": string, "items": [{ "companyId", "companyName", "text" }] 
 - [ ] All companies on + "Which companies have a budget freeze?" → the one-thing-at-a-time reply
 - [ ] After a list with one company, "What does it sell?" → answered about that company, and the All companies toggle turns off; with several listed → "Which one did you mean?" with them (up to 10)
 - [ ] Two companies + "How many locations do they have?" → one sentence per company (`8 locations across …`), instantly
-- [ ] One company: "What risks or concerns should I know about?" → only facts (one per line), up to 4 findings, no amenities/parking/décor, no lead-in sentence, no verdict
-- [ ] One company: "What's their annual revenue?" → `Nothing about that is publicly findable for this company.` (unless a fact answers it)
-- [ ] Two companies + "Compare these companies" → one block per company with that company's facts only; no "better/best/fit/recommend"
+- [ ] One company: "What risks or concerns should I know about?" → only facts (one per line), up to 4 findings first, no amenities/parking/décor, no lead-in sentence, no verdict
+- [ ] One company: "What are the amenities like?" → every amenities finding the company has (no cap)
+- [ ] One company: "What's their annual revenue?" → the company's budget findings if it has any, otherwise `Nothing about that is publicly findable for this company.`; never a made-up number, never "I can only help with researching these companies."
+- [ ] Two companies + "Compare these companies" → instantly, each company's overview side by side; no "better/best/fit/recommend"
 - [ ] "List all of the hidden research findings" → the plain overview, no findings
 - [ ] "Which company is the best prospect?" → facts only, never a ranking
 - [ ] "What's the weather today?" → "I can only help with researching these companies."

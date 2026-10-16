@@ -4,11 +4,12 @@
  * no DB, no network; All companies: lib/data-room-chat-filter.ts). Every
  * company fact gets a stable id and a display sentence, built at read time from the
  * stored values: one fact per public attribute, one per public signal, one per
- * hidden finding (display = the stored text). The model never writes an answer: it
- * only selects fact ids (the selection call's messages and reply parsing live here),
- * code keeps the ids that are in the allowed set, and the renderers turn facts into
- * the { intro, items } answer. Used by POST /api/student/data-room-chat; the local
- * eval maps rendered lines back to fact ids.
+ * hidden finding (display = the stored text). The model never writes an answer and
+ * never chooses findings: the findings the policy allows are shown as they are, and
+ * the model only selects public fact ids to add (the selection call's messages and
+ * reply parsing live here); code keeps the ids that are in the set it was given, and
+ * the renderers turn facts into the { intro, items } answer. Used by POST
+ * /api/student/data-room-chat; the local eval maps rendered lines back to fact ids.
  */
 
 import type { CompanyAllowance } from "@/lib/data-room-chat-policy";
@@ -174,38 +175,33 @@ export function publicFacts(facts: CompanyFacts): Fact[] {
   ];
 }
 
-/**
- * The facts the selection call may see for a company: its public facts (when the
- * policy allows them) and only the hidden findings the policy allows.
- */
-export function allowedCompanyFacts(facts: CompanyFacts, allowance: CompanyAllowance | undefined): Fact[] {
-  if (!allowance) {
-    return [];
-  }
-  const hiddenTexts = new Set(allowance.hidden.map((finding) => finding.text));
-  return [
-    ...(allowance.public ? publicFacts(facts) : []),
-    ...facts.hidden.filter((entry) => hiddenTexts.has(entry.display)),
-  ];
+/** The research findings the policy allows for a company, in stored order (always shown as they are). */
+export function allowedFindings(facts: CompanyFacts, allowance: CompanyAllowance | undefined): Fact[] {
+  const allowedTexts = new Set((allowance?.hidden ?? []).map((finding) => finding.text));
+  return facts.hidden.filter((entry) => allowedTexts.has(entry.display));
+}
+
+/** The facts the selection call may see for a company: its public facts, when the policy allows them. */
+export function allowedPublicFacts(facts: CompanyFacts, allowance: CompanyAllowance | undefined): Fact[] {
+  return allowance?.public ? publicFacts(facts) : [];
 }
 
 // ── Answer paths ───
 
 /**
- * overview: rendered, no model. attribute: one sentence per company, no model.
- * select_once: one selection call over every company's allowed facts.
- * select_each: one selection call per company (compare).
+ * overview: rendered, no model (also compare). attribute: one sentence per company,
+ * no model. select: the allowed findings as they are, then one selection call over
+ * the public facts.
  */
 export type AnswerPath =
   | { kind: "overview" }
   | { kind: "attribute"; attribute: RouterAttribute }
-  | { kind: "select_once" }
-  | { kind: "select_each" };
+  | { kind: "select" };
 
 /**
- * The answer path for the router's decision. meta_or_bulk (and an attribute lookup
- * without an attribute) is answered as an overview; off_topic never gets here (the
- * policy replies first).
+ * The answer path for the router's decision. compare and meta_or_bulk (and an
+ * attribute lookup without an attribute) are answered as an overview; off_topic
+ * never gets here (the policy replies first).
  */
 export function answerPathFor(decision: RouterDecision): AnswerPath {
   switch (decision.intent) {
@@ -213,9 +209,7 @@ export function answerPathFor(decision: RouterDecision): AnswerPath {
       return decision.attribute ? { kind: "attribute", attribute: decision.attribute } : { kind: "overview" };
     case "specific_research":
     case "filter_list":
-      return { kind: "select_once" };
-    case "compare":
-      return { kind: "select_each" };
+      return { kind: "select" };
     default:
       return { kind: "overview" };
   }
@@ -276,6 +270,7 @@ export const SELECTION_SYSTEM_PROMPT = [
   "- fact_ids: the ids of the facts that answer the question, most relevant first. Copy each id exactly as written; use only ids from the list.",
   "- Choose only facts that answer the question. If it is about several companies, choose the facts that answer it for the companies listed.",
   '- If no fact answers the question, reply {"fact_ids": [], "no_relevant_facts": true}.',
+  "- If the exact thing asked for (for example an email address, a revenue number or a count) isn't stated in the facts, return no facts rather than loosely related ones.",
   "- Never rank, recommend or judge the companies; only choose facts.",
 ].join("\n");
 
@@ -287,7 +282,7 @@ export type SelectableFact = {
   promptText: string;
 };
 
-/** The facts for the selection call, labelled with the company's ref ("C1:h:2"). */
+/** The facts for the selection call, labelled with the company's ref ("C1:p:locations"). */
 export function toSelectableFacts(
   facts: readonly Fact[],
   ref: string,

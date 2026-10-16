@@ -9,12 +9,13 @@
  * companies: the model never sees company data — one validated filter runs over the
  * roster in code, and anything else gets a fixed reply (lib/data-room-chat-filter.ts).
  * One to three companies: the code-side policy (lib/data-room-chat-policy.ts)
- * decides which facts are allowed; overview and attribute questions are rendered
- * with no further model call; specific research and filter questions make one
- * selection call, compare questions one per company, and each selection call
- * returns fact ids only, checked against the allowed set and rendered from the
- * stored text (lib/data-room-chat-render.ts). Company names in answers come from
- * the database; the model sees companies only as refs ([C1]…).
+ * decides which facts are allowed; overview, compare and attribute questions are
+ * rendered with no further model call; specific research and filter questions show
+ * every finding the policy allowed (stored order) plus the public facts one
+ * selection call picks — it sees public facts only and returns fact ids, checked
+ * against the facts it was given and rendered from the stored text
+ * (lib/data-room-chat-render.ts). Company names in answers come from the database;
+ * the model sees companies only as refs ([C1]…).
  */
 
 import { NextResponse } from "next/server";
@@ -23,7 +24,8 @@ import { requireStudentApi } from "@/lib/api-auth";
 import { answerAllCompanies, type FilterCompany } from "@/lib/data-room-chat-filter";
 import { allowedFacts } from "@/lib/data-room-chat-policy";
 import {
-  allowedCompanyFacts,
+  allowedFindings,
+  allowedPublicFacts,
   answerPathFor,
   attributeLines,
   buildCompanyFacts,
@@ -436,9 +438,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       companyName: company.name,
       lines,
     });
-    const selectable = (company: ScopedCompany): SelectableFact[] =>
+    // The selection call sees public facts only (allowed findings are shown as they are).
+    const selectablePublic = (company: ScopedCompany): SelectableFact[] =>
       toSelectableFacts(
-        allowedCompanyFacts(company.facts, allowed.companies[company.id]),
+        allowedPublicFacts(company.facts, allowed.companies[company.id]),
         refLabels.get(company.id) ?? "C1",
         (text) => redactFactText(text, index, company)
       );
@@ -453,32 +456,23 @@ export async function POST(request: Request): Promise<NextResponse> {
         );
         break;
       }
-      case "select_once": {
-        const selected = await selectFacts(openai, question, companies.flatMap(selectable));
+      case "select": {
+        // Every finding the policy allowed (stored order), then the public lines the
+        // selection call adds; nothing from either → the nothing-findable reply.
+        const selected = await selectFacts(openai, question, companies.flatMap(selectablePublic));
         answer = renderAnswer(
           companies.map((company) =>
-            block(
-              company,
-              selected.filter((entry) => entry.companyId === company.id).map((entry) => entry.display)
-            )
+            block(company, [
+              ...allowedFindings(company.facts, allowed.companies[company.id]).map((entry) => entry.display),
+              ...selected.filter((entry) => entry.companyId === company.id).map((entry) => entry.display),
+            ])
           ),
           singleCompanyId !== null
         );
         break;
       }
-      case "select_each": {
-        // Each call sees only that company's allowed facts.
-        const selections = await Promise.all(
-          companies.map((company) => selectFacts(openai, question, selectable(company)))
-        );
-        answer = renderAnswer(
-          companies.map((company, i) => block(company, (selections[i] ?? []).map((entry) => entry.display))),
-          true
-        );
-        break;
-      }
       default: {
-        // Overview (and meta or bulk requests): no model call.
+        // Overview, compare (each company's overview) and meta or bulk requests: no model call.
         answer = renderAnswer(
           companies.map((company) => block(company, overviewLines(company.facts))),
           true
