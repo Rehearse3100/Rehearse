@@ -501,12 +501,10 @@ export function ProspectingDataRoom({
             {selected.contacts.length > 0 ? (
               <section className={CARD_CLASS}>
                 <h4 className="font-headline-md text-headline-md text-on-surface mb-3">Contacts</h4>
-                <ul className="space-y-md">
+                {/* Plain text, no boxes (boxed rows read as buttons). */}
+                <ul className="space-y-3">
                   {selected.contacts.map((contact) => (
-                    <li
-                      key={`${contact.name}-${contact.title}`}
-                      className="border border-outline-variant/60 rounded-lg p-md"
-                    >
+                    <li key={`${contact.name}-${contact.title}`}>
                       <p className="font-label-md text-label-md text-on-surface">{contact.name}</p>
                       <p className="text-body-md text-on-surface-variant">
                         {contact.title}
