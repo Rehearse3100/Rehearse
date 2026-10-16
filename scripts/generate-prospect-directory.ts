@@ -2,6 +2,9 @@
  * generate-prospect-directory.ts
  * Reusable prospect-directory seeder — simulation content lives in config files.
  * Wipes and regenerates crm_prospect_directory + contacts for one simulation_id.
+ * Reproducible: all randomness comes from config.seed (same seed → same output).
+ * Research findings are stored as [{ text, topics }]: every finding carries 1–2
+ * topics from config.factTopics, and no finding text is shared by two companies.
  * Runnable via: npx tsx scripts/generate-prospect-directory.ts
  */
 
@@ -14,6 +17,7 @@ import {
   type IcpFitCompanyInput,
 } from "./config/tempo-icp";
 import { randomPerson } from "./shared/person-name-pool";
+import { mulberry32 } from "./shared/seeded-random";
 
 // ── Contact + company shapes ─────────────────────────────────────────────────
 
@@ -50,6 +54,12 @@ export type TrapSubtype =
   | "contracting"
   | "phantom_fit";
 
+/** One research finding as stored in research_facts: its text and 1–2 topics. */
+export type ResearchFinding = {
+  text: string;
+  topics: string[];
+};
+
 export interface DesignedCompany {
   companyName: string;
   vertical: string;
@@ -60,7 +70,7 @@ export interface DesignedCompany {
   onlineBooking: boolean;
   blurb: string;
   publicSignals: string[];
-  researchFacts: string[];
+  researchFacts: ResearchFinding[];
   class: CompanyClass;
   subtype: string | null;
   fitRank: number | null;
@@ -121,6 +131,14 @@ export type TemplateDensityConfig<TRecord> = {
 
 export interface TempoDirectorySeedConfig {
   simulationId: string;
+  /** Seed for every random choice; the same seed always produces the same directory. */
+  seed: number;
+  /** Topic ids a research finding may carry. */
+  factTopics: readonly string[];
+  /** 1–2 topics for every fact-pool theme (researchFactsByVertical[*].theme). */
+  themeToTopics: Record<string, string[]>;
+  /** 1–2 topics for each trap subtype's disqualifier finding. */
+  disqualifierTopicsBySubtype: Record<TrapSubtype, string[]>;
   authoredCompanies: DesignedCompany[];
   generationPlan: {
     strong_fit: number;
@@ -180,7 +198,7 @@ type DirectoryRowInsert = {
   online_booking: boolean;
   blurb: string;
   public_signals: string[];
-  research_facts: string[];
+  research_facts: ResearchFinding[];
   class: CompanyClass;
   subtype: string | null;
   fit_rank: number | null;
@@ -219,9 +237,23 @@ export type GenerationReport = {
 const GENERATION_RETRY_MAX = 80;
 const MAX_FIRST_WORD_OCCURRENCES = 2;
 const SUMMIT_FIRST_WORD = "summit";
-const MAX_SENTENCE_REUSE_ACROSS_COMPANIES = 2;
+/** A public signal may appear at up to two companies; a research finding at one. */
+const MAX_SIGNAL_USES_ACROSS_COMPANIES = 2;
+const MAX_FINDING_USES_ACROSS_COMPANIES = 1;
 const MIN_RESEARCH_FACTS = 4;
 const MAX_RESEARCH_FACTS = 7;
+const MIN_FINDING_TOPICS = 1;
+const MAX_FINDING_TOPICS = 2;
+/** A finding with this share of its content words in its own company's public signals repeats them. */
+const MAX_SIGNAL_OVERLAP_SHARE = 0.8;
+
+/**
+ * The run's random source. buildCompanyRoster seeds it from config.seed before any
+ * random choice, so a run is reproducible.
+ */
+let random: () => number = (): number => {
+  throw new Error("Random source used before buildCompanyRoster seeded it from config.seed.");
+};
 
 /**
  * Tracks trap disqualifier sentences — each may be used by at most one trap.
@@ -237,10 +269,15 @@ class TrapDisqualifierAllocator {
     this.used.add(key);
   }
 
-  allocate(subtype: TrapSubtype, variants: readonly string[]): string {
+  /** Picks an unused variant; `isAllowed` can rule out variants for this company. */
+  allocate(
+    subtype: TrapSubtype,
+    variants: readonly string[],
+    isAllowed: (variant: string) => boolean = (): boolean => true
+  ): string {
     for (const variant of shuffle(variants)) {
       const key = variant.trim().toLowerCase();
-      if (!this.used.has(key)) {
+      if (!this.used.has(key) && isAllowed(variant)) {
         this.used.add(key);
         return variant;
       }
@@ -418,7 +455,7 @@ function weightedTrapDisqualifierIndex(neutralCount: number): number {
   if (neutralCount <= 0) {
     return 1;
   }
-  const biased = Math.pow(Math.random(), 0.35);
+  const biased = Math.pow(random(), 0.35);
   return 1 + Math.floor(biased * neutralCount);
 }
 
@@ -441,7 +478,7 @@ const TRAP_SUBTYPES: TrapSubtype[] = [
  * Picks a random element from a non-empty array.
  */
 function pickRandom<T>(items: readonly T[]): T {
-  return items[Math.floor(Math.random() * items.length)] as T;
+  return items[Math.floor(random() * items.length)] as T;
 }
 
 /**
@@ -468,7 +505,7 @@ export function companyFirstWord(name: string): string {
 function shuffle<T>(items: readonly T[]): T[] {
   const copy = [...items];
   for (let index = copy.length - 1; index > 0; index -= 1) {
-    const swapIndex = Math.floor(Math.random() * (index + 1));
+    const swapIndex = Math.floor(random() * (index + 1));
     [copy[index], copy[swapIndex]] = [copy[swapIndex], copy[index]];
   }
   return copy;
@@ -498,24 +535,36 @@ export function spreadFactCounts(classSize: number): number[] {
 }
 
 /**
- * Tracks sentence reuse across all companies (facts and public signals).
+ * Sentence key for uniqueness checks: lowercase, punctuation and whitespace collapsed.
+ */
+export function normalizeSentence(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/**
+ * Tracks sentence reuse across all companies (one registry for findings, one for
+ * public signals), each with its own limit.
  */
 class SentenceUsageRegistry {
   private readonly counts = new Map<string, number>();
 
+  constructor(private readonly maxUses: number) {}
+
   canUse(sentence: string): boolean {
-    const key = sentence.trim().toLowerCase();
-    return (this.counts.get(key) ?? 0) < MAX_SENTENCE_REUSE_ACROSS_COMPANIES;
+    return (this.counts.get(normalizeSentence(sentence)) ?? 0) < this.maxUses;
   }
 
   register(sentence: string): void {
-    const key = sentence.trim().toLowerCase();
+    const key = normalizeSentence(sentence);
     this.counts.set(key, (this.counts.get(key) ?? 0) + 1);
   }
 
   violations(): Array<{ sentence: string; count: number }> {
     return Array.from(this.counts.entries())
-      .filter(([, count]) => count > MAX_SENTENCE_REUSE_ACROSS_COMPANIES)
+      .filter(([, count]) => count > this.maxUses)
       .map(([sentence, count]) => ({ sentence, count }));
   }
 
@@ -534,8 +583,36 @@ class SentenceUsageRegistry {
   }
 }
 
-const globalFactUsage = new SentenceUsageRegistry();
-const globalSignalUsage = new SentenceUsageRegistry();
+const globalFactUsage = new SentenceUsageRegistry(MAX_FINDING_USES_ACROSS_COMPANIES);
+const globalSignalUsage = new SentenceUsageRegistry(MAX_SIGNAL_USES_ACROSS_COMPANIES);
+
+// Words too common to show that a finding repeats a public signal.
+const OVERLAP_STOP_WORDS = new Set([
+  "the", "and", "for", "with", "that", "this", "from", "their", "they", "have", "has",
+  "had", "was", "were", "are", "its", "not", "but", "into", "over", "than", "been",
+  "also", "which", "who", "will", "about", "after", "more", "most", "some", "any",
+  "all", "one", "out", "per", "via", "our",
+]);
+
+function contentWords(text: string): string[] {
+  return normalizeSentence(text)
+    .split(" ")
+    .filter((word) => word.length >= 3 && !OVERLAP_STOP_WORDS.has(word));
+}
+
+/**
+ * True when at least MAX_SIGNAL_OVERLAP_SHARE of a finding's distinct content words
+ * appear in the company's public signals (the finding would just repeat them).
+ */
+export function findingRepeatsSignals(finding: string, signals: readonly string[]): boolean {
+  const words = Array.from(new Set(contentWords(finding)));
+  if (words.length === 0) {
+    return false;
+  }
+  const signalWords = new Set(signals.flatMap(contentWords));
+  const shared = words.filter((word) => signalWords.has(word)).length;
+  return shared / words.length >= MAX_SIGNAL_OVERLAP_SHARE;
+}
 
 function textMatchesAny(text: string, matchers: readonly string[]): boolean {
   const lower = text.toLowerCase();
@@ -567,11 +644,11 @@ function factMatchesDisqualifierTheme(
 function allocateResearchFacts(
   company: DesignedCompany,
   count: number,
-  existing: readonly string[],
+  existing: readonly ResearchFinding[],
   config: TempoDirectorySeedConfig,
   excludeDisqualifierThemes = false,
   disqualifierSubtype?: TrapSubtype
-): string[] {
+): ResearchFinding[] {
   const pool = config.researchFactsByVertical[company.vertical];
   if (!pool || pool.length === 0) {
     throw new Error(
@@ -579,25 +656,28 @@ function allocateResearchFacts(
     );
   }
 
-  const usedTexts = new Set(existing.map((fact) => fact.trim().toLowerCase()));
+  const usedTexts = new Set(existing.map((fact) => normalizeSentence(fact.text)));
   const usedThemes = new Set<string>();
   for (const fact of existing) {
-    const entry = pool.find((item) => item.text.trim().toLowerCase() === fact.trim().toLowerCase());
+    const entry = pool.find((item) => normalizeSentence(item.text) === normalizeSentence(fact.text));
     if (entry) {
       usedThemes.add(entry.theme);
     }
   }
 
-  const picked: string[] = [];
+  const picked: ResearchFinding[] = [];
   for (const entry of shuffle(pool)) {
     if (picked.length >= count) {
       break;
     }
-    const key = entry.text.trim().toLowerCase();
+    const key = normalizeSentence(entry.text);
     if (usedTexts.has(key) || usedThemes.has(entry.theme)) {
       continue;
     }
     if (!globalFactUsage.canUse(entry.text)) {
+      continue;
+    }
+    if (findingRepeatsSignals(entry.text, company.publicSignals)) {
       continue;
     }
     if (
@@ -607,7 +687,8 @@ function allocateResearchFacts(
     ) {
       continue;
     }
-    picked.push(entry.text);
+    // validateTopicConfig guarantees every pool theme has topics.
+    picked.push({ text: entry.text, topics: [...config.themeToTopics[entry.theme]] });
     usedTexts.add(key);
     usedThemes.add(entry.theme);
     globalFactUsage.register(entry.text);
@@ -654,7 +735,7 @@ function allocatePublicSignals(
 function registerAuthoredSentences(companies: readonly DesignedCompany[]): void {
   for (const company of companies) {
     for (const fact of company.researchFacts) {
-      globalFactUsage.register(fact);
+      globalFactUsage.register(fact.text);
     }
     for (const signal of company.publicSignals) {
       globalSignalUsage.register(signal);
@@ -711,9 +792,40 @@ class BlurbBucketPlanner {
     this.countsByClass.set(companyClass, counts);
     return fallback;
   }
+
+  /** Starts a new run (otherwise counts carry over and runs stop being reproducible). */
+  reset(): void {
+    this.countsByClass.clear();
+    this.cycleIndex = 0;
+  }
 }
 
 const globalBlurbBucketPlanner = new BlurbBucketPlanner();
+
+/**
+ * Spreads companies evenly across verticals: each pick is a random vertical among
+ * those with the fewest companies so far (authored companies count). Keeps every
+ * vertical's research-fact pool within reach, since findings are never shared.
+ */
+class VerticalBalancer {
+  private readonly counts = new Map<string, number>();
+
+  /** Counts a company that was actually added to the roster. */
+  register(vertical: string): void {
+    this.counts.set(vertical, (this.counts.get(vertical) ?? 0) + 1);
+  }
+
+  pick(pool: readonly string[]): string {
+    const least = Math.min(...pool.map((vertical) => this.counts.get(vertical) ?? 0));
+    return pickRandom(pool.filter((vertical) => (this.counts.get(vertical) ?? 0) === least));
+  }
+
+  reset(): void {
+    this.counts.clear();
+  }
+}
+
+const globalVerticalBalancer = new VerticalBalancer();
 
 function proceduralBlurb(vertical: string, metro: string, bucket: BlurbBucket): string {
   const industry = verticalToIndustry(vertical);
@@ -795,19 +907,24 @@ export function finalizeResearchFacts(
     for (let index = 0; index < group.length; index += 1) {
       const company = group[index] as DesignedCompany;
       const targetCount = targets[index] as number;
-      const disqualifier =
-        company.class === "trap" ? (company.trapDisqualifierFact ?? null) : null;
       const trapSubtype =
         company.class === "trap" && company.subtype
           ? (company.subtype as TrapSubtype)
           : undefined;
+      const disqualifier: ResearchFinding | null =
+        trapSubtype && company.trapDisqualifierFact
+          ? {
+              text: company.trapDisqualifierFact,
+              topics: [...config.disqualifierTopicsBySubtype[trapSubtype]],
+            }
+          : null;
 
       let seedFacts = company.researchFacts.filter(
-        (fact) => !disqualifier || fact.trim() !== disqualifier.trim()
+        (fact) => !disqualifier || fact.text.trim() !== disqualifier.text.trim()
       );
       if (trapSubtype) {
         seedFacts = seedFacts.filter(
-          (fact) => !factMatchesDisqualifierTheme(fact, trapSubtype, config)
+          (fact) => !factMatchesDisqualifierTheme(fact.text, trapSubtype, config)
         );
       }
 
@@ -1058,7 +1175,7 @@ export function registerAuthoredContactNames(companies: DesignedCompany[]): void
  */
 function randomUniquePerson(): ReturnType<typeof randomPerson> {
   for (let attempt = 0; attempt < 120; attempt += 1) {
-    const person = randomPerson();
+    const person = randomPerson(random);
     const fullName = normalizeContactName(`${person.firstName} ${person.lastName}`);
     if (!globalUsedContactNames.has(fullName)) {
       globalUsedContactNames.add(fullName);
@@ -1120,7 +1237,8 @@ function buildNearMissCompany(
   registry: CompanyNameRegistry
 ): DesignedCompany {
   for (let attempt = 0; attempt < GENERATION_RETRY_MAX; attempt += 1) {
-    const vertical = subtype === "adjacent_vertical" ? "urgent care" : pickRandom(config.verticalPool);
+    const vertical =
+      subtype === "adjacent_vertical" ? "urgent care" : globalVerticalBalancer.pick(config.verticalPool);
     const suffixes =
       subtype === "adjacent_vertical"
         ? ["Urgent Care", "Walk-In Clinic"]
@@ -1144,7 +1262,7 @@ function buildNearMissCompany(
       config.publicSignalsByVertical[vertical] ?? [],
       3
     );
-    let researchFacts: string[] = [];
+    let researchFacts: ResearchFinding[] = [];
 
     if (subtype === "too_small") {
       locations = pickRandom([1, 2]);
@@ -1204,6 +1322,7 @@ function buildNearMissCompany(
       continue;
     }
 
+    globalVerticalBalancer.register(company.vertical);
     return company;
   }
 
@@ -1221,7 +1340,7 @@ function buildTrapCompany(
   registry: CompanyNameRegistry
 ): DesignedCompany {
   for (let attempt = 0; attempt < GENERATION_RETRY_MAX; attempt += 1) {
-    const vertical = pickRandom(config.verticalPool);
+    const vertical = globalVerticalBalancer.pick(config.verticalPool);
     const suffixes = config.suffixByVertical[vertical] ?? ["Group"];
     const companyName = buildUniqueCompanyName(
       registry,
@@ -1237,13 +1356,15 @@ function buildTrapCompany(
     const metro = pickRandom(config.metroPoolInTerritory);
     let onlineBooking = false;
     let triggerQuality: TriggerQuality = pickRandom(["strong", "weak"] as const);
-    let researchFacts: string[] = [];
+    let researchFacts: ResearchFinding[] = [];
     const signalPool = config.publicSignalsByTrapSubtype[subtype];
     let publicSignals = allocatePublicSignals(signalPool, 3);
     let keyedTrigger = "Operational growth signals";
+    // The disqualifier is research the student must dig for: never a repeat of its own signals.
     const trapDisqualifierFact = globalTrapDisqualifierAllocator.allocate(
       subtype,
-      config.trapDisqualifierVariantsBySubtype[subtype]
+      config.trapDisqualifierVariantsBySubtype[subtype],
+      (variant) => !findingRepeatsSignals(variant, publicSignals)
     );
 
     if (subtype === "already_solved") {
@@ -1296,6 +1417,7 @@ function buildTrapCompany(
       continue;
     }
 
+    globalVerticalBalancer.register(company.vertical);
     return company;
   }
 
@@ -1312,7 +1434,7 @@ function buildSecondaryStrongFit(
   registry: CompanyNameRegistry
 ): DesignedCompany {
   for (let attempt = 0; attempt < GENERATION_RETRY_MAX; attempt += 1) {
-    const vertical = pickRandom(config.verticalPool);
+    const vertical = globalVerticalBalancer.pick(config.verticalPool);
     const suffixes = config.suffixByVertical[vertical] ?? ["Group"];
     const companyName = buildUniqueCompanyName(
       registry,
@@ -1327,8 +1449,8 @@ function buildSecondaryStrongFit(
     const locations = pickRandom([4, 5, 6, 7, 9, 10]);
     const metro = pickRandom(config.metroPoolInTerritory);
     const triggerQuality: TriggerQuality =
-      Math.random() < 0.5 ? "weak" : pickRandom(["strong", "weak"] as const);
-    const onlineBooking = Math.random() < 0.15;
+      random() < 0.5 ? "weak" : pickRandom(["strong", "weak"] as const);
+    const onlineBooking = random() < 0.15;
 
     const contactSet = buildProceduralContactSet(config);
     const verticalSignals = config.publicSignalsByVertical[vertical] ?? [];
@@ -1368,6 +1490,7 @@ function buildSecondaryStrongFit(
       continue;
     }
 
+    globalVerticalBalancer.register(company.vertical);
     return company;
   }
 
@@ -1385,7 +1508,7 @@ function buildPassCompany(
   forceName?: string
 ): DesignedCompany {
   for (let attempt = 0; attempt < GENERATION_RETRY_MAX; attempt += 1) {
-    const vertical = pickRandom(config.passVerticalPool);
+    const vertical = globalVerticalBalancer.pick(config.passVerticalPool);
     const companyName =
       forceName ?? buildUniquePassCompanyName(registry, config, vertical);
     if (!companyName) {
@@ -1407,7 +1530,7 @@ function buildPassCompany(
       metro,
       inTerritory,
       sizeNote: `${locations} locations`,
-      onlineBooking: Math.random() < 0.4,
+      onlineBooking: random() < 0.4,
       blurb: proceduralBlurb(
         vertical,
         metro,
@@ -1435,6 +1558,7 @@ function buildPassCompany(
       }
     }
 
+    globalVerticalBalancer.register(company.vertical);
     return company;
   }
 
@@ -1517,7 +1641,7 @@ export function validateContentQuality(
     const pool = config.researchFactsByVertical[company.vertical] ?? [];
     const themes = new Set<string>();
     for (const fact of company.researchFacts) {
-      const entry = pool.find((item) => item.text.trim() === fact.trim());
+      const entry = pool.find((item) => item.text.trim() === fact.text.trim());
       if (entry) {
         if (themes.has(entry.theme)) {
           throw new Error(
@@ -1540,8 +1664,8 @@ export function validateContentQuality(
     }
     const disqualifierMatches = company.researchFacts.filter(
       (fact) =>
-        fact.trim() === disqualifier.trim() ||
-        factMatchesDisqualifierTheme(fact, subtype, config)
+        fact.text.trim() === disqualifier.trim() ||
+        factMatchesDisqualifierTheme(fact.text, subtype, config)
     );
     if (disqualifierMatches.length !== 1) {
       throw new Error(
@@ -1549,7 +1673,7 @@ export function validateContentQuality(
       );
     }
     const disqualifierIndex = company.researchFacts.findIndex(
-      (fact) => fact.trim() === disqualifier.trim()
+      (fact) => fact.text.trim() === disqualifier.trim()
     );
     if (disqualifierIndex === 0) {
       throw new Error(
@@ -1565,19 +1689,98 @@ export function validateContentQuality(
   if (uniqueDisqualifiers.size !== trapDisqualifiers.length) {
     throw new Error("Duplicate trap disqualifier sentence across traps.");
   }
+
+  validateResearchFindings(companies, config);
+}
+
+/**
+ * Checks the topic config before generation: every fact-pool theme and every trap
+ * subtype has 1–2 topics, all from config.factTopics.
+ */
+export function validateTopicConfig(config: TempoDirectorySeedConfig): void {
+  const allowed = new Set(config.factTopics);
+  const checkTopics = (label: string, topics: readonly string[] | undefined): void => {
+    if (!topics || topics.length < MIN_FINDING_TOPICS || topics.length > MAX_FINDING_TOPICS) {
+      throw new Error(
+        `${label} needs ${MIN_FINDING_TOPICS}–${MAX_FINDING_TOPICS} topics (got ${topics?.length ?? 0}). Update themeToTopics / disqualifierTopicsBySubtype.`
+      );
+    }
+    const unknown = topics.filter((topic) => !allowed.has(topic));
+    if (unknown.length > 0) {
+      throw new Error(`${label} has unknown topics: ${unknown.join(", ")}.`);
+    }
+  };
+  for (const pool of Object.values(config.researchFactsByVertical)) {
+    for (const entry of pool) {
+      checkTopics(`Fact theme "${entry.theme}"`, config.themeToTopics[entry.theme]);
+    }
+  }
+  for (const subtype of TRAP_SUBTYPES) {
+    checkTopics(`Disqualifier subtype "${subtype}"`, config.disqualifierTopicsBySubtype[subtype]);
+  }
+}
+
+/**
+ * Final research-finding rules (fails generation): every finding has 1–2 known
+ * topics; no finding text (normalized) appears at two companies; no finding repeats
+ * its own company's public signals.
+ */
+export function validateResearchFindings(
+  companies: readonly DesignedCompany[],
+  config: TempoDirectorySeedConfig
+): void {
+  const allowed = new Set(config.factTopics);
+  const companiesByText = new Map<string, Set<string>>();
+
+  for (const company of companies) {
+    for (const finding of company.researchFacts) {
+      if (
+        finding.topics.length < MIN_FINDING_TOPICS ||
+        finding.topics.length > MAX_FINDING_TOPICS ||
+        finding.topics.some((topic) => !allowed.has(topic))
+      ) {
+        throw new Error(
+          `Finding "${finding.text}" at "${company.companyName}" has invalid topics [${finding.topics.join(", ")}].`
+        );
+      }
+      if (findingRepeatsSignals(finding.text, company.publicSignals)) {
+        throw new Error(
+          `Finding "${finding.text}" at "${company.companyName}" repeats the company's public signals.`
+        );
+      }
+      const key = normalizeSentence(finding.text);
+      const names = companiesByText.get(key) ?? new Set<string>();
+      names.add(company.companyName);
+      companiesByText.set(key, names);
+    }
+  }
+
+  const shared = Array.from(companiesByText.entries()).filter(([, names]) => names.size > 1);
+  if (shared.length > 0) {
+    throw new Error(
+      `Finding text shared by two or more companies: ${shared
+        .map(([text, names]) => `"${text}" (${Array.from(names).join(", ")})`)
+        .join("; ")}`
+    );
+  }
 }
 
 /**
  * Builds the full 64-company roster from authored + procedural slots.
  */
 export function buildCompanyRoster(config: TempoDirectorySeedConfig): DesignedCompany[] {
+  validateTopicConfig(config);
+  random = mulberry32(config.seed);
   globalFactUsage.reset();
   globalSignalUsage.reset();
   globalTrapDisqualifierAllocator.reset();
+  globalBlurbBucketPlanner.reset();
+  globalVerticalBalancer.reset();
   globalUsedContactNames.clear();
   const registry = new CompanyNameRegistry();
   for (const company of config.authoredCompanies) {
     registry.registerAuthored(company.companyName);
+    globalVerticalBalancer.register(company.vertical);
     globalBlurbBucketPlanner.registerAuthored(company.class, company.blurb);
     if (company.class === "trap" && company.trapDisqualifierFact) {
       globalTrapDisqualifierAllocator.registerAuthored(company.trapDisqualifierFact);
@@ -1585,7 +1788,9 @@ export function buildCompanyRoster(config: TempoDirectorySeedConfig): DesignedCo
   }
   registerAuthoredSentences(config.authoredCompanies);
   const procedural = resolveProceduralCounts(config);
-  const companies: DesignedCompany[] = [...config.authoredCompanies];
+  // Copies: finalizeResearchFacts replaces researchFacts, which must not change the config
+  // (otherwise the next run in the same process starts from this run's output).
+  const companies: DesignedCompany[] = config.authoredCompanies.map((company) => ({ ...company }));
 
   for (let index = 0; index < procedural.strong_fit; index += 1) {
     companies.push(buildSecondaryStrongFit(config, registry));

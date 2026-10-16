@@ -100,18 +100,19 @@ export const LAST_NAME_POOL: string[] = [
 /**
  * Picks a random element from a non-empty array.
  */
-function pickRandom<T>(items: readonly T[]): T {
-  return items[Math.floor(Math.random() * items.length)] as T;
+function pickRandom<T>(items: readonly T[], random: () => number): T {
+  return items[Math.floor(random() * items.length)] as T;
 }
 
 /**
- * Returns a random first-name/gender pair combined with a random last name.
+ * Returns a random first-name/gender pair combined with a random last name, drawn
+ * with the caller's random source (seeded for reproducible generation).
  */
-export function randomPerson(): NamedPerson & { lastName: string } {
-  const person = pickRandom(FIRST_NAME_POOL);
+export function randomPerson(random: () => number): NamedPerson & { lastName: string } {
+  const person = pickRandom(FIRST_NAME_POOL, random);
   return {
     firstName: person.firstName,
     gender: person.gender,
-    lastName: pickRandom(LAST_NAME_POOL),
+    lastName: pickRandom(LAST_NAME_POOL, random),
   };
 }

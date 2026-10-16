@@ -1,20 +1,30 @@
 /**
  * data-room-integrity.test.ts
- * Local PGlite: FULL-SETUP summary + prospect-directory answer-key invariants.
- * Math.random is stubbed with a seeded PRNG for deterministic CI (generator unchanged).
+ * Local PGlite: FULL-SETUP summary + prospect-directory answer-key invariants, and
+ * the research-finding rules: reproducible from the seed, topic-tagged, never
+ * shared by two companies, never a repeat of the company's own public signals.
+ * The generator is seeded from config.seed; CI runs it with fixed seeds.
  */
 
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { PGlite } from "@electric-sql/pglite";
+import {
+  FACT_TOPICS,
+  QUESTION_TOPIC_FACT_TOPICS,
+  parseResearchFindings,
+} from "../lib/tempo-research-topics";
 import { TEMPO_ICP } from "../scripts/config/tempo-icp";
 import { tempoDirectorySeed } from "../scripts/config/tempo-directory-seed";
 import {
+  buildCompanyRoster,
   companyFirstWord,
   countMatchedTriggerThemes,
+  findingRepeatsSignals,
   generateProspectDirectory,
+  normalizeSentence,
 } from "../scripts/generate-prospect-directory";
 import {
   adaptFullSetupForPglite,
@@ -24,6 +34,12 @@ import {
 
 /** Fixed seeds used in CI — same every run. */
 const CI_SEEDS = [1009, 4242, 7777, 13579, 24680] as const;
+
+/** Fact topics a student reaches by asking about risks or fit. */
+const DISQUALIFIER_REACHABLE_TOPICS = new Set<string>([
+  ...QUESTION_TOPIC_FACT_TOPICS.risks,
+  ...QUESTION_TOPIC_FACT_TOPICS.fit,
+]);
 
 const SUMMARY_COLUMNS = [
   "expected_tables_present",
@@ -35,20 +51,6 @@ const SUMMARY_COLUMNS = [
   "tempo_prompt_scrubbed",
   "password_hash_hidden",
 ] as const;
-
-/**
- * Mulberry32 PRNG — deterministic [0,1) sequence from a 32-bit seed.
- */
-function mulberry32(seed: number): () => number {
-  let state = seed >>> 0;
-  return (): number => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
 
 function adaptFullSetupSql(): string {
   return adaptFullSetupForPglite(
@@ -139,15 +141,6 @@ async function assertDirectoryInvariants(
   );
   expect(contactIssues.rows).toEqual([]);
 
-  const factReuse = await db.query(
-    `SELECT fact FROM (
-       SELECT jsonb_array_elements_text(research_facts) AS fact
-       FROM public.crm_prospect_directory WHERE simulation_id = $1
-     ) facts GROUP BY fact HAVING COUNT(*) > 2`,
-    [simId]
-  );
-  expect(factReuse.rows).toEqual([]);
-
   const signalReuse = await db.query(
     `SELECT signal FROM (
        SELECT jsonb_array_elements_text(public_signals) AS signal
@@ -166,20 +159,34 @@ async function assertDirectoryInvariants(
   const bothHalves: string[] = [];
   const firstWordCounts = new Map<string, number>();
   const lengthsByClass = new Map<string, Set<number>>();
+  const companiesByFindingText = new Map<string, string[]>();
 
   for (const row of companies.rows as Array<{
     company_name: string;
     public_signals: string[] | string;
     class: string;
     subtype: string | null;
-    research_facts: string[] | string;
+    research_facts: unknown;
   }>) {
     const signals = Array.isArray(row.public_signals)
       ? row.public_signals
       : (JSON.parse(String(row.public_signals)) as string[]);
-    const facts = Array.isArray(row.research_facts)
-      ? row.research_facts
-      : (JSON.parse(String(row.research_facts)) as string[]);
+    const findings = parseResearchFindings(
+      typeof row.research_facts === "string" ? JSON.parse(row.research_facts) : row.research_facts
+    );
+    const facts = findings.map((finding) => finding.text);
+
+    // Stored as [{ text, topics }]: every finding has 1–2 known topics.
+    for (const finding of findings) {
+      expect(finding.topics.length, finding.text).toBeGreaterThanOrEqual(1);
+      expect(finding.topics.length, finding.text).toBeLessThanOrEqual(2);
+      expect(FACT_TOPICS, finding.text).toEqual(expect.arrayContaining(finding.topics));
+      expect(findingRepeatsSignals(finding.text, signals), `${row.company_name}: ${finding.text}`).toBe(
+        false
+      );
+      const key = normalizeSentence(finding.text);
+      companiesByFindingText.set(key, [...(companiesByFindingText.get(key) ?? []), row.company_name]);
+    }
 
     if (
       countMatchedTriggerThemes(
@@ -227,8 +234,21 @@ async function assertDirectoryInvariants(
         `${row.company_name} (${row.subtype})`
       ).toHaveLength(1);
       expect(disqualifierIndexes[0], `${row.company_name} index`).not.toBe(0);
+
+      // The disqualifier is reachable: a "risks" or "fit" question surfaces its topic.
+      const disqualifier = findings[disqualifierIndexes[0] as number];
+      expect(
+        disqualifier?.topics.some((topic) => DISQUALIFIER_REACHABLE_TOPICS.has(topic)),
+        `${row.company_name} disqualifier topics [${disqualifier?.topics.join(", ")}]`
+      ).toBe(true);
     }
   }
+
+  // No finding text (normalized) appears at two companies.
+  const sharedFindings = Array.from(companiesByFindingText.entries()).filter(
+    ([, names]) => names.length > 1
+  );
+  expect(sharedFindings).toEqual([]);
 
   expect(bothHalves).toEqual(["Summit Dental Group"]);
   for (const [word, count] of Array.from(firstWordCounts.entries())) {
@@ -244,31 +264,34 @@ async function assertDirectoryInvariants(
 describe("data-room integrity (seeded, local PGlite)", () => {
   let db: PGlite;
   let dataDir: string;
-  let randomSpy: ReturnType<typeof vi.spyOn> | undefined;
 
   beforeEach(() => {
     dataDir = mkdtempSync(join(tmpdir(), "rehearse-pglite-"));
   });
 
   afterEach(async () => {
-    randomSpy?.mockRestore();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (db as any)?.close?.();
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it.each(CI_SEEDS)(
+  it("the same seed generates an identical roster; another seed does not", () => {
+    const first = buildCompanyRoster(tempoDirectorySeed);
+    const second = buildCompanyRoster(tempoDirectorySeed);
+    expect(second).toEqual(first);
+    expect(buildCompanyRoster({ ...tempoDirectorySeed, seed: CI_SEEDS[0] })).not.toEqual(first);
+  });
+
+  it.each([tempoDirectorySeed.seed, ...CI_SEEDS])(
     "seed %s: FULL-SETUP summary true + directory invariants",
     async (seed) => {
-      randomSpy = vi.spyOn(Math, "random").mockImplementation(mulberry32(seed));
-
       db = await createSetupDatabase(dataDir);
       await assertSummaryColumns(db);
 
       const supabase = createPgliteSupabaseShim(db) as unknown as Parameters<
         typeof generateProspectDirectory
       >[0];
-      const result = await generateProspectDirectory(supabase, tempoDirectorySeed);
+      const result = await generateProspectDirectory(supabase, { ...tempoDirectorySeed, seed });
       await assertDirectoryInvariants(
         db,
         result.insertedCompanies,

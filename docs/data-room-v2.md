@@ -5,6 +5,12 @@ Simulation ID: `00000000-0000-0000-0000-000000000002` (Sell Tempo to Summit Dent
 
 ## What changed
 
+- **2026-10-15 (Phase 1 of the assistant rebuild — data only; not yet regenerated live):**
+  - `research_facts` is stored as an ordered array of `{ "text": string, "topics": string[] }` (jsonb; no schema change). Every finding carries 1–2 topics from `FACT_TOPICS` in `lib/tempo-research-topics.ts` (pool facts via `THEME_TO_TOPICS`, trap disqualifiers via `DISQUALIFIER_TOPICS_BY_SUBTYPE`, authored companies hand-tagged). Readers accept both this shape and the old `string[]` (`parseResearchFindings`).
+  - No finding text (normalized: lowercase, punctuation and whitespace collapsed) appears at two companies, and no finding shares ≥80% of its content words with its own company's public signals; both fail generation (`validateResearchFindings`). Public signals keep their limit of 2 companies.
+  - Reproducible: every random choice comes from mulberry32 seeded with `seed` in `tempo-directory-seed.ts` (`scripts/shared/seeded-random.ts`); the same seed regenerates the same directory. Companies are spread evenly across verticals (`VerticalBalancer`) so no pool is over-drawn.
+  - Fact pools: +113 sentences (`EXPANDED_RESEARCH_FACTS_BY_VERTICAL`): +13 per non-ICP vertical, +7 per ICP vertical except dental. Golden State Dental Alliance's shared "same-day emergency" finding and a duplicated property-management pool sentence were reworded.
+  - The fact lists below are from the 2026-08-31 run and change on the next regeneration.
 - **2026-08-31 (this run):** Removed single-frame supplemental facts (`"Local coverage noted the … in the Mountain West region."`). Replaced with 33 hand-written facts per vertical (varied structure, subject, and length). Added generic `validateNoTemplateDensity` alongside the existing anti-correlation validator. Trap disqualifier insert index now biases toward the middle and end of the array.
 - **2026-08-31 (prior):** Universal `research_facts` range 4–7; `validateNoStructuralClassCorrelation`; unique trap disqualifiers; vertical fact/signal pools.
 
