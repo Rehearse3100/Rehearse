@@ -621,7 +621,7 @@ export function ProspectingDataRoomChat({
       {/* Footer */}
       <div className="p-4 border-t border-outline-variant shrink-0 space-y-2">
         <div className="flex items-center gap-2.5 min-w-0">
-          {/* Off: dotted outline. Hover: solid blue outline and tint. On: filled blue with a check. */}
+          {/* Off: dashed outline. Hover: solid blue outline and tint. On: filled blue with a check. */}
           <button
             type="button"
             onClick={() => {
@@ -630,12 +630,31 @@ export function ProspectingDataRoomChat({
               setAmbiguity(null);
             }}
             aria-pressed={allCompanies}
-            className={`shrink-0 h-6 px-2.5 rounded-full border text-[11px] font-medium flex items-center gap-1 cursor-pointer active:scale-95 transition-all duration-150 motion-reduce:transition-none ${
+            className={`group/all relative shrink-0 h-6 px-2.5 rounded-full border text-[11px] font-medium flex items-center gap-1 cursor-pointer active:scale-95 transition-all duration-150 motion-reduce:transition-none ${
               allCompanies
-                ? "border-solid border-secondary bg-secondary text-white shadow-sm hover:bg-secondary/90"
-                : "border-dotted border-on-surface-variant/70 bg-transparent text-on-surface-variant hover:border-solid hover:border-secondary hover:bg-secondary-fixed hover:text-secondary"
+                ? "border-secondary bg-secondary text-white shadow-sm hover:bg-secondary/90"
+                : "border-transparent bg-transparent text-on-surface-variant hover:border-secondary hover:bg-secondary-fixed hover:text-secondary"
             }`}
           >
+            {!allCompanies ? (
+              // Dashed outline drawn as SVG ("- - - -"): a 1px CSS dotted/dashed border reads
+              // as solid on a pill this small. It sits over the transparent border (24px tall,
+              // so rx 12 matches rounded-full); the 2px stroke is clipped to 1px inside.
+              <svg
+                aria-hidden="true"
+                className="pointer-events-none absolute -inset-px h-[calc(100%_+_2px)] w-[calc(100%_+_2px)] text-on-surface-variant transition-opacity duration-150 group-hover/all:opacity-0 motion-reduce:transition-none"
+              >
+                <rect
+                  width="100%"
+                  height="100%"
+                  rx="12"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeDasharray="4 3"
+                />
+              </svg>
+            ) : null}
             {allCompanies ? (
               <MaterialIcon name="check" className="text-[13px]" />
             ) : (
