@@ -1,8 +1,9 @@
 /**
  * data-room-chat-scope.test.ts
  * Data Room assistant scope helpers: generic words derived from the roster,
- * type-to-pick suggestions, company detection, scope priority on send, the
- * out-of-scope mention reply, and the empty-answer check.
+ * type-to-pick suggestions, company detection, scope priority on send, request
+ * parsing and name redaction, the out-of-scope mention reply, and company-name
+ * questions.
  * Fixture roster uses names from the directory generator's real name pools.
  */
 
@@ -13,28 +14,20 @@ import {
   buildRefLabels,
   buildScopeIndex,
   detectCompanies,
-  finalizeModelAnswer,
-  findCompanyNameMentions,
   findOutOfScopeMentions,
   answerNameQuery,
   insertPickedName,
-  isEmptyModelAnswer,
-  mentionsInternalLabels,
   parseChatScope,
-  parseModelAnswer,
+  parseHistoryQuestions,
   parseNameQuery,
   previewScope,
   redactCompanyMentions,
   resolveSendScope,
-  scopesEqual,
   SCOPE_NONE_MESSAGE,
   SCOPE_TOO_MANY_MESSAGE,
-  selectHistoryForScope,
   suggestCompanies,
   textContainsCompanyName,
   wordFragmentBeforeCaret,
-  type ChatScope,
-  type HistoryEntry,
   type ScopeCompany,
 } from "@/lib/data-room-chat-scope";
 
@@ -389,13 +382,6 @@ describe("scope on send (priority 1–5)", () => {
     expect(previewScope(base)).toEqual({ kind: "companies", companies: [ROSTER[3]] });
     expect(previewScope({ ...base, openCompanyId: null })).toEqual({ kind: "none" });
   });
-
-  it("compares scopes as sets", () => {
-    expect(scopesEqual({ mode: "companies", companyIds: ["a", "b"] }, { mode: "companies", companyIds: ["b", "a"] })).toBe(true);
-    expect(scopesEqual({ mode: "companies", companyIds: ["a"] }, { mode: "companies", companyIds: ["a", "b"] })).toBe(false);
-    expect(scopesEqual({ mode: "all" }, { mode: "all" })).toBe(true);
-    expect(scopesEqual({ mode: "all" }, { mode: "companies", companyIds: ["a"] })).toBe(false);
-  });
 });
 
 describe("server helpers", () => {
@@ -411,12 +397,18 @@ describe("server helpers", () => {
     expect(parseChatScope({ companyIds: ["a"] })).toBeNull();
   });
 
-  it("guard: finds full names and identifying first words; ordinary words pass", () => {
-    expect(findCompanyNameMentions("Summit Dental Group is busy.", index)).toEqual(["Summit Dental Group"]);
-    expect(findCompanyNameMentions("Unlike falcon, the company is busy.", index)).toEqual(["falcon"]);
+  it("reads only the student's questions from history, oldest first", () => {
+    const scope = { mode: "companies", companyIds: ["falcon"] };
     expect(
-      findCompanyNameMentions("The company has a market, a vision for growth and a center.", index)
-    ).toEqual([]);
+      parseHistoryQuestions([
+        { role: "user", content: "first", scope },
+        { role: "assistant", intro: "", items: [{ companyId: "falcon", text: "An answer." }], scope },
+        { role: "user", content: 7 },
+        null,
+        { role: "user", content: "second" },
+      ])
+    ).toEqual(["first", "second"]);
+    expect(parseHistoryQuestions("nope")).toEqual([]);
   });
 
   it("redacts full names first, then listed first words", () => {
@@ -430,95 +422,11 @@ describe("server helpers", () => {
     ).toBe("[C1] vs another company; the company grew.");
   });
 
-  it("parses the model JSON and maps refs to roster names", () => {
-    expect(parseModelAnswer("not json")).toBeNull();
-    expect(parseModelAnswer(JSON.stringify({ intro: "x", items: "nope" }))).toBeNull();
-    const answer = parseModelAnswer(
-      JSON.stringify({ items: [{ ref: "[c2]", text: "Busy, like the company." }, { ref: "C9", text: "x" }] })
-    );
-    expect(answer).toEqual({
-      intro: "",
-      items: [{ ref: "[c2]", text: "Busy, like the company." }, { ref: "C9", text: "x" }],
-    });
-    expect(finalizeModelAnswer(answer!, buildRefLabels(["falcon", "oasis"]), index)).toEqual({
-      intro: "",
-      items: [{ companyId: "oasis", companyName: "Oasis Supply Co.", text: "Busy, like the company." }],
-    });
-  });
-
-  it("guard: a ref (C1) or the words references/labels in the reply reject it", () => {
-    const labels = buildRefLabels(["falcon"]);
-    const finalize = (raw: unknown): unknown =>
-      finalizeModelAnswer(parseModelAnswer(JSON.stringify(raw))!, labels, index);
-    expect(finalize({ intro: "", items: [{ ref: "C1", text: "Busy, like C1." }] })).toBeNull();
-    expect(finalize({ intro: "All references start with 'C'.", items: [] })).toBeNull();
-    expect(finalize({ intro: "", items: [{ ref: "C1", text: "Each company has a label such as [C2]." }] })).toBeNull();
-    expect(finalize({ intro: "I only see reference codes.", items: [] })).toBeNull();
-    expect(finalize({ intro: "", items: [{ ref: "C1", text: "It sells local produce." }] })).toEqual({
-      intro: "",
-      items: [{ companyId: "falcon", companyName: "Falcon Market", text: "It sells local produce." }],
-    });
-    expect(mentionsInternalLabels("Open 7 days, with C-section care.")).toBe(false);
-  });
-
-  it("an empty answer: no items and a blank intro, or every item dropped", () => {
-    const labels = buildRefLabels(["falcon"]);
-    const check = (raw: unknown): boolean => {
-      const parsed = parseModelAnswer(JSON.stringify(raw));
-      return isEmptyModelAnswer(parsed!, finalizeModelAnswer(parsed!, labels, index)!);
-    };
-    expect(check({ intro: "", items: [] })).toBe(true);
-    expect(check({ intro: "Here is what I found.", items: [{ ref: "C9", text: "x" }] })).toBe(true);
-    expect(check({ intro: "", items: [{ ref: "C1", text: "   " }] })).toBe(true);
-    expect(check({ intro: "I can't rank these companies.", items: [] })).toBe(false);
-    expect(check({ intro: "", items: [{ ref: "C1", text: "It sells produce." }] })).toBe(false);
-  });
-
-  describe("history across scopes (last 10)", () => {
-    const one = { mode: "companies" as const, companyIds: ["falcon"] };
-    const other = { mode: "companies" as const, companyIds: ["oasis"] };
-    const question = (content: string, scope: ChatScope): HistoryEntry => ({ role: "user", content, scope });
-    const answer = (text: string, scope: ChatScope, companyId: string): HistoryEntry => ({
-      role: "assistant",
-      intro: "",
-      items: [{ companyId, text }],
-      scope,
-    });
-
-    it("same-scope pairs are kept; another scope's answer is dropped and its question kept", () => {
-      const history = [
-        question("q-falcon", one),
-        answer("a-falcon", one, "falcon"),
-        question("q-oasis", other),
-        answer("a-oasis", other, "oasis"),
-        question("q-all", { mode: "all" }),
-        { role: "assistant" as const, intro: "a-all", items: [], scope: { mode: "all" as const } },
-      ];
-      expect(selectHistoryForScope(history, one)).toEqual([
-        question("q-falcon", one),
-        answer("a-falcon", one, "falcon"),
-        question("q-oasis", other),
-        question("q-all", { mode: "all" }),
-      ]);
-    });
-
-    it("looks at the last 10 messages only, whatever their scope", () => {
-      const history: HistoryEntry[] = Array.from({ length: 14 }, (_, i) =>
-        i % 2 === 0 ? question(`q${i}`, one) : answer(`a${i}`, other, "oasis")
-      );
-      const kept = selectHistoryForScope(history, one);
-      // Entries 4–13 are the last 10: five same-scope questions, five other-scope answers (dropped).
-      expect(kept.map((entry) => (entry.role === "user" ? entry.content : ""))).toEqual([
-        "q4",
-        "q6",
-        "q8",
-        "q10",
-        "q12",
-      ]);
-      expect(selectHistoryForScope(Array.from({ length: 14 }, (_, i) => question(`q${i}`, one)), one)).toHaveLength(
-        10
-      );
-    });
+  it("labels the companies in scope C1, C2, … in order", () => {
+    expect(Array.from(buildRefLabels(["falcon", "oasis"]).entries())).toEqual([
+      ["falcon", "C1"],
+      ["oasis", "C2"],
+    ]);
   });
 });
 

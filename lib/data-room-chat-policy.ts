@@ -1,11 +1,12 @@
 /**
  * data-room-chat-policy.ts
  * Code-side fact policy for the Data Room assistant (pure). From the router's
- * decision (lib/data-room-chat-router.ts) it decides which facts the answering call
- * may see for each company in scope. Research findings are allowed only for a
- * specific research question about exactly one company, only when their topics
- * answer the question's topic, at most 4 in stored order; findings that aren't
- * allowed are never sent to the model. Off-topic questions get a fixed reply.
+ * decision (lib/data-room-chat-router.ts) it decides which facts may be offered to a
+ * selection call and shown, for each company in scope. Research findings are
+ * allowed only for a specific research question about exactly one company, only
+ * when their topics answer the question's topic, at most 4 in stored order;
+ * findings that aren't allowed never reach the model or the student. Off-topic
+ * questions get a fixed reply.
  * Used by POST /api/student/data-room-chat and the local eval.
  */
 
@@ -17,7 +18,7 @@ import {
 import type { ChatScope } from "@/lib/data-room-chat-scope";
 import { scopeKindOf, type RouterIntent } from "@/lib/data-room-chat-router";
 
-/** Fixed reply to an off-topic question (no facts, no answering call). */
+/** Fixed reply to an off-topic question (no facts, no further model call). */
 export const OFF_TOPIC_REPLY = "I can only help with researching these companies.";
 
 /** Most research findings shared in one answer. */
@@ -32,7 +33,7 @@ export type PolicyCompany = {
 export type CompanyAllowance = {
   /** Whether the company's public facts (card, signals, contacts) may be used. */
   public: boolean;
-  /** The research findings the answering call may share (usually none). */
+  /** The research findings that may be offered and shown (usually none). */
   hidden: ResearchFinding[];
 };
 
@@ -50,7 +51,7 @@ export type PolicyInput = {
 };
 
 /**
- * The facts the answering call may see, per company:
+ * The facts allowed for the answer, per company:
  * - off_topic → no facts and OFF_TOPIC_REPLY;
  * - specific_research about exactly one company → public facts plus up to 4
  *   findings (stored order) whose topics answer the question's topic;

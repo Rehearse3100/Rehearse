@@ -4,9 +4,10 @@
  * Works out which companies a question is about: the generic-word list (derived
  * from the roster itself), type-to-pick suggestions, company detection in the
  * question text, and the scope priority used on send. Server side: scope and
- * history parsing, ref labels ([C1]…), name redaction for the prompt, and the
- * guard that rejects company names in model replies. Used by
- * ProspectingDataRoomChat (client) and POST /api/student/data-room-chat (server).
+ * history parsing, ref labels ([C1]…), name redaction for model input, the
+ * out-of-scope mention reply, and questions about company names answered from the
+ * roster. Used by ProspectingDataRoomChat (client) and POST
+ * /api/student/data-room-chat (server).
  */
 
 // ── Types and limits ───
@@ -484,24 +485,8 @@ export function previewScope(input: ScopeInput): ScopePreview {
   return companies.length > 0 ? { kind: "companies", companies } : { kind: "none" };
 }
 
-/**
- * True when two scopes cover exactly the same companies (order ignored).
- */
-export function scopesEqual(a: ChatScope, b: ChatScope): boolean {
-  if (a.mode !== b.mode) {
-    return false;
-  }
-  if (a.mode === "all" || b.mode === "all") {
-    return true;
-  }
-  const left = new Set(a.companyIds);
-  return left.size === new Set(b.companyIds).size && b.companyIds.every((id) => left.has(id));
-}
-
 // ── Server: request parsing ───
 
-/** Most recent messages (any scope) considered as context for the model. */
-export const HISTORY_TURN_LIMIT = 10;
 const MAX_HISTORY_ENTRIES = 100;
 const MAX_TEXT_LENGTH = 8_000;
 
@@ -535,63 +520,22 @@ export function parseChatScope(raw: unknown): ChatScope | null {
     : null;
 }
 
-export type HistoryEntry =
-  | { role: "user"; content: string; scope: ChatScope }
-  | {
-      role: "assistant";
-      intro: string;
-      items: Array<{ companyId: string; text: string }>;
-      scope: ChatScope;
-    };
-
 /**
- * Parses client-sent history: ids, text and scope only (company names are never
- * read). Malformed entries are dropped.
+ * The student's earlier questions from client-sent history, oldest first (the router
+ * reads the last few; no selection call sees history). Answers and malformed entries
+ * are ignored; the route redacts company names in the questions.
  */
-export function parseHistory(raw: unknown): HistoryEntry[] {
+export function parseHistoryQuestions(raw: unknown): string[] {
   if (!Array.isArray(raw)) {
     return [];
   }
-  return raw.slice(-MAX_HISTORY_ENTRIES).flatMap((entry): HistoryEntry[] => {
+  return raw.slice(-MAX_HISTORY_ENTRIES).flatMap((entry): string[] => {
     if (!entry || typeof entry !== "object") {
       return [];
     }
-    const record = entry as Record<string, unknown>;
-    const scope = parseChatScope(record.scope);
-    if (!scope) {
-      return [];
-    }
-    if (record.role === "user" && typeof record.content === "string") {
-      return [{ role: "user", content: record.content.slice(0, MAX_TEXT_LENGTH), scope }];
-    }
-    if (record.role === "assistant" && Array.isArray(record.items)) {
-      const items = record.items.flatMap((item): Array<{ companyId: string; text: string }> => {
-        if (!item || typeof item !== "object") {
-          return [];
-        }
-        const { companyId, text } = item as Record<string, unknown>;
-        return typeof companyId === "string" && typeof text === "string"
-          ? [{ companyId, text: text.slice(0, MAX_TEXT_LENGTH) }]
-          : [];
-      });
-      const intro = typeof record.intro === "string" ? record.intro.slice(0, MAX_TEXT_LENGTH) : "";
-      return [{ role: "assistant", intro, items, scope }];
-    }
-    return [];
+    const { role, content } = entry as Record<string, unknown>;
+    return role === "user" && typeof content === "string" ? [content.slice(0, MAX_TEXT_LENGTH)] : [];
   });
-}
-
-/**
- * History for the model: the last 10 messages regardless of scope. Messages whose
- * scope exactly matches the current scope are kept whole (questions and answers);
- * from any other scope only the student's questions are kept and the answers are
- * dropped, so no other company's facts reach this answer. The route redacts names
- * in every kept question (companies outside the scope become "another company").
- */
-export function selectHistoryForScope(history: HistoryEntry[], scope: ChatScope): HistoryEntry[] {
-  return history
-    .slice(-HISTORY_TURN_LIMIT)
-    .filter((entry) => entry.role === "user" || scopesEqual(entry.scope, scope));
 }
 
 /**
@@ -601,7 +545,7 @@ export function buildRefLabels(companyIds: readonly string[]): Map<string, strin
   return new Map(companyIds.map((id, i) => [id, `C${i + 1}`]));
 }
 
-// ── Server: name redaction and the guard ───
+// ── Server: name redaction ───
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -653,29 +597,6 @@ export function redactCompanyMentions(
     }
   }
   return out;
-}
-
-/**
- * Company names found in a text: any full roster name, or any identifying first
- * word (non-generic, 4+ letters). Empty when the text is clean.
- */
-export function findCompanyNameMentions(text: string, index: ScopeIndex): string[] {
-  const words = toWords(text);
-  const fullMatches = findFullNameMatches(index, words);
-  const covered = new Set<number>();
-  const hits = new Set<string>();
-  for (const match of fullMatches) {
-    hits.add(index.byId.get(match.companyId)?.name ?? match.companyId);
-    for (let k = match.startWord; k < match.endWord; k += 1) {
-      covered.add(k);
-    }
-  }
-  words.forEach((word, i) => {
-    if (!covered.has(i) && index.firstWordIds.has(word)) {
-      hits.add(word);
-    }
-  });
-  return Array.from(hits);
 }
 
 // ── Server: questions about company names ───
@@ -836,100 +757,10 @@ export function answerNameQuery(query: NameQuery, companies: readonly NameQueryC
   };
 }
 
-// ── Server: model reply ───
+// ── Server: the answer ───
 
-export type ModelAnswer = {
-  intro: string;
-  items: Array<{ ref: string; text: string }>;
-};
-
+/** The route's reply: an optional intro and one block per company (names from the database). */
 export type ScopedAnswer = {
   intro: string;
   items: Array<{ companyId: string; companyName: string; text: string }>;
 };
-
-/**
- * Parses the model's JSON reply: {"intro": string, "items": [{"ref", "text"}]}.
- * Returns null for anything that does not have that shape.
- */
-export function parseModelAnswer(raw: string | null | undefined): ModelAnswer | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw ?? "");
-  } catch {
-    return null;
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return null;
-  }
-  const { intro, items } = parsed as { intro?: unknown; items?: unknown };
-  if ((intro !== undefined && intro !== null && typeof intro !== "string") || !Array.isArray(items)) {
-    return null;
-  }
-  const parsedItems: ModelAnswer["items"] = [];
-  for (const item of items) {
-    const { ref, text } = (item ?? {}) as { ref?: unknown; text?: unknown };
-    if (typeof ref !== "string" || typeof text !== "string") {
-      return null;
-    }
-    parsedItems.push({ ref, text });
-  }
-  return { intro: typeof intro === "string" ? intro : "", items: parsedItems };
-}
-
-const INTERNAL_REF_PATTERN = /\bC\d+\b/;
-const INTERNAL_LABEL_WORD_PATTERN = /\breferences?\b|\blabels?\b/i;
-
-/**
- * True when a text mentions our internal labels: a ref such as "C1" (or "[C1]"),
- * or the words "reference(s)" / "label(s)". The guard treats this as a failure.
- */
-export function mentionsInternalLabels(text: string): boolean {
-  return INTERNAL_REF_PATTERN.test(text) || INTERNAL_LABEL_WORD_PATTERN.test(text);
-}
-
-/**
- * Maps refs back to companies (names from the roster, never from the model) and
- * drops refs that are not in scope. Rejects the answer (null) if the intro or any
- * text mentions internal labels (C1, "references", "labels") or names a company.
- */
-export function finalizeModelAnswer(
-  answer: ModelAnswer,
-  refLabels: ReadonlyMap<string, string>,
-  index: ScopeIndex
-): ScopedAnswer | null {
-  if ([answer.intro, ...answer.items.map((item) => item.text)].some(mentionsInternalLabels)) {
-    return null;
-  }
-
-  const idByRef = new Map(Array.from(refLabels.entries()).map(([id, ref]) => [ref, id]));
-  const seen = new Set<string>();
-  const items: ScopedAnswer["items"] = [];
-
-  for (const item of answer.items) {
-    const ref = item.ref.trim().replace(/^\[|\]$/g, "").toUpperCase();
-    const companyId = idByRef.get(ref);
-    const company = companyId ? index.byId.get(companyId) : undefined;
-    const text = item.text.trim();
-    if (!companyId || !company || seen.has(companyId) || text.length === 0) {
-      continue;
-    }
-    seen.add(companyId);
-    items.push({ companyId, companyName: company.name, text });
-  }
-
-  const intro = answer.intro.trim();
-  const leaked = [intro, ...items.map((item) => item.text)].some(
-    (text) => findCompanyNameMentions(text, index).length > 0
-  );
-  return leaked ? null : { intro, items };
-}
-
-/**
- * True when a finalized answer says nothing: no items and a blank intro, or the
- * model wrote items but every one was dropped (ref not in scope, duplicate, or
- * empty text), which leaves at most an intro that introduces nothing.
- */
-export function isEmptyModelAnswer(parsed: ModelAnswer, finalized: ScopedAnswer): boolean {
-  return finalized.items.length === 0 && (finalized.intro.length === 0 || parsed.items.length > 0);
-}

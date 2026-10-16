@@ -5,7 +5,8 @@
  * name-redacted) and the scope kind — never any facts or company data — and parses
  * its JSON reply, failing closed to "overview". POST /api/student/data-room-chat
  * makes the gpt-4o call; lib/data-room-chat-policy.ts turns the decision into the
- * facts the answering call may see. Also used by the local eval.
+ * allowed facts and lib/data-room-chat-render.ts into the answer path. Also used by
+ * the local eval.
  */
 
 import {
