@@ -35,7 +35,16 @@ const names = (filter: RosterFilter): string[] =>
   ROSTER.filter((company) => matchesFilter(company, filter)).map((company) => company.name);
 
 function decision(overrides: Partial<RouterDecision>): RouterDecision {
-  return { intent: "filter_list", topic: null, attribute: null, filter: null, criteriaCount: 1, exactValue: false, ...overrides };
+  return {
+    intent: "filter_list",
+    topic: null,
+    attribute: null,
+    filter: null,
+    criteriaCount: 1,
+    exactValue: false,
+    intro: "",
+    ...overrides,
+  };
 }
 
 describe("the whitelist", () => {

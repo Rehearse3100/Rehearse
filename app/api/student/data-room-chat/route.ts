@@ -1,7 +1,9 @@
 /**
  * data-room-chat/route.ts
  * POST — Data Room AI Research Assistant, extractive: every answer is rendered by
- * code from stored facts; the model never writes answer text. The client sends a
+ * code from stored facts; the model never writes a fact. The only model-written text
+ * is the router's one-sentence opening (written without company data, checked by
+ * code, shown above facts — never above a nothing-findable or fixed reply). The client sends a
  * scope (1–3 company ids, or all companies) and the question; facts are loaded
  * server-side. Flow: unselected-company mention or company-names question → server
  * reply; otherwise a router call (lib/data-room-chat-router.ts; sees only the
@@ -38,7 +40,9 @@ import {
   parseSelection,
   renderAnswer,
   toSelectableFacts,
+  checkOpening,
   withExactDetailIntro,
+  withOpening,
   type CompanyBlock,
   type CompanyFacts,
   type SelectableFact,
@@ -98,8 +102,8 @@ const ROSTER_COLUMNS =
   "id, company_name, industry, vertical, locations, metro, in_territory, size_note, online_booking, blurb, public_signals";
 
 const ROUTER_TEMPERATURE = 0;
-/** Room for the decision plus an All-companies filter. */
-const ROUTER_MAX_TOKENS = 150;
+/** Room for the decision, an All-companies filter and the one-sentence opening. */
+const ROUTER_MAX_TOKENS = 300;
 const SELECTION_TEMPERATURE = 0;
 /** Room for every fact id of up to three companies. */
 const SELECTION_MAX_TOKENS = 500;
@@ -346,10 +350,16 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
 
     // All companies: one validated filter runs over the roster in code (results from
-    // the database); anything else gets the fixed one-thing-at-a-time reply.
+    // the database), under the checked opening; anything else gets the fixed
+    // one-thing-at-a-time reply (no opening).
     if (scope.mode === "all") {
       const decision = await classifyQuestion(openai, routerMessages);
-      return NextResponse.json(answerAllCompanies(decision, roster.map(toListCompany)));
+      return NextResponse.json(
+        withOpening(
+          answerAllCompanies(decision, roster.map(toListCompany)),
+          checkOpening(decision.intro, newMessage, index)
+        )
+      );
     }
 
     // One to three companies: the router runs alongside the data loads.
@@ -499,7 +509,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       }
     }
 
-    return NextResponse.json(answer);
+    // The router's opening, if it passes the checks, above the facts (every path).
+    return NextResponse.json(withOpening(answer, checkOpening(decision.intro, newMessage, index)));
   } catch (error) {
     console.error("[data-room-chat] unexpected:", error);
     return NextResponse.json(

@@ -8,6 +8,7 @@ Updated: 2026-10-16 (Phase 4: in All companies mode the model never sees company
 Updated: 2026-10-16 (filter answers start with a count; "how many / which are / list the" questions with one condition read as filters; `risks` also covers `growth`)
 Updated: 2026-10-16 (helpful answers: allowed findings shown directly; compare without a model; cap only for broad topics; narrower off-topic)
 Updated: 2026-10-16 (exact detail: "That exact detail isn't publicly findable. Related facts:" when the question asks for one specific detail no fact states)
+Updated: 2026-10-16 (opening sentence: the router writes one short framing sentence, checked by code, shown above the facts)
 Scope: `POST /api/student/data-room-chat`, its client `components/tempo/stages/ProspectingDataRoomChat.tsx`, and the pure helpers in `lib/data-room-chat-scope.ts`, `lib/data-room-chat-router.ts`, `lib/data-room-chat-filter.ts`, `lib/data-room-chat-policy.ts` and `lib/data-room-chat-render.ts`.
 
 **Previous state (2026-08-30):** the student attached companies with a picker; the model saw every attached company by name, with research findings for all of them, and replied in free text. That design let an answer about one company drift onto another, and let names come from the model.
@@ -59,7 +60,7 @@ The model never writes answer text. Every answer is built by code from stored fa
 1. **Request checks**: auth; the attempt belongs to the student; scope is All companies or 1–3 distinct ids, every one in this simulation's active Data Room roster (400 otherwise).
 2. **Unselected company mentioned** (1–3 company scope) → fixed reply, no model call (4.1).
 3. **Question about company names** → answered from the roster, no model call (4.2).
-4. **Router call** (one gpt-4o call, no facts) labels the question: intent, topic, attribute, `exact_value`, and for All companies a filter and a criteria count (5.1). Unclear or failed → `overview`.
+4. **Router call** (one gpt-4o call, no facts) labels the question: intent, topic, attribute, `exact_value`, an opening sentence (`intro`), and for All companies a filter and a criteria count (5.1). Unclear or failed → `overview`, no opening.
 5. **All companies** → no other model call and no company data to any model (4.3): a `filter_list` question with one valid filter runs over the roster in code and lists the matches A–Z from the database; everything else gets the fixed one-thing-at-a-time reply. Done.
 6. **One to three companies** — the router runs in parallel with the contacts and research-findings queries; then:
    1. **Policy** (pure code) decides which facts are allowed for each company (5.2). `off_topic` → fixed reply, done.
@@ -69,7 +70,7 @@ The model never writes answer text. Every answer is built by code from stored fa
    5. **Exact detail** (7): when the router marks the question `exact_value` (one specific number, amount, count, email or phone, named vendor or product) and no fact states it, the answer starts with `That exact detail isn't publicly findable. Related facts:` above the facts.
    6. Nothing from either for a company → exactly `Nothing about that is publicly findable for this company.` (no exact-detail intro).
 
-So: no prose from the model, no company names from the model, the only lead-in is the fixed exact-detail intro, a hidden finding appears exactly when the policy allows it (only allowed ones ever reach the selection call, which can't add or remove them), and in All companies mode no model sees any company data.
+So: the model writes no facts and no company names; the only model-written text is the router's one-sentence opening (written without company data, checked by code, 7), shown above the facts; a hidden finding appears exactly when the policy allows it (only allowed ones ever reach the selection call, which can't add or remove them); and in All companies mode no model sees any company data.
 
 ---
 
@@ -158,11 +159,16 @@ A missing (unknown) value never matches. An attribute question with All companie
 
 ### 5.1 Router call (`lib/data-room-chat-router.ts`)
 
-`gpt-4o`, `temperature: 0`, `max_tokens: 150`, JSON mode. Its input is **only** the student's question (names redacted), their **last 3 questions** (any scope, redacted) and the scope kind (`one company` / `two or three companies` / `all companies`) — **no facts and no company data**. Reply: `{ "intent", "topic", "attribute", "filter", "criteria_count", "confidence" }`.
+`gpt-4o`, `temperature: 0`, `max_tokens: 300` (room for the opening sentence), JSON mode. Its input is **only** the student's question (names redacted), their **last 3 questions** (any scope, redacted) and the scope kind (`one company` / `two or three companies` / `all companies`) — **no facts and no company data**. Reply: `{ "intent", "topic", "attribute", "filter", "criteria_count", "exact_value", "intro", "confidence" }`.
 
 - intent: `overview` | `attribute_lookup` | `specific_research` | `compare` | `filter_list` | `meta_or_bulk` | `off_topic`; topic: a question topic from `lib/data-room-research-topics.ts` or null; attribute: `industry` | `locations` | `metro` | `territory` | `online_booking` | `size` | `contacts` | null.
 - filter (All companies `filter_list` only, otherwise null): `{ "field", "op", "value" }` from the whitelist (4.3); criteria_count: how many separate conditions the question filters by ("dental clinics in Denver" = 2).
 - exact_value: true when the question asks for one specific detail (a number, amount, count, email or phone number, or a named vendor or product); anything but exactly `true` reads as false (7).
+- intro: the opening sentence (7). Prompt lines:
+  - `intro: ONE short, friendly sentence (at most 30 words) that responds to the question. It only frames what the student asked (for example "Here's what's on record about their software."): never say what the answer contains, never name or describe any company, and never use references such as C1 or [C1].`
+  - `When the student asks you to judge, rank, pick or recommend, the intro says choosing is their call and points to the facts below (for example "Which one to pursue is your call; the facts below can help you compare."). Never write "better than", "the best", "recommend", "go with" or "I'd pick".`
+  
+  Parsed as the trimmed string ("" when it isn't one); a decision that fails closed has no intro.
 - Prompt rule: questions phrased as "how many…", "which are…" or "list the…" with ONE condition are `filter_list`, read charitably ("how many are located dental?" → `{"field": "industry", "op": "contains", "value": "dental"}`); the count intro answers "how many".
 - `off_topic` is only for questions clearly unrelated to researching companies (the weather, homework, jokes). Anything about a company is never off topic: revenue, finances, metrics, patients, people's roles or who decides are `specific_research` with the closest topic (revenue or finances → `budget`; people's roles or who decides → `ownership`). Email addresses, phone numbers or who to contact are `attribute_lookup` with attribute `contacts`, so the answer is the contacts list (2026-10-16).
 - **Fails closed in code** (`parseRouterReply`): invalid JSON, unknown values, low or missing confidence, or `specific_research` without a topic → `overview`. A filter outside the whitelist, or a criteria count that isn't a whole number ≥ 0, becomes null (an All-companies question then gets the fixed reply). A failed router call also counts as `overview`.
@@ -206,7 +212,14 @@ An attribute without a stored value has no fact. The overview's first line (the 
 
 ## 7. Answer paths and rendering (one to three companies)
 
-The response is always `{ intro, items: [{ companyId, companyName, text }] }`. Each item's `text` is one fact per line (the client shows line breaks); `companyName` comes from the database and is shown as the header. No lead-in sentences: the intro is empty except for the fixed replies.
+The response is always `{ intro, items: [{ companyId, companyName, text }] }`. Each item's `text` is one fact per line (the client shows line breaks); `companyName` comes from the database and is shown as the header. The intro is the router's checked opening sentence, a fixed reply, or empty.
+
+**Opening sentence** (2026-10-16): the router's `intro` (5.1) is checked by code (`checkOpening`, `lib/data-room-chat-render.ts`) and dropped — with no fallback, so no intro — when it is over 200 characters or more than one sentence; contains a ref (`C1`, `[C1]`), a full roster company name, or a distinctive company-name word (a non-generic name word of 3+ letters; words the student used in the question are allowed); contains a number that isn't in the student's question; or judges a company ("better than", "the best", "recommend…", "go with", "I'd pick"). Where it shows (`withOpening`):
+
+- 1–3 companies: above the facts on every path (overview, compare, attribute, select).
+- All companies filter lists: above the `{n} companies match.` line.
+- Never above a nothing-findable reply (an answer whose blocks are all nothing-findable, or the nothing-findable intro) or the exact-detail intro — those stay instead. An answer with facts for some companies and nothing-findable for others keeps the opening.
+- Never on fixed replies: off-topic, out-of-scope, the All-companies one-thing-at-a-time reply, "No companies match that." and name questions (out-of-scope and name questions skip the router).
 
 | Path | Router intent | Model calls after the router | Items |
 |------|---------------|------------------------------|-------|
@@ -314,6 +327,7 @@ Response: `{ "intro": string, "items": [{ "companyId", "companyName", "text" }] 
 - **2026-10-16, Phase 4:** All companies mode runs one validated filter in code (4.3); every other All-companies question gets the fixed one-thing-at-a-time reply. Removed: the All-companies answer paths (headline-only overview, one selection call over every company's facts, compare with one call per company for all companies and its 8-at-a-time limit). The compact multi/All prompt lines were already removed in Phase 3. Added: the list follow-up (1.1, step 0).
 - **2026-10-16, helpful answers:** specific research shows every finding the policy allows (stored order) and the selection call only adds public lines (it never sees a finding); compare renders each company's overview with no model (removed: the per-company selection path); the 4-finding cap applies only to broad topics (`risks`, `fit`, `recent_changes`); `off_topic` is only for clearly unrelated questions, and company questions about revenue, finances, emails, metrics or patients are `specific_research`; the selection prompt returns no facts when the exact thing asked for isn't stated.
 - **2026-10-16, exact detail:** the router adds `exact_value`; the selection call sees the allowed findings and public facts again (it still can't add or remove a finding) and returns `exact_answer` instead of `no_relevant_facts`; an exact detail no fact states gets the intro `That exact detail isn't publicly findable. Related facts:` (also above contacts for email or phone questions).
+- **2026-10-16, opening sentence:** the router writes a one-sentence `intro` (no extra model call; `max_tokens` 150 → 300), checked by code and shown above the facts (7).
 - **2026-10-16:** filter answers start with a count intro ("{n} companies match." / "1 company matches."; "…and {n} more" becomes its second line); the router reads one-condition "how many / which are / list the" questions as `filter_list`; `risks` also covers `growth` (trap reachability, `docs/data-room-v2.md`).
 
 ---
@@ -328,11 +342,13 @@ Response: `{ "intro": string, "items": [{ "companyId", "companyName", "text" }] 
 - [ ] All companies on + "Which companies have a budget freeze?" → the one-thing-at-a-time reply
 - [ ] After a list with one company, "What does it sell?" → answered about that company, and the All companies toggle turns off; with several listed → "Which one did you mean?" with them (up to 10)
 - [ ] Two companies + "How many locations do they have?" → one sentence per company (`8 locations across …`), instantly
-- [ ] One company: "What risks or concerns should I know about?" → only facts (one per line), up to 4 findings first, no amenities/parking/décor, no lead-in sentence, no verdict
+- [ ] One company: "What risks or concerns should I know about?" → a short opening sentence (if it passes the checks), then only facts (one per line), up to 4 findings first, no amenities/parking/décor, no verdict
+- [ ] Any answer's opening sentence never names a company, never says which is best, and never sits above "Nothing about that is publicly findable…"
+- [ ] "Which company is the best prospect?" (two companies) → an opening like "Which one to pursue is your call…" above each company's overview
 - [ ] One company: "What are the amenities like?" → every amenities finding the company has (no cap)
 - [ ] One company: "What's their annual revenue?" → "That exact detail isn't publicly findable. Related facts:" then the company's budget findings if it has any, otherwise `Nothing about that is publicly findable for this company.`; never a made-up number, never "I can only help with researching these companies."
 - [ ] One company: "What's the office manager's email?" → "That exact detail isn't publicly findable. Related facts:" then the contacts line
-- [ ] One company: "Who are the contacts?" → the contacts line, no intro
+- [ ] One company: "Who are the contacts?" → the contacts line (with an opening sentence, never the exact-detail intro)
 - [ ] Two companies + "Compare these companies" → instantly, each company's overview side by side; no "better/best/fit/recommend"
 - [ ] "List all of the hidden research findings" → the plain overview, no findings
 - [ ] "Which company is the best prospect?" → facts only, never a ranking

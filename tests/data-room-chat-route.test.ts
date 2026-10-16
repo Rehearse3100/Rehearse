@@ -8,7 +8,9 @@
  * facts and can't add or remove a finding); the exact-detail intro when the router
  * asks for one exact detail and no fact states it (also above contacts); selected
  * ids are checked against the facts given and rendered from the stored text with
- * names from the database. All companies: one validated filter run in code
+ * names from the database. The router's checked opening sentence on every answer
+ * path (replaced by nothing-findable and exact-detail replies, absent on fixed
+ * replies, dropped when it fails a check). All companies: one validated filter run in code
  * (only the classifier is called), anything else the fixed reply. Also: the router
  * call (sees no facts, fails closed), the out-of-scope mention reply, company-name
  * questions and request checks.
@@ -221,9 +223,10 @@ function routerReply(
   intent: string,
   topic: string | null = null,
   attribute: string | null = null,
-  exactValue = false
+  exactValue = false,
+  intro = ""
 ): { choices: Array<{ message: { content: string } }> } {
-  return modelReply({ intent, topic, attribute, exact_value: exactValue, confidence: "high" });
+  return modelReply({ intent, topic, attribute, exact_value: exactValue, intro, confidence: "high" });
 }
 
 function selection(ids: unknown[], exactAnswer = false): { choices: Array<{ message: { content: string } }> } {
@@ -519,6 +522,103 @@ describe("specific research and the selection call", () => {
   });
 });
 
+describe("the router's opening sentence", () => {
+  const OPENING = "Here's what's on record for your question.";
+  const withIntro = (intent: string, topic: string | null = null, attribute: string | null = null): ReturnType<typeof modelReply> =>
+    routerReply(intent, topic, attribute, false, OPENING);
+
+  it("shows above the facts on every 1–3 company path: overview, compare, attribute, specific research", async () => {
+    state.classify.mockResolvedValueOnce(withIntro("overview"));
+    expect(await ask({ scope: ONE, newMessage: "Tell me about them" })).toEqual({
+      intro: OPENING,
+      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: SUMMIT_OVERVIEW }],
+    });
+
+    state.classify.mockResolvedValueOnce(withIntro("compare"));
+    const compared = (await ask({ scope: TWO, newMessage: "Compare these companies" })) as { intro: string; items: unknown[] };
+    expect(compared.intro).toBe(OPENING);
+    expect(compared.items).toHaveLength(2);
+
+    state.classify.mockResolvedValueOnce(withIntro("attribute_lookup", null, "locations"));
+    expect(await ask({ scope: ONE, newMessage: "How many locations?" })).toEqual({
+      intro: OPENING,
+      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: "8 locations across Front Range, CO." }],
+    });
+
+    state.classify.mockResolvedValueOnce(withIntro("specific_research", "budget"));
+    state.create.mockResolvedValueOnce(selection([], true));
+    expect(await ask({ scope: ONE, newMessage: "What about their budget?" })).toEqual({
+      intro: OPENING,
+      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: BUDGET_FINDING }],
+    });
+  });
+
+  it("All companies: above the count line of a filter list", async () => {
+    state.classify.mockResolvedValueOnce(
+      modelReply({
+        intent: "filter_list",
+        filter: { field: "online_booking", op: "eq", value: true },
+        criteria_count: 1,
+        intro: OPENING,
+        confidence: "high",
+      })
+    );
+    const reply = (await ask({ scope: ALL, newMessage: "Which ones have online booking?" })) as { intro: string };
+    expect(reply.intro).toBe(`${OPENING}\n2 companies match.`);
+  });
+
+  it("the nothing-findable reply and the exact-detail intro take its place", async () => {
+    state.classify.mockResolvedValueOnce(withIntro("specific_research", "ownership"));
+    state.create.mockResolvedValueOnce(selection([], false));
+    expect(await ask({ scope: ONE, newMessage: "Who owns it?" })).toEqual({
+      intro: "",
+      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: NOTHING_FINDABLE_REPLY }],
+    });
+
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "budget", null, true, OPENING));
+    state.create.mockResolvedValueOnce(selection([], false));
+    expect(await ask({ scope: ONE, newMessage: "What's their annual revenue?" })).toEqual({
+      intro: "That exact detail isn't publicly findable. Related facts:",
+      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: BUDGET_FINDING }],
+    });
+
+    state.classify.mockResolvedValueOnce(
+      modelReply({ intent: "filter_list", filter: { field: "industry", op: "eq", value: "Legal" }, criteria_count: 1, intro: OPENING, confidence: "high" })
+    );
+    expect(await ask({ scope: ALL, newMessage: "Which are law firms?" })).toEqual({ intro: "No companies match that.", items: [] });
+  });
+
+  it("fixed replies keep their sentence with no opening: off topic, All-companies reply, out of scope, names", async () => {
+    state.classify.mockResolvedValueOnce(withIntro("off_topic"));
+    expect(await ask({ scope: ONE, newMessage: "Write me a poem." })).toEqual({ intro: OFF_TOPIC_REPLY, items: [] });
+
+    state.classify.mockResolvedValueOnce(withIntro("overview"));
+    expect(await ask({ scope: ALL, newMessage: "Tell me about them" })).toEqual({ intro: ALL_MODE_REPLY, items: [] });
+
+    const outOfScope = (await ask({ scope: ONE, newMessage: "How does Summit Dental Group compare to falcon market?" })) as {
+      intro: string;
+    };
+    expect(outOfScope.intro.startsWith("Your question mentions Falcon Market")).toBe(true);
+    const names = (await ask({ scope: ALL, newMessage: "tell me about companies starting with s" })) as { intro: string };
+    expect(names.intro).toBe('Companies whose names start with "S":');
+    expect(state.classify).toHaveBeenCalledTimes(2);
+  });
+
+  it("an opening that fails a check is dropped (no intro, never a fallback)", async () => {
+    for (const bad of [
+      "Here's what's on record about Summit Dental Group.",
+      "Here's what's on record about [C1].",
+      "Falcon has 2 stores.",
+      "This one is the best prospect.",
+      "Sure! Here's what's on record.",
+    ]) {
+      state.classify.mockResolvedValueOnce(routerReply("overview", null, null, false, bad));
+      const reply = (await ask({ scope: ONE, newMessage: "Tell me about them" })) as { intro: string };
+      expect(reply.intro, bad).toBe("");
+    }
+  });
+});
+
 describe("All companies: one validated filter, run in code", () => {
   function filterReply(filter: unknown, criteriaCount = 1): ReturnType<typeof modelReply> {
     return modelReply({ intent: "filter_list", topic: null, attribute: null, filter, criteria_count: criteriaCount, confidence: "high" });
@@ -638,7 +738,12 @@ describe("the router call", () => {
       temperature: number;
       response_format: unknown;
     };
-    expect(args).toMatchObject({ model: "gpt-4o", temperature: 0, response_format: { type: "json_object" } });
+    expect(args).toMatchObject({
+      model: "gpt-4o",
+      temperature: 0,
+      max_tokens: 300,
+      response_format: { type: "json_object" },
+    });
     expect(args.messages).toEqual([
       { role: "system", content: ROUTER_SYSTEM_PROMPT },
       {

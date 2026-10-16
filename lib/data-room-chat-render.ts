@@ -4,19 +4,25 @@
  * no DB, no network; All companies: lib/data-room-chat-filter.ts). Every
  * company fact gets a stable id and a display sentence, built at read time from the
  * stored values: one fact per public attribute, one per public signal, one per
- * hidden finding (display = the stored text). The model never writes an answer and
+ * hidden finding (display = the stored text). The model never writes a fact and
  * can't add or remove findings: the findings the policy allows are always shown as
  * they are; the selection call sees them and the public facts, picks public fact ids
  * to add, and says whether any fact states the exact detail asked for (the selection
  * call's messages and reply parsing live here). Code keeps the ids that are in the
  * set it was given, and the renderers turn facts into the { intro, items } answer.
- * Used by POST /api/student/data-room-chat; the local eval maps rendered lines back
- * to fact ids.
+ * The only model-written text is the router's one-sentence opening, which is
+ * checked here (checkOpening) and placed above the facts (withOpening; also used for
+ * All-companies lists). Used by POST /api/student/data-room-chat.
  */
 
 import type { CompanyAllowance } from "@/lib/data-room-chat-policy";
 import type { RouterAttribute, RouterDecision } from "@/lib/data-room-chat-router";
-import type { ScopedAnswer } from "@/lib/data-room-chat-scope";
+import {
+  textContainsCompanyName,
+  toWords,
+  type ScopedAnswer,
+  type ScopeIndex,
+} from "@/lib/data-room-chat-scope";
 import type { ResearchFinding } from "@/lib/data-room-research-topics";
 
 /** The reply for a company when no fact answers the question (or none is allowed). */
@@ -268,8 +274,87 @@ export function renderAnswer(blocks: readonly CompanyBlock[], keepEmpty: boolean
  * an answer with no facts keeps the nothing-findable reply as it is.
  */
 export function withExactDetailIntro(answer: ScopedAnswer): ScopedAnswer {
-  const hasFacts = answer.items.some((item) => item.text !== NOTHING_FINDABLE_REPLY);
-  return hasFacts ? { ...answer, intro: EXACT_DETAIL_MISSING_INTRO } : answer;
+  return hasFacts(answer) ? { ...answer, intro: EXACT_DETAIL_MISSING_INTRO } : answer;
+}
+
+/** True when the answer shows at least one fact (not only nothing-findable blocks or a fixed reply). */
+function hasFacts(answer: ScopedAnswer): boolean {
+  return answer.items.some((item) => item.text !== NOTHING_FINDABLE_REPLY);
+}
+
+// ── Opening sentence (written by the router, checked here) ───
+
+/** Longest opening sentence shown. */
+export const MAX_OPENING_LENGTH = 200;
+
+/** Shortest company-name word the check treats as distinctive (shorter ones are too common). */
+const MIN_DISTINCTIVE_NAME_WORD_LETTERS = 3;
+
+const REF_PATTERN = /\bC\d+\b/i;
+const JUDGMENT_PATTERN = /\b(?:better than|the best|recommend\w*|go with|i['’]?d pick|i would pick)\b/i;
+const NUMBER_PATTERN = /\d+/g;
+
+/** More than one sentence: a sentence end (. ! ?) before the end of the text, or a line break. */
+function isMoreThanOneSentence(text: string): boolean {
+  const body = text.replace(/[.!?…"'”’)\s]+$/, "");
+  return /\n/.test(body) || /[.!?…](?=\s)/.test(body);
+}
+
+/** Non-generic words of any roster company name (generic words come from the roster itself). */
+function distinctiveNameWords(index: ScopeIndex): Set<string> {
+  const words = new Set<string>();
+  index.nameWordsById.forEach((nameWords) => {
+    for (const word of nameWords) {
+      if (word.length >= MIN_DISTINCTIVE_NAME_WORD_LETTERS && !index.genericWords.has(word)) {
+        words.add(word);
+      }
+    }
+  });
+  return words;
+}
+
+/**
+ * The router's opening sentence if it passes every check, else null (then no intro
+ * is shown — never a fallback). Dropped when it is over 200 characters or more than
+ * one sentence; mentions a ref (C1, [C1]), a full roster company name, or a
+ * distinctive company-name word (words the student used in the question are
+ * allowed); has a number that isn't in the question; or judges a company (better
+ * than, the best, recommend, go with, I'd pick).
+ */
+export function checkOpening(opening: string, question: string, index: ScopeIndex): string | null {
+  const text = opening.trim();
+  if (!text || text.length > MAX_OPENING_LENGTH || isMoreThanOneSentence(text)) {
+    return null;
+  }
+  if (REF_PATTERN.test(text) || JUDGMENT_PATTERN.test(text)) {
+    return null;
+  }
+  if (index.companies.some((company) => textContainsCompanyName(index, text, company.id))) {
+    return null;
+  }
+  const questionWords = new Set(toWords(question));
+  const distinctive = distinctiveNameWords(index);
+  if (toWords(text).some((word) => distinctive.has(word) && !questionWords.has(word))) {
+    return null;
+  }
+  const questionNumbers = new Set(question.match(NUMBER_PATTERN) ?? []);
+  if ((text.match(NUMBER_PATTERN) ?? []).some((number) => !questionNumbers.has(number))) {
+    return null;
+  }
+  return text;
+}
+
+/**
+ * Puts the checked opening above an answer that shows facts — above the facts, or
+ * above an intro line already there (e.g. "{n} companies match."). Never above a
+ * nothing-findable reply or the exact-detail intro (they stay instead), nor on a
+ * fixed reply with no facts (off-topic, the All-companies reply, no matches).
+ */
+export function withOpening(answer: ScopedAnswer, opening: string | null): ScopedAnswer {
+  if (!opening || !hasFacts(answer) || answer.intro.startsWith(EXACT_DETAIL_MISSING_INTRO)) {
+    return answer;
+  }
+  return { ...answer, intro: answer.intro ? `${opening}\n${answer.intro}` : opening };
 }
 
 // ── Selection call ───

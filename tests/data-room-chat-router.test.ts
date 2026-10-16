@@ -105,6 +105,7 @@ describe("classifier reply", () => {
       filter: null,
       criteriaCount: null,
       exactValue: false,
+      intro: "",
     });
     expect(
       parseRouterReply(reply({ intent: "attribute_lookup", topic: null, attribute: "locations", confidence: "high" }))
@@ -115,7 +116,33 @@ describe("classifier reply", () => {
       filter: null,
       criteriaCount: null,
       exactValue: false,
+      intro: "",
     });
+  });
+
+  it("intro: the trimmed sentence; not a string → empty; a failed decision has no intro", () => {
+    const intro = (value: unknown): string =>
+      parseRouterReply(reply({ intent: "overview", topic: null, attribute: null, intro: value, confidence: "high" })).intro;
+    expect(intro("  Here's what's on record about their software.  ")).toBe(
+      "Here's what's on record about their software."
+    );
+    for (const invalid of [undefined, null, 7, ["x"], {}]) {
+      expect(intro(invalid), String(invalid)).toBe("");
+    }
+    expect(
+      parseRouterReply(reply({ intent: "specific_research", topic: "risks", intro: "Here you go.", confidence: "low" }))
+    ).toEqual(OVERVIEW_DECISION);
+    expect(OVERVIEW_DECISION.intro).toBe("");
+  });
+
+  it("the prompt asks for one short framing sentence that never names, describes or judges a company", () => {
+    expect(ROUTER_SYSTEM_PROMPT).toContain('"intro": string');
+    expect(ROUTER_SYSTEM_PROMPT).toContain(
+      'intro: ONE short, friendly sentence (at most 30 words) that responds to the question. It only frames what the student asked (for example "Here\'s what\'s on record about their software."): never say what the answer contains, never name or describe any company, and never use references such as C1 or [C1].'
+    );
+    expect(ROUTER_SYSTEM_PROMPT).toContain(
+      'When the student asks you to judge, rank, pick or recommend, the intro says choosing is their call and points to the facts below (for example "Which one to pursue is your call; the facts below can help you compare."). Never write "better than", "the best", "recommend", "go with" or "I\'d pick".'
+    );
   });
 
   it("exact_value is true only when the reply says exactly true; missing or invalid → false", () => {
@@ -147,6 +174,7 @@ describe("classifier reply", () => {
       filter: { field: "online_booking", op: "eq", value: true },
       criteriaCount: 1,
       exactValue: false,
+      intro: "",
     });
     expect(filterReply({ field: "software", op: "eq", value: "Zentrix" }, 1)).toMatchObject({
       intent: "filter_list",

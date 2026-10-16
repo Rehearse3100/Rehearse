@@ -3,12 +3,15 @@
  * Extractive answers (pure): fact ids and display sentences built from stored
  * values, the findings and public facts the policy allows, the answer path per
  * router decision (compare is an overview), the renderers (overview, attribute,
- * selected facts, nothing-findable, the exact-detail intro), and the selection
- * call's messages (allowed findings and public facts) and reply parsing (only given
- * ids survive, in order; exact_answer).
+ * selected facts, nothing-findable, the exact-detail intro), the router's opening
+ * (every drop rule, and where it shows), and the selection call's messages (allowed
+ * findings and public facts) and reply parsing (only given ids survive, in order;
+ * exact_answer).
  */
 
 import { describe, expect, it } from "vitest";
+import { ALL_MODE_REPLY, NO_FILTER_MATCHES_REPLY } from "@/lib/data-room-chat-filter";
+import { OFF_TOPIC_REPLY } from "@/lib/data-room-chat-policy";
 import {
   allowedFindings,
   allowedPublicFacts,
@@ -16,6 +19,7 @@ import {
   attributeLines,
   buildCompanyFacts,
   buildSelectionMessages,
+  checkOpening,
   EXACT_DETAIL_MISSING_INTRO,
   NOTHING_FINDABLE_REPLY,
   overviewLines,
@@ -25,8 +29,10 @@ import {
   SELECTION_SYSTEM_PROMPT,
   toSelectableFacts,
   withExactDetailIntro,
+  withOpening,
   type CompanyFactSource,
 } from "@/lib/data-room-chat-render";
+import { buildScopeIndex } from "@/lib/data-room-chat-scope";
 import type { ResearchFinding } from "@/lib/data-room-research-topics";
 
 const TOOLS: ResearchFinding = { text: "Signed a multi-year agreement with a scheduling vendor last year.", topics: ["current_tools"] };
@@ -183,6 +189,90 @@ describe("rendering", () => {
       intro: NOTHING_FINDABLE_REPLY,
       items: [],
     });
+  });
+});
+
+describe("the router's opening sentence", () => {
+  const index = buildScopeIndex([
+    { id: "summit-dental", name: "Summit Dental Group", industry: "Dental" },
+    { id: "falcon", name: "Falcon Market", industry: "Retail" },
+    { id: "maple", name: "Maple Family Dentistry", industry: "Dental" },
+    { id: "cedar", name: "Cedar Grove Family Dentistry", industry: "Dental" },
+    { id: "harbor", name: "Harbor Family Dentistry", industry: "Dental" },
+  ]);
+  const check = (opening: string, question = "What software do they use?"): string | null =>
+    checkOpening(opening, question, index);
+
+  it("keeps one short framing sentence (trimmed)", () => {
+    expect(check("  Here's what's on record about their software.  ")).toBe("Here's what's on record about their software.");
+    expect(check("Which one to pursue is your call; the facts below can help you compare.")).toBe(
+      "Which one to pursue is your call; the facts below can help you compare."
+    );
+  });
+
+  it("drops it when empty, over 200 characters, or more than one sentence", () => {
+    expect(check("")).toBeNull();
+    expect(check(`Here's what's on record about ${"their software ".repeat(14)}.`)).toBeNull();
+    expect(check("Good question! Here's what's on record.")).toBeNull();
+    expect(check("Here's what's on record. Take a look.")).toBeNull();
+    expect(check("Here's what's on record\nabout their software.")).toBeNull();
+  });
+
+  it("drops a ref, a full roster name, or a distinctive name word — unless the student used that word", () => {
+    expect(check("Here's what's on record about C1.")).toBeNull();
+    expect(check("Here's what's on record about [C2]'s software.")).toBeNull();
+    expect(check("Here's what's on record about Falcon Market.")).toBeNull();
+    expect(check("Here's what's on record about maple family dentistry.")).toBeNull();
+    expect(check("Here's what's on record about Summit's software.")).toBeNull();
+    expect(check("Here's what's on record about the market.")).toBeNull();
+    expect(check("Here's what's on record about the market.", "What market are they in?")).toBe(
+      "Here's what's on record about the market."
+    );
+    // Generic words (shared by 3+ names, or industry words) are fine.
+    expect(check("Here's what's on record about this dental family practice.")).toBe(
+      "Here's what's on record about this dental family practice."
+    );
+  });
+
+  it("drops a number that isn't in the student's question", () => {
+    expect(check("Here are the 3 contacts on record.")).toBeNull();
+    expect(check("Here are the 3 contacts on record.", "Who are the 3 contacts?")).toBe("Here are the 3 contacts on record.");
+  });
+
+  it("drops anything that judges a company", () => {
+    for (const judging of [
+      "This one is better than the others.",
+      "Here's the best prospect.",
+      "I recommend looking at their software.",
+      "We'd recommend starting here.",
+      "You should go with this one.",
+      "I'd pick this one.",
+      "I’d pick this one.",
+    ]) {
+      expect(check(judging), judging).toBeNull();
+    }
+  });
+
+  it("shows above the facts, or above an intro line already there", () => {
+    const facts = { intro: "", items: [{ companyId: "a", companyName: "A", text: "In territory." }] };
+    expect(withOpening(facts, "Here's what's on record.")).toEqual({ ...facts, intro: "Here's what's on record." });
+    const list = { intro: "2 companies match.", items: facts.items };
+    expect(withOpening(list, "Here's who matches.").intro).toBe("Here's who matches.\n2 companies match.");
+    expect(withOpening(facts, null)).toEqual(facts);
+  });
+
+  it("never above a nothing-findable answer, the exact-detail intro, or a fixed reply", () => {
+    const opening = "Here's what's on record.";
+    for (const answer of [
+      { intro: NOTHING_FINDABLE_REPLY, items: [] },
+      { intro: "", items: [{ companyId: "a", companyName: "A", text: NOTHING_FINDABLE_REPLY }] },
+      { intro: EXACT_DETAIL_MISSING_INTRO, items: [{ companyId: "a", companyName: "A", text: BUDGET.text }] },
+      { intro: OFF_TOPIC_REPLY, items: [] },
+      { intro: ALL_MODE_REPLY, items: [] },
+      { intro: NO_FILTER_MATCHES_REPLY, items: [] },
+    ]) {
+      expect(withOpening(answer, opening), answer.intro).toEqual(answer);
+    }
   });
 });
 

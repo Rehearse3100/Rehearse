@@ -5,10 +5,11 @@
  * name-redacted) and the scope kind — never any facts or company data — and parses
  * its JSON reply, failing closed to "overview". For All-companies filter questions
  * the reply also carries one filter and how many conditions the question asks for
- * (validated by lib/data-room-chat-filter.ts). POST /api/student/data-room-chat
+ * (validated by lib/data-room-chat-filter.ts); every reply carries a one-sentence
+ * opening for the answer, written without company data and checked by
+ * lib/data-room-chat-render.ts before it is shown. POST /api/student/data-room-chat
  * makes the gpt-4o call; lib/data-room-chat-policy.ts turns the decision into the
- * allowed facts and lib/data-room-chat-render.ts into the answer path. Also used by
- * the local eval.
+ * allowed facts and lib/data-room-chat-render.ts into the answer path.
  */
 
 import { parseRosterFilter, type RosterFilter } from "@/lib/data-room-chat-filter";
@@ -55,9 +56,14 @@ export type RouterDecision = {
   criteriaCount: number | null;
   /** The question asks for one specific detail (a number, amount, count, email or phone, a named vendor or product). */
   exactValue: boolean;
+  /**
+   * The router's one-sentence opening (unchecked; "" when missing). It is written
+   * without any company data; lib/data-room-chat-render.ts checks it before showing it.
+   */
+  intro: string;
 };
 
-/** What every unclear or invalid classification becomes: public facts only. */
+/** What every unclear or invalid classification becomes: public facts only, no opening. */
 export const OVERVIEW_DECISION: RouterDecision = {
   intent: "overview",
   topic: null,
@@ -65,6 +71,7 @@ export const OVERVIEW_DECISION: RouterDecision = {
   filter: null,
   criteriaCount: null,
   exactValue: false,
+  intro: "",
 };
 
 /** How many of the student's earlier questions the classifier sees. */
@@ -96,7 +103,7 @@ const TOPIC_LIST = QUESTION_TOPICS.map(
 /** The classifier's instructions (it never sees company data). */
 export const ROUTER_SYSTEM_PROMPT = [
   "You classify one question a student asks while researching companies in a sales-training Data Room. You never see any company information, only the question. Reply with a single JSON object and nothing else:",
-  '{"intent": string, "topic": string | null, "attribute": string | null, "filter": object | null, "criteria_count": number, "exact_value": boolean, "confidence": "high" | "low"}',
+  '{"intent": string, "topic": string | null, "attribute": string | null, "filter": object | null, "criteria_count": number, "exact_value": boolean, "intro": string, "confidence": "high" | "low"}',
   "",
   "intent (pick one):",
   '- overview: a general or open-ended question about the company or companies ("tell me about them", "what should I know?", "tell me everything", "summarize").',
@@ -121,6 +128,9 @@ export const ROUTER_SYSTEM_PROMPT = [
   'criteria_count: how many separate conditions the question asks to filter by ("which have online booking?" is 1; "dental clinics in Denver" is 2; 0 when it filters by nothing).',
   "",
   "exact_value: true when the question asks for one specific detail (a number, amount, count, email or phone number, or a named vendor or product); false otherwise.",
+  "",
+  'intro: ONE short, friendly sentence (at most 30 words) that responds to the question. It only frames what the student asked (for example "Here\'s what\'s on record about their software."): never say what the answer contains, never name or describe any company, and never use references such as C1 or [C1].',
+  'When the student asks you to judge, rank, pick or recommend, the intro says choosing is their call and points to the facts below (for example "Which one to pursue is your call; the facts below can help you compare."). Never write "better than", "the best", "recommend", "go with" or "I\'d pick".',
   "",
   "Rules:",
   '- specific_research needs a concrete angle. "Tell me everything", "what should I know?" and "anything else?" are overview.',
@@ -177,7 +187,8 @@ function isOneOf<T extends string>(values: readonly T[], value: unknown): value 
  * JSON, unknown values, low or missing confidence, or specific_research without a
  * topic. A filter outside the whitelist, or a criteria count that isn't a whole
  * number of 0 or more, becomes null (an All-companies question then gets the fixed
- * reply). exact_value is true only when it is exactly true.
+ * reply). exact_value is true only when it is exactly true. intro is the trimmed
+ * string, or "" when it isn't one (it is checked before it is shown).
  */
 export function parseRouterReply(raw: string | null | undefined): RouterDecision {
   let parsed: unknown;
@@ -196,6 +207,7 @@ export function parseRouterReply(raw: string | null | undefined): RouterDecision
     filter,
     criteria_count: criteriaCount,
     exact_value: exactValue,
+    intro,
     confidence,
   } = parsed as Record<string, unknown>;
   if (
@@ -213,6 +225,7 @@ export function parseRouterReply(raw: string | null | undefined): RouterDecision
     filter: parseRosterFilter(filter),
     criteriaCount: Number.isInteger(criteriaCount) && (criteriaCount as number) >= 0 ? (criteriaCount as number) : null,
     exactValue: exactValue === true,
+    intro: typeof intro === "string" ? intro.trim() : "",
   };
   return decision.intent === "specific_research" && decision.topic === null
     ? OVERVIEW_DECISION
