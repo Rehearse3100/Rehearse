@@ -2,8 +2,8 @@
  * data-room-chat-filter.test.ts
  * All-companies filters (pure): the whitelist (fields, operators, value types,
  * state codes), matching over the roster (unknown values never match), the list
- * answer (A–Z only, capped at 20, "…and n more", no matches) and the fixed reply
- * for anything that isn't one valid filter.
+ * answer (count intro, A–Z only, capped at 20, "…and n more", no matches) and the
+ * fixed reply for anything that isn't one valid filter.
  */
 
 import { describe, expect, it } from "vitest";
@@ -11,6 +11,7 @@ import {
   ALL_MODE_REPLY,
   answerAllCompanies,
   answerFilter,
+  matchCountIntro,
   matchesFilter,
   MAX_FILTER_CRITERIA,
   MAX_FILTER_RESULTS,
@@ -107,9 +108,9 @@ describe("matching", () => {
 });
 
 describe("the list answer", () => {
-  it("results match the roster, A–Z, each with its list line; no other order", () => {
+  it("results match the roster, A–Z, each with its list line, after a count intro; no other order", () => {
     expect(answerFilter({ field: "online_booking", op: "eq", value: true }, ROSTER)).toEqual({
-      intro: "",
+      intro: "3 companies match.",
       items: [
         { companyId: "aspen", companyName: "Aspen Vet Clinic", text: "Veterinary" },
         { companyId: "maple", companyName: "Maple Family Dentistry", text: "Dental · 3 locations · Boulder, CO" },
@@ -118,7 +119,16 @@ describe("the list answer", () => {
     });
   });
 
-  it("at most 20; the rest are counted in the intro", () => {
+  it("one match: the singular count", () => {
+    expect(answerFilter({ field: "territory", op: "eq", value: false }, ROSTER)).toEqual({
+      intro: "1 company matches.",
+      items: [{ companyId: "outdoor", companyName: "Summit Outdoor Gear", text: "Retail · 2 locations · Boise, ID" }],
+    });
+    expect(matchCountIntro(1)).toBe("1 company matches.");
+    expect(matchCountIntro(12)).toBe("12 companies match.");
+  });
+
+  it("at most 20; the count, then the rest counted on a second intro line", () => {
     const many: FilterCompany[] = Array.from({ length: 27 }, (_, i) => ({
       ...ROSTER[1]!,
       id: `c${i}`,
@@ -128,8 +138,8 @@ describe("the list answer", () => {
     expect(answer.items).toHaveLength(MAX_FILTER_RESULTS);
     expect(answer.items[0]?.companyName).toBe("Clinic 00");
     expect(answer.items[19]?.companyName).toBe("Clinic 19");
-    expect(answer.intro).toBe(moreMatchesIntro(7));
-    expect(moreMatchesIntro(7)).toBe("…and 7 more. Use the search box above the list to narrow it down.");
+    expect(answer.intro).toBe("27 companies match.\n…and 7 more. Use the search box above the list to narrow it down.");
+    expect(answer.intro).toBe(`${matchCountIntro(27)}\n${moreMatchesIntro(7)}`);
   });
 
   it("no matches", () => {

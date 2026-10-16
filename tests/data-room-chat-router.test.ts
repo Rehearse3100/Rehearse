@@ -56,6 +56,8 @@ describe("classifier input", () => {
       "filter (set it only when the scope is all companies and the intent is filter_list; otherwise null)",
       'field "state": op "eq", value the two-letter state code',
       "criteria_count: how many separate conditions the question asks to filter by",
+      'Questions phrased as "how many…", "which are…" or "list the…" with ONE condition are filter_list; read them charitably',
+      '"how many are located dental?" is filter_list with {"field": "industry", "op": "contains", "value": "dental"}',
     ]) {
       expect(ROUTER_SYSTEM_PROMPT, text).toContain(text);
     }

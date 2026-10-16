@@ -5,6 +5,7 @@ Updated: 2026-10-14 (eval fixes: no blank answers, no hidden-findings dumps, fac
 Updated: 2026-10-15 (Phase 2: a router call labels each question and a code-side policy decides which facts are allowed)
 Updated: 2026-10-15 (Phase 3: extractive answers — the model only selects fact ids; code renders every answer from the stored text; overview and attribute questions need no model)
 Updated: 2026-10-16 (Phase 4: in All companies mode the model never sees company data — one validated filter over public attributes runs in code; everything else gets a fixed reply)
+Updated: 2026-10-16 (filter answers start with a count; "how many / which are / list the" questions with one condition read as filters; `risks` also covers `growth`)
 Scope: `POST /api/student/data-room-chat`, its client `components/tempo/stages/ProspectingDataRoomChat.tsx`, and the pure helpers in `lib/data-room-chat-scope.ts`, `lib/data-room-chat-router.ts`, `lib/data-room-chat-filter.ts`, `lib/data-room-chat-policy.ts` and `lib/data-room-chat-render.ts`.
 
 **Previous state (2026-08-30):** the student attached companies with a picker; the model saw every attached company by name, with research findings for all of them, and replied in free text. That design let an answer about one company drift onto another, and let names come from the model.
@@ -126,9 +127,9 @@ The answer comes from the database (no model call):
 With All companies on, no model ever sees company data. After the router call (5.1):
 
 - `filter_list` with **one valid filter** and `criteria_count` ≤ `MAX_FILTER_CRITERIA` (= 1, a config constant) → the filter runs over the whole roster in code. Matching companies are listed **A–Z only** (no other order, no ranking), at most **20**, each `{ companyId, companyName, text: "{Industry} · {N} locations · {Metro}" }` from the database (the same line as name answers; `industry` is the column the company list shows).
-  - More than 20: intro `…and {n} more. Use the search box above the list to narrow it down.`
+  - Intro: the count, `{n} companies match.` (`1 company matches.` for one).
+  - More than 20: a second intro line, `…and {n} more. Use the search box above the list to narrow it down.`
   - No match: intro `No companies match that.`
-  - Up to 20: no intro.
 - **Anything else** — any other intent (overview, attribute lookup, specific research, compare, meta or bulk, off topic), more than one criterion, a missing or invalid filter, or a failed router call — gets exactly:
 
 ```
@@ -158,6 +159,7 @@ A missing (unknown) value never matches. An attribute question with All companie
 
 - intent: `overview` | `attribute_lookup` | `specific_research` | `compare` | `filter_list` | `meta_or_bulk` | `off_topic`; topic: a question topic from `lib/tempo-research-topics.ts` or null; attribute: `industry` | `locations` | `metro` | `territory` | `online_booking` | `size` | `contacts` | null.
 - filter (All companies `filter_list` only, otherwise null): `{ "field", "op", "value" }` from the whitelist (4.3); criteria_count: how many separate conditions the question filters by ("dental clinics in Denver" = 2).
+- Prompt rule: questions phrased as "how many…", "which are…" or "list the…" with ONE condition are `filter_list`, read charitably ("how many are located dental?" → `{"field": "industry", "op": "contains", "value": "dental"}`); the count intro answers "how many".
 - **Fails closed in code** (`parseRouterReply`): invalid JSON, unknown values, low or missing confidence, or `specific_research` without a topic → `overview`. A filter outside the whitelist, or a criteria count that isn't a whole number ≥ 0, becomes null (an All-companies question then gets the fixed reply). A failed router call also counts as `overview`.
 - Follow-ups ("tell me more about that") are understood from the recent questions; no answering step sees history.
 
@@ -172,7 +174,7 @@ A missing (unknown) value never matches. An attribute question with All companie
 | `meta_or_bulk` | public only; answered as the overview (no model call) | same |
 | `off_topic` | nothing; fixed reply `I can only help with researching these companies.` | same |
 
-Question topics → fact topics: `risks` → current_tools, budget, staffing, ownership, operations; `fit` → operations, growth, current_tools, budget, staffing, ownership; `recent_changes` → growth, current_tools, staffing, operations; every other topic → itself.
+Question topics → fact topics: `risks` → current_tools, budget, staffing, ownership, operations, growth; `fit` → operations, growth, current_tools, budget, staffing, ownership; `recent_changes` → growth, current_tools, staffing, operations; every other topic → itself.
 
 ---
 
@@ -300,6 +302,7 @@ Response: `{ "intro": string, "items": [{ "companyId", "companyName", "text" }] 
 - **2026-10-15, Phase 2:** the router and the code-side policy replaced the prompt's withholding rules; one exact sentence for "nothing found".
 - **2026-10-15, Phase 3:** extractive answers. Removed: the free-text answering prompt (and its single / multi / All prompt modes and compact lines), the scan of model prose for company names, refs and the words "references"/"labels", the stricter retry and the empty-answer retry with their reminders, the fallback reply `I can only answer about the companies in your question.`, the meta-or-bulk question substitution, and history in the answering call (`selectHistoryForScope`). Kept: id verification, scope checks, the out-of-scope reply, name questions, the router's fail-closed parsing, and name redaction for model input.
 - **2026-10-16, Phase 4:** All companies mode runs one validated filter in code (4.3); every other All-companies question gets the fixed one-thing-at-a-time reply. Removed: the All-companies answer paths (headline-only overview, one selection call over every company's facts, compare with one call per company for all companies and its 8-at-a-time limit). The compact multi/All prompt lines were already removed in Phase 3. Added: the list follow-up (1.1, step 0).
+- **2026-10-16:** filter answers start with a count intro ("{n} companies match." / "1 company matches."; "…and {n} more" becomes its second line); the router reads one-condition "how many / which are / list the" questions as `filter_list`; `risks` also covers `growth` (trap reachability, `docs/data-room-v2.md`).
 
 ---
 
@@ -307,7 +310,8 @@ Response: `{ "intro": string, "items": [{ "companyId", "companyName", "text" }] 
 
 - [ ] With Summit Dental Group open, "Tell me about them" → instantly, under the heading "Summit Dental Group": `Dental · 8 locations · …`, territory, online booking, blurb, signals — no research findings
 - [ ] All companies on + "Tell me about them" → "In All companies mode I can filter by one thing at a time, …"
-- [ ] All companies on + "Which companies are in Colorado?" → the Colorado companies A–Z (`Industry · N locations · Metro`), at most 20, then "…and n more" if there are more
+- [ ] All companies on + "Which companies are in Colorado?" → "{n} companies match." then the Colorado companies A–Z (`Industry · N locations · Metro`), at most 20, with "…and n more" under the count if there are more
+- [ ] All companies on + "how many are located dental?" → "{n} companies match." and the dental companies
 - [ ] All companies on + "Which dental clinics in Denver have online booking?" → the one-thing-at-a-time reply
 - [ ] All companies on + "Which companies have a budget freeze?" → the one-thing-at-a-time reply
 - [ ] After a list with one company, "What does it sell?" → answered about that company, and the All companies toggle turns off; with several listed → "Which one did you mean?" with them (up to 10)

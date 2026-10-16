@@ -26,7 +26,12 @@ export const ALL_MODE_REPLY =
 
 export const NO_FILTER_MATCHES_REPLY = "No companies match that.";
 
-/** The intro when more companies match than are listed. */
+/** The first intro line of every filter answer with matches. */
+export function matchCountIntro(count: number): string {
+  return count === 1 ? "1 company matches." : `${count} companies match.`;
+}
+
+/** The second intro line when more companies match than are listed. */
 export function moreMatchesIntro(extra: number): string {
   return `…and ${extra} more. Use the search box above the list to narrow it down.`;
 }
@@ -160,8 +165,10 @@ export function matchesFilter(company: FilterCompany, filter: RosterFilter): boo
 }
 
 /**
- * The filter's answer: matching companies A–Z (no other order, no ranking), up to
- * 20, each "{Industry} · {N} locations · {Metro}" under its name from the database.
+ * The filter's answer: a count intro ("{n} companies match."; with more than 20, a
+ * second line "…and {n} more. …"), then the matching companies A–Z (no other order,
+ * no ranking), up to 20, each "{Industry} · {N} locations · {Metro}" under its name
+ * from the database.
  */
 export function answerFilter(filter: RosterFilter, companies: readonly FilterCompany[]): ScopedAnswer {
   const matches = companies
@@ -172,7 +179,7 @@ export function answerFilter(filter: RosterFilter, companies: readonly FilterCom
   }
   const extra = matches.length - MAX_FILTER_RESULTS;
   return {
-    intro: extra > 0 ? moreMatchesIntro(extra) : "",
+    intro: [matchCountIntro(matches.length), ...(extra > 0 ? [moreMatchesIntro(extra)] : [])].join("\n"),
     items: matches.slice(0, MAX_FILTER_RESULTS).map((company) => ({
       companyId: company.id,
       companyName: company.name,

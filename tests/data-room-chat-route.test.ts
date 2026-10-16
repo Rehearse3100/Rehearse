@@ -448,10 +448,10 @@ describe("All companies: one validated filter, run in code", () => {
     return modelReply({ intent: "filter_list", topic: null, attribute: null, filter, criteria_count: criteriaCount, confidence: "high" });
   }
 
-  it("runs the filter over the roster: names from the database, A–Z, only the classifier is called", async () => {
+  it("runs the filter over the roster: a count, then names from the database A–Z; only the classifier is called", async () => {
     state.classify.mockResolvedValueOnce(filterReply({ field: "online_booking", op: "eq", value: true }));
     expect(await ask({ scope: ALL, newMessage: "Which ones have online booking?" })).toEqual({
-      intro: "",
+      intro: "2 companies match.",
       items: [
         { companyId: "maple", companyName: "Maple Family Dentistry", text: "Dental · 3 locations · Boulder, CO" },
         { companyId: "summit-outdoor", companyName: "Summit Outdoor Gear", text: "Retail · 2 locations · Boise, ID" },
@@ -483,6 +483,19 @@ describe("All companies: one validated filter, run in code", () => {
     expect(await run({ field: "territory", op: "eq", value: false })).toEqual(["Summit Outdoor Gear"]);
   });
 
+  it("a 'how many' question read as a filter: the count intro answers it (singular for one)", async () => {
+    state.classify.mockResolvedValueOnce(filterReply({ field: "industry", op: "contains", value: "dental" }));
+    const dental = (await ask({ scope: ALL, newMessage: "how many are located dental?" })) as { intro: string; items: unknown[] };
+    expect(dental.intro).toBe("4 companies match.");
+    expect(dental.items).toHaveLength(4);
+
+    state.classify.mockResolvedValueOnce(filterReply({ field: "territory", op: "eq", value: false }));
+    expect(await ask({ scope: ALL, newMessage: "How many are outside my territory?" })).toEqual({
+      intro: "1 company matches.",
+      items: [{ companyId: "summit-outdoor", companyName: "Summit Outdoor Gear", text: "Retail · 2 locations · Boise, ID" }],
+    });
+  });
+
   it("alphabetical, capped at 20, the rest counted; no matches", async () => {
     state.roster = Array.from({ length: 23 }, (_, i) => ({
       ...ROSTER[3],
@@ -497,7 +510,7 @@ describe("All companies: one validated filter, run in code", () => {
     expect(reply.items.map((item) => item.companyName)).toEqual(
       Array.from({ length: 20 }, (_, i) => `Clinic ${String(i).padStart(2, "0")} Health`)
     );
-    expect(reply.intro).toBe("…and 3 more. Use the search box above the list to narrow it down.");
+    expect(reply.intro).toBe("23 companies match.\n…and 3 more. Use the search box above the list to narrow it down.");
 
     state.classify.mockResolvedValueOnce(filterReply({ field: "industry", op: "eq", value: "Legal" }));
     expect(await ask({ scope: ALL, newMessage: "Which are law firms?" })).toEqual({ intro: "No companies match that.", items: [] });
