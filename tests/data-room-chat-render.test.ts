@@ -281,6 +281,8 @@ describe("the opening sentence (written from the finished answer)", () => {
       '{"opening": string}',
       '- opening: ONE short, friendly sentence (at most 30 words) that introduces the answer. It may summarise what the answer shows (for example "Four dental companies in Colorado offer online booking.").',
       "- Never add a fact, number or detail that isn't in the answer.",
+      '- For a list, use the total from the "N companies match" line, never the number of companies shown.',
+      '- When the answer is about one company, call it "this company", never "one company" or "the company below".',
       '- Never judge, rank or recommend a company. Never write "better than", "the best", "recommend", "go with", "I\'d pick", "strong fit" or "good fit".',
       '- Never name a company, and never refer to one as "Company 1", "Company 2" and so on.',
       '- If the student asks which company is better, which one to pick, or whether one is a good prospect, say that call is theirs and the facts below can help (for example "Which one to pursue is your call; the facts below can help you compare.").',
