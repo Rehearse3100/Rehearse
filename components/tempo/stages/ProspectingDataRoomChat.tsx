@@ -24,6 +24,7 @@ import {
   wordFragmentBeforeCaret,
   type ChatScope,
   type ScopeCompany,
+  type ScopeIndex,
 } from "@/lib/data-room-chat-scope";
 import { sanitizeAiResearchReply } from "@/lib/tempo-prospecting";
 
@@ -74,6 +75,56 @@ type ChatReply = {
   items?: unknown;
   error?: unknown;
 };
+
+type TextRange = { start: number; end: number };
+
+/**
+ * Where the selected companies' names sit in the input text, for colouring only:
+ * full names (longest first), then an identifying first word that belongs to one
+ * company, matched word by word the same way detection reads the text.
+ */
+function findSelectedNameRanges(
+  text: string,
+  index: ScopeIndex,
+  companyIds: readonly string[]
+): TextRange[] {
+  if (companyIds.length === 0 || text.length === 0) {
+    return [];
+  }
+  const tokens = Array.from(text.matchAll(/[A-Za-z0-9]+/g), (match) => ({
+    word: match[0].toLowerCase(),
+    start: match.index ?? 0,
+    end: (match.index ?? 0) + match[0].length,
+  }));
+  const taken = new Set<number>();
+  const ranges: TextRange[] = [];
+  const byLength = [...companyIds].sort(
+    (a, b) => (index.nameWordsById.get(b)?.length ?? 0) - (index.nameWordsById.get(a)?.length ?? 0)
+  );
+  for (const id of byLength) {
+    const nameWords = index.nameWordsById.get(id) ?? [];
+    if (nameWords.length === 0) {
+      continue;
+    }
+    for (let i = 0; i + nameWords.length <= tokens.length; i += 1) {
+      const fits = nameWords.every((word, k) => tokens[i + k]?.word === word && !taken.has(i + k));
+      if (fits) {
+        for (let k = i; k < i + nameWords.length; k += 1) {
+          taken.add(k);
+        }
+        ranges.push({ start: tokens[i]?.start ?? 0, end: tokens[i + nameWords.length - 1]?.end ?? 0 });
+      }
+    }
+  }
+  const selected = new Set(companyIds);
+  tokens.forEach((token, i) => {
+    const ids = index.firstWordIds.get(token.word);
+    if (!taken.has(i) && ids?.length === 1 && selected.has(ids[0] ?? "")) {
+      ranges.push({ start: token.start, end: token.end });
+    }
+  });
+  return ranges.sort((a, b) => a.start - b.start);
+}
 
 /** Short unique id for transcript keys. */
 function newMessageId(): string {
@@ -181,6 +232,8 @@ export function ProspectingDataRoomChat({
   const pendingCaretRef = useRef<number | null>(null);
   // Wraps the dropdown and the input (outside-click detection).
   const comboRef = useRef<HTMLDivElement>(null);
+  // Mirror of the input text behind it, where selected company names are coloured.
+  const mirrorRef = useRef<HTMLDivElement>(null);
   // Last open dropdown, kept on screen while the close animation plays.
   const lastPanelRef = useRef<DropdownPanel | null>(null);
   const listboxId = useId();
@@ -289,6 +342,37 @@ export function ProspectingDataRoomChat({
       : preview.kind === "companies"
         ? `About: ${preview.companies.map((company) => company.name).join(", ")}`
         : "Open a company or type a company's name";
+
+  // Selected companies (the same ones the "About:" chip shows) are coloured in the input.
+  const selectedNameRanges = findSelectedNameRanges(
+    input,
+    index,
+    preview.kind === "companies" ? preview.companies.map((company) => company.id) : []
+  );
+  const mirrorSegments: Array<{ text: string; isSelected: boolean }> = [];
+  let segmentStart = 0;
+  for (const range of selectedNameRanges) {
+    if (range.start > segmentStart) {
+      mirrorSegments.push({ text: input.slice(segmentStart, range.start), isSelected: false });
+    }
+    mirrorSegments.push({ text: input.slice(range.start, range.end), isSelected: true });
+    segmentStart = range.end;
+  }
+  if (segmentStart < input.length) {
+    mirrorSegments.push({ text: input.slice(segmentStart), isSelected: false });
+  }
+
+  // Keep the mirror scrolled with the input when the text is wider than the box.
+  const syncMirrorScroll = (): void => {
+    if (mirrorRef.current && inputRef.current) {
+      mirrorRef.current.scrollLeft = inputRef.current.scrollLeft;
+    }
+  };
+  useEffect(() => {
+    if (mirrorRef.current && inputRef.current) {
+      mirrorRef.current.scrollLeft = inputRef.current.scrollLeft;
+    }
+  }, [input, caret]);
 
   const handleInputChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
     setInput(event.target.value);
@@ -578,16 +662,16 @@ export function ProspectingDataRoomChat({
                     aria-selected={isHighlighted}
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => chooseRow(company)}
-                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-left transition-colors ${
+                    className={`w-full flex items-center gap-2 px-3 py-1 text-left transition-colors ${
                       isHighlighted ? "bg-secondary-fixed" : "hover:bg-surface-container-low"
                     }`}
                   >
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] font-medium text-on-surface">
+                      <span className="block truncate text-[13px] leading-tight font-medium text-on-surface">
                         {company.name}
                       </span>
                       {detail ? (
-                        <span className="block truncate text-[12px] text-on-surface-variant">
+                        <span className="block truncate text-[12px] leading-tight text-on-surface-variant">
                           {detail}
                         </span>
                       ) : null}
@@ -603,7 +687,25 @@ export function ProspectingDataRoomChat({
             </div>
           </div>
 
-          <div className="relative flex items-center">
+          <div className="group relative flex items-center">
+            {/* Mirror behind the transparent input text: same font, padding and border. */}
+            <div
+              ref={mirrorRef}
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 flex items-center overflow-hidden rounded-lg border border-transparent pl-3.5 pr-10 text-[13px] text-on-surface bg-surface-container-low group-focus-within:bg-white transition-colors"
+            >
+              <span className="whitespace-pre">
+                {mirrorSegments.map((segment, i) =>
+                  segment.isSelected ? (
+                    <span key={i} className="rounded-sm bg-secondary-fixed text-secondary">
+                      {segment.text}
+                    </span>
+                  ) : (
+                    <span key={i}>{segment.text}</span>
+                  )
+                )}
+              </span>
+            </div>
             <input
               ref={inputRef}
               type="text"
@@ -625,7 +727,9 @@ export function ProspectingDataRoomChat({
               aria-expanded={isPanelOpen}
               aria-controls={listboxId}
               aria-activedescendant={activeOption ? optionId(activeOption.id) : undefined}
-              className="w-full h-10 pl-3.5 pr-10 text-[13px] bg-surface-container-low border border-outline-variant rounded-lg text-on-surface placeholder:text-on-surface-variant/70 focus:outline-none focus:border-secondary focus:bg-white transition-all"
+              onScroll={syncMirrorScroll}
+              // Text is transparent (the mirror shows it); the caret and placeholder stay visible.
+              className="relative w-full h-10 pl-3.5 pr-10 text-[13px] bg-transparent border border-outline-variant rounded-lg text-transparent caret-on-surface selection:bg-secondary/20 placeholder:text-on-surface-variant/70 focus:outline-none focus:border-secondary transition-all"
             />
             <button
               type="button"
