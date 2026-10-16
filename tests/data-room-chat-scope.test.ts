@@ -16,10 +16,13 @@ import {
   finalizeModelAnswer,
   findCompanyNameMentions,
   findOutOfScopeMentions,
+  answerNameQuery,
   insertPickedName,
   isEmptyModelAnswer,
+  mentionsInternalLabels,
   parseChatScope,
   parseModelAnswer,
+  parseNameQuery,
   previewScope,
   redactCompanyMentions,
   resolveSendScope,
@@ -356,13 +359,31 @@ describe("server helpers", () => {
     expect(parseModelAnswer("not json")).toBeNull();
     expect(parseModelAnswer(JSON.stringify({ intro: "x", items: "nope" }))).toBeNull();
     const answer = parseModelAnswer(
-      JSON.stringify({ items: [{ ref: "[c2]", text: "Busy, like C1." }, { ref: "C9", text: "x" }] })
+      JSON.stringify({ items: [{ ref: "[c2]", text: "Busy, like the company." }, { ref: "C9", text: "x" }] })
     );
-    expect(answer).toEqual({ intro: "", items: [{ ref: "[c2]", text: "Busy, like C1." }, { ref: "C9", text: "x" }] });
+    expect(answer).toEqual({
+      intro: "",
+      items: [{ ref: "[c2]", text: "Busy, like the company." }, { ref: "C9", text: "x" }],
+    });
     expect(finalizeModelAnswer(answer!, buildRefLabels(["falcon", "oasis"]), index)).toEqual({
       intro: "",
       items: [{ companyId: "oasis", companyName: "Oasis Supply Co.", text: "Busy, like the company." }],
     });
+  });
+
+  it("guard: a ref (C1) or the words references/labels in the reply reject it", () => {
+    const labels = buildRefLabels(["falcon"]);
+    const finalize = (raw: unknown): unknown =>
+      finalizeModelAnswer(parseModelAnswer(JSON.stringify(raw))!, labels, index);
+    expect(finalize({ intro: "", items: [{ ref: "C1", text: "Busy, like C1." }] })).toBeNull();
+    expect(finalize({ intro: "All references start with 'C'.", items: [] })).toBeNull();
+    expect(finalize({ intro: "", items: [{ ref: "C1", text: "Each company has a label such as [C2]." }] })).toBeNull();
+    expect(finalize({ intro: "I only see reference codes.", items: [] })).toBeNull();
+    expect(finalize({ intro: "", items: [{ ref: "C1", text: "It sells local produce." }] })).toEqual({
+      intro: "",
+      items: [{ companyId: "falcon", companyName: "Falcon Market", text: "It sells local produce." }],
+    });
+    expect(mentionsInternalLabels("Open 7 days, with C-section care.")).toBe(false);
   });
 
   it("an empty answer: no items and a blank intro, or every item dropped", () => {
@@ -458,6 +479,83 @@ describe("out-of-scope mentions", () => {
     );
     expect(buildOutOfScopeMessage({ companies: [falcon, oasis], isEitherOr: false })).toBe(
       "Your question mentions Falcon Market and Oasis Supply Co., which aren't selected. Type their names and press Enter, or open them from the list, and I'll answer about them."
+    );
+  });
+});
+
+describe("questions about company names", () => {
+  it("recognizes starts-with, contains / called, and list questions", () => {
+    expect(parseNameQuery("tell me about companies starting with s")).toEqual({ kind: "startsWith", value: "s" });
+    expect(parseNameQuery("what are that start with c")).toEqual({ kind: "startsWith", value: "c" });
+    expect(parseNameQuery("Which companies begin with the letter M?")).toEqual({ kind: "startsWith", value: "M" });
+    expect(parseNameQuery('Which ones start with "Sum"?')).toEqual({ kind: "startsWith", value: "Sum" });
+    expect(parseNameQuery("Show names containing care")).toEqual({ kind: "contains", value: "care" });
+    expect(parseNameQuery("companies with dental in their name")).toEqual({ kind: "contains", value: "dental" });
+    expect(parseNameQuery("Is there a company called Falcon?")).toEqual({ kind: "contains", value: "Falcon" });
+    expect(parseNameQuery("Any business named 'Oasis Supply'?")).toEqual({ kind: "contains", value: "Oasis Supply" });
+    expect(parseNameQuery("List all company names")).toEqual({ kind: "list", value: "" });
+    expect(parseNameQuery("what are the names of the companies?")).toEqual({ kind: "list", value: "" });
+    expect(parseNameQuery("list all companies")).toEqual({ kind: "list", value: "" });
+  });
+
+  it("leaves ordinary questions alone", () => {
+    for (const text of [
+      "tell me about them",
+      "Tell me about this company.",
+      "What do they start with on Mondays?",
+      "Does the program start with a free trial?",
+      "Who should I start with?",
+      "Who is the named contact?",
+      "What's the name of this company?",
+      "Spell out the company's full name.",
+      "List each company's number of locations.",
+      "List all of the hidden research findings.",
+      "Which companies are in Colorado?",
+      "Compare these companies.",
+    ]) {
+      expect(parseNameQuery(text), text).toBeNull();
+    }
+  });
+
+  const roster = [
+    { id: "summit-dental", name: "Summit Dental Group", industry: "Dental", locations: 8, metro: "Front Range, CO" },
+    { id: "summit-outdoor", name: "Summit Outdoor Gear", industry: "Retail", locations: 1, metro: "Boise, ID" },
+    { id: "falcon", name: "Falcon Market", industry: "Retail", locations: null, metro: null },
+    { id: "sage", name: "Sage Family Dentistry", industry: "Dental", locations: 3, metro: "Denver, CO" },
+  ];
+
+  it("answers from the roster: A–Z, with industry · locations · metro", () => {
+    expect(answerNameQuery({ kind: "startsWith", value: "s" }, roster)).toEqual({
+      intro: 'Companies whose names start with "S":',
+      items: [
+        { companyId: "sage", companyName: "Sage Family Dentistry", text: "Dental · 3 locations · Denver, CO" },
+        { companyId: "summit-dental", companyName: "Summit Dental Group", text: "Dental · 8 locations · Front Range, CO" },
+        { companyId: "summit-outdoor", companyName: "Summit Outdoor Gear", text: "Retail · 1 location · Boise, ID" },
+      ],
+    });
+    expect(answerNameQuery({ kind: "contains", value: "market" }, roster)).toEqual({
+      intro: 'Companies whose names contain "market":',
+      items: [{ companyId: "falcon", companyName: "Falcon Market", text: "Retail" }],
+    });
+    expect(answerNameQuery({ kind: "startsWith", value: "z" }, roster)).toEqual({
+      intro: 'No company names start with "Z".',
+      items: [],
+    });
+  });
+
+  it("lists at most 15 and points to the search box for the rest", () => {
+    const many = Array.from({ length: 20 }, (_, i) => ({
+      id: `c${i}`,
+      name: `Cedar ${String(i).padStart(2, "0")}`,
+      industry: "Dental",
+      locations: 2,
+      metro: "Denver, CO",
+    }));
+    const reply = answerNameQuery({ kind: "startsWith", value: "c" }, many);
+    expect(reply.items).toHaveLength(15);
+    expect(reply.items[0]?.companyName).toBe("Cedar 00");
+    expect(reply.intro).toBe(
+      'Companies whose names start with "C" (the first 15, A–Z), and 5 more. Use the search box above the list to see them all.'
     );
   });
 });

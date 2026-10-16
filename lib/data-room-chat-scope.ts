@@ -650,6 +650,139 @@ export function findCompanyNameMentions(text: string, index: ScopeIndex): string
   return Array.from(hits);
 }
 
+// ── Server: questions about company names ───
+
+/** A question about company NAMES, answered by the server from the database. */
+export type NameQuery = {
+  kind: "startsWith" | "contains" | "list";
+  /** The letters or word asked about ("" for a list). */
+  value: string;
+};
+
+/** Most company names one name answer lists. */
+export const NAME_QUERY_MAX_RESULTS = 15;
+
+// The value asked about: a quoted phrase, or one word that ends the sentence (so
+// "start with on Mondays" or "start with a trial" are not name questions).
+const NAME_VALUE = `(?:["“]([^"”]{1,40})["”]|'([^']{1,40})'|([a-z0-9][a-z0-9&-]{0,29}))`;
+const VALUE_END = `(?=\\s*(?:[?.!,;:]|$))`;
+const LETTER_OR_WORD = `(?:the\\s+)?(?:letters?\\s+|word\\s+)?`;
+
+const STARTS_WITH_PATTERN = new RegExp(
+  `\\b(?:start(?:s|ing)?|begin(?:s|ning)?)\\s+with\\s+${LETTER_OR_WORD}${NAME_VALUE}${VALUE_END}`,
+  "i"
+);
+const NAMES_CONTAINING_PATTERN = new RegExp(
+  `\\bnames?\\s+(?:with|containing|that\\s+contains?|contains?|including|that\\s+includes?|having)\\s+${LETTER_OR_WORD}${NAME_VALUE}${VALUE_END}`,
+  "i"
+);
+const IN_THE_NAME_PATTERN = new RegExp(
+  `\\bwith\\s+${LETTER_OR_WORD}${NAME_VALUE}\\s+in\\s+(?:the|their|its)\\s+names?\\b`,
+  "i"
+);
+// "called X" / "named X" only after a company word, so "the named contact" isn't one.
+const CALLED_PATTERN = new RegExp(
+  `\\b(?:compan(?:y|ies)|ones?|business(?:es)?|anything|anyone|something|any)\\s+(?:that\\s+(?:is|are)\\s+|which\\s+(?:is|are)\\s+)?(?:called|named)\\s+${NAME_VALUE}${VALUE_END}`,
+  "i"
+);
+const LIST_PATTERNS = [
+  /\b(?:list|show|give|tell|what\s+are)\b[^?.!]{0,40}?\b(?:compan(?:y|ies)|business(?:es)?)['’]?\s*names\b/i,
+  /\bnames\s+of\s+(?:all\s+)?(?:the\s+)?(?:compan(?:y|ies)|business(?:es)?)\b/i,
+  /\b(?:list|show)\s+(?:me\s+)?(?:all\s+)?(?:of\s+)?(?:the\s+)?(?:compan(?:y|ies)|business(?:es)?)\s*(?:[?.!]|$)/i,
+];
+
+function matchedValue(match: RegExpMatchArray | null): string | null {
+  const value = match ? match[1] ?? match[2] ?? match[3] : undefined;
+  return value && value.trim().length > 0 ? value.trim() : null;
+}
+
+/**
+ * Recognizes a question about company NAMES (deterministic, no AI):
+ * "start(s/ing) with X" / "begin(s/ning) with X" → startsWith; "names with /
+ * containing X", "with X in the name", "a company called / named X" → contains;
+ * "list (all) company names", "names of all companies", "list all companies" →
+ * list. Returns null for anything else (e.g. "tell me about them").
+ */
+export function parseNameQuery(text: string): NameQuery | null {
+  const startsWith = matchedValue(text.match(STARTS_WITH_PATTERN));
+  if (startsWith) {
+    return { kind: "startsWith", value: startsWith };
+  }
+  const contains =
+    matchedValue(text.match(NAMES_CONTAINING_PATTERN)) ??
+    matchedValue(text.match(IN_THE_NAME_PATTERN)) ??
+    matchedValue(text.match(CALLED_PATTERN));
+  if (contains) {
+    return { kind: "contains", value: contains };
+  }
+  return LIST_PATTERNS.some((pattern) => pattern.test(text)) ? { kind: "list", value: "" } : null;
+}
+
+/** Roster fields a name answer shows (all from the database). */
+export type NameQueryCompany = {
+  id: string;
+  name: string;
+  industry: string;
+  locations: number | null;
+  metro: string | null;
+};
+
+/**
+ * The server's reply to a name question, built only from the roster (names never
+ * come from the model): up to 15 matching companies in the question's scope, A–Z,
+ * each with "{Industry} · {N} locations · {Metro}".
+ */
+export function answerNameQuery(query: NameQuery, companies: readonly NameQueryCompany[]): ScopedAnswer {
+  const needle = query.value.toLowerCase();
+  const matches = companies
+    .filter((company) => {
+      const name = company.name.toLowerCase();
+      return query.kind === "startsWith"
+        ? name.startsWith(needle)
+        : query.kind === "contains"
+          ? name.includes(needle)
+          : true;
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  // A single letter reads best in capitals ("S"); longer values stay as typed.
+  const shownValue = query.value.length === 1 ? query.value.toUpperCase() : query.value;
+  const condition =
+    query.kind === "startsWith"
+      ? `start with "${shownValue}"`
+      : query.kind === "contains"
+        ? `contain "${shownValue}"`
+        : null;
+
+  if (matches.length === 0) {
+    return { intro: condition ? `No company names ${condition}.` : "No company names to list.", items: [] };
+  }
+
+  const heading = condition ? `Companies whose names ${condition}` : "Company names";
+  const extra = matches.length - NAME_QUERY_MAX_RESULTS;
+  const intro =
+    extra > 0
+      ? `${heading} (the first ${NAME_QUERY_MAX_RESULTS}, A–Z), and ${extra} more. Use the search box above the list to see them all.`
+      : `${heading}:`;
+
+  return {
+    intro,
+    items: matches.slice(0, NAME_QUERY_MAX_RESULTS).map((company) => ({
+      companyId: company.id,
+      companyName: company.name,
+      text: [
+        company.industry.trim(),
+        company.locations !== null
+          ? `${company.locations} ${company.locations === 1 ? "location" : "locations"}`
+          : "",
+        company.metro?.trim() ?? "",
+      ]
+        .filter((part) => part.length > 0)
+        .join(" · "),
+    })),
+  };
+}
+
 // ── Server: model reply ───
 
 export type ModelAnswer = {
@@ -691,21 +824,31 @@ export function parseModelAnswer(raw: string | null | undefined): ModelAnswer | 
   return { intro: typeof intro === "string" ? intro : "", items: parsedItems };
 }
 
-/** Removes ref labels the model may have written inside a text. */
-function stripRefLabels(text: string): string {
-  return text.replace(/\[C\d+\]|\bC\d+\b/g, "the company");
+const INTERNAL_REF_PATTERN = /\bC\d+\b/;
+const INTERNAL_LABEL_WORD_PATTERN = /\breferences?\b|\blabels?\b/i;
+
+/**
+ * True when a text mentions our internal labels: a ref such as "C1" (or "[C1]"),
+ * or the words "reference(s)" / "label(s)". The guard treats this as a failure.
+ */
+export function mentionsInternalLabels(text: string): boolean {
+  return INTERNAL_REF_PATTERN.test(text) || INTERNAL_LABEL_WORD_PATTERN.test(text);
 }
 
 /**
- * Maps refs back to companies (names from the roster, never from the model),
- * drops refs that are not in scope, then rejects the answer (null) if the intro
- * or any text names a company.
+ * Maps refs back to companies (names from the roster, never from the model) and
+ * drops refs that are not in scope. Rejects the answer (null) if the intro or any
+ * text mentions internal labels (C1, "references", "labels") or names a company.
  */
 export function finalizeModelAnswer(
   answer: ModelAnswer,
   refLabels: ReadonlyMap<string, string>,
   index: ScopeIndex
 ): ScopedAnswer | null {
+  if ([answer.intro, ...answer.items.map((item) => item.text)].some(mentionsInternalLabels)) {
+    return null;
+  }
+
   const idByRef = new Map(Array.from(refLabels.entries()).map(([id, ref]) => [ref, id]));
   const seen = new Set<string>();
   const items: ScopedAnswer["items"] = [];
@@ -714,7 +857,7 @@ export function finalizeModelAnswer(
     const ref = item.ref.trim().replace(/^\[|\]$/g, "").toUpperCase();
     const companyId = idByRef.get(ref);
     const company = companyId ? index.byId.get(companyId) : undefined;
-    const text = stripRefLabels(item.text).trim();
+    const text = item.text.trim();
     if (!companyId || !company || seen.has(companyId) || text.length === 0) {
       continue;
     }
@@ -722,7 +865,7 @@ export function finalizeModelAnswer(
     items.push({ companyId, companyName: company.name, text });
   }
 
-  const intro = stripRefLabels(answer.intro).trim();
+  const intro = answer.intro.trim();
   const leaked = [intro, ...items.map((item) => item.text)].some(
     (text) => findCompanyNameMentions(text, index).length > 0
   );

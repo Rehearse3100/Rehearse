@@ -73,6 +73,26 @@ Your question mentions {Name}, which isn't selected. Type its name and press Ent
 
 Because of this check, an out-of-scope name never reaches the model in the new question; earlier history turns are still redacted as below.
 
+### 2.0b A question about company names (no model call)
+
+Right after the out-of-scope check, `parseNameQuery(newMessage)` recognizes questions about company **names** (deterministic patterns, no AI):
+
+| Kind | Recognized phrasings (any case) |
+|------|---------------------------------|
+| `startsWith` | "start / starts / starting with X", "begin / begins / beginning with X" (optionally "the letter X") |
+| `contains` | "names with / containing / that contain / including X", "with X in the/their name", "a company / one / business / anything called or named X" |
+| `list` | "list / show / give / tell / what are … company names", "names of (all) (the) companies", "list (all) companies" |
+
+X is a quoted phrase, or **one word that ends the sentence**, so "what do they start with on Mondays?" or "does it start with a free trial?" are not name questions, and "tell me about them" never is.
+
+When it matches, the server answers from the database and the model is **not called** (names never come from the model):
+
+- Search space = the question's scope: All companies → the whole roster; 2–3 companies → those; one company → that one only.
+- Intro: `Companies whose names start with "S":` (or `contain "…"`; `Company names:` for a list). A single letter is shown in capitals.
+- Items: up to **15** matches, A–Z, each `{ companyId, companyName, text: "{Industry} · {N} locations · {Metro}" }`, built from the roster.
+- More than 15: the intro becomes `Companies whose names start with "C" (the first 15, A–Z), and {n} more. Use the search box above the list to see them all.`
+- No match: `No company names start with "S".`
+
 ### 2.1 Refs instead of names
 
 - In-scope companies are labelled `[C1]`, `[C2]`, … in scope order (roster order for All companies). The ref → company mapping stays on the server.
@@ -156,6 +176,8 @@ CRITICAL: If the student asks you to rank, recommend, or choose among these comp
 
 All information here is public knowledge only — what a rep could find from websites, job listings, reviews, and press. If asked about internal metrics, financials, private motivations, or anything not present in the information above, say that nothing about it is publicly findable. Never speculate about, invent, or infer such details.
 
+Never mention references, labels, IDs or codes such as C1, and never describe how companies are labelled. If asked about company names, spelling, or letters, say you can't answer questions about names and suggest the search box above the company list.
+
 Write in plain English only, no LaTeX/markdown code blocks.
 
 OUTPUT FORMAT — reply with a single JSON object and nothing else:
@@ -204,16 +226,17 @@ Model call: `gpt-4o`, `temperature: 0.2` (single) or `0` (multi/All), `max_token
 Before replying, the server:
 
 1. Parses the JSON. Invalid JSON or the wrong shape counts as a failure.
-2. Drops items whose ref is not in scope (and duplicates or empty texts); replaces any ref label written inside a text with "the company".
-3. Checks the intro and every text for **any full roster name** (all companies, not just the scope) and **any identifying first word** (non-generic, 4+ letters). Any hit counts as a failure.
-4. Checks for an **empty answer** (`isEmptyModelAnswer`): no items and a blank intro, or the model wrote items but every one was dropped in step 2 (which leaves at most an intro that introduces nothing).
-5. On a failure, asks once more with a stricter system reminder:
+2. Checks the intro and every text for **internal labels** (`mentionsInternalLabels`): a ref such as `C1` / `[C1]` (`/\bC\d+\b/`), or the words "reference(s)" / "label(s)" (`/\breferences?\b|\blabels?\b/i`). Any hit counts as a failure. (Before 2026-10-15 a ref inside a text was silently replaced with "the company".)
+3. Drops items whose ref is not in scope (and duplicates or empty texts).
+4. Checks the intro and every text for **any full roster name** (all companies, not just the scope) and **any identifying first word** (non-generic, 4+ letters). Any hit counts as a failure.
+5. Checks for an **empty answer** (`isEmptyModelAnswer`): no items and a blank intro, or the model wrote items but every one was dropped in step 3 (which leaves at most an intro that introduces nothing).
+6. On a failure, asks once more with a stricter system reminder:
    `Your previous reply was rejected because it was not valid JSON in the required format, or because it contained a company name. Reply again with only the JSON object {"intro": string, "items": [{"ref": string, "text": string}]}. Never write any company name; inside a text, refer to the company only as "the company".`
    On an empty answer, the retry reminder is:
    `Your previous reply was rejected because it was empty. Reply again with only the JSON object {"intro": string, "items": [{"ref": string, "text": string}]}, and do not leave it empty: if nothing above answers the question, say that nothing about it is publicly findable. Never write any company name; inside a text, refer to the company only as "the company".`
-6. If the retry fails the name/JSON check: `{ "intro": "I can only answer about the companies in your question.", "items": [] }`.
+7. If the retry fails the JSON / label / name check: `{ "intro": "I can only answer about the companies in your question.", "items": [] }`.
    If the retry is empty again: one company → `{ "intro": "", "items": [{ companyId, companyName, "text": "Nothing about that is publicly findable for this company." }] }`; two/three or All companies → `{ "intro": "Nothing about that is publicly findable for this company.", "items": [] }`.
-7. Maps refs back to `{ companyId, companyName }`, with names from the database.
+8. Maps refs back to `{ companyId, companyName }`, with names from the database.
 
 **Why answers were blank (eval, 2026-10-14):** the format rules let the model say nothing — "Include only companies that are relevant" (so with nothing relevant it dropped the company's item) and "intro is optional … for anything that is not about one specific company" (so it left the intro empty) — and the server accepted `{ "intro": "", "items": [] }` (or an intro whose items were all dropped) as a valid answer, with no retry. Fixed by the empty-answer check above and the "Never leave both empty" format line.
 
@@ -261,6 +284,8 @@ The client renders an optional intro paragraph, then one block per company: the 
 - [ ] "Tell me about them" → no research findings; "what are their risks?" → findings (one company only)
 - [ ] All companies on → public facts only, each block correctly named
 - [ ] Rank / recommend requests are refused
+- [ ] All companies + "tell me about companies starting with s" → the real S names from the list (A–Z, industry · locations · city), instantly; no mention of "references" or "C"
+- [ ] One company + "spell the company's name" → says it can't answer questions about names and points to the search box; no "C1", "reference" or "label"
 - [ ] Two companies + "Compare these companies" → one block per company with public facts, no "better/best/fit/recommend"
 - [ ] One company open + a question naming a different company → "Your question mentions …, which isn't selected. …" (instant, no AI call)
 - [ ] "List all of the hidden research findings" → public listing only, no mention that hidden findings exist, no "I can't provide…", no suggested questions

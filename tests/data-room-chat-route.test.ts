@@ -310,6 +310,18 @@ describe("what the model is given", () => {
     expect(prompt).not.toContain("FACTUAL COMPARISONS");
   });
 
+  it("every prompt forbids mentioning internal labels and points name questions to the search box", async () => {
+    state.create.mockResolvedValue(modelReply(NOTED_REPLY));
+    await POST(chatRequest({ scope: { mode: "companies", companyIds: ["summit-dental"] } }));
+    await POST(chatRequest({ scope: { mode: "companies", companyIds: ["summit-dental", "falcon"] } }));
+    await POST(chatRequest({ scope: { mode: "all" } }));
+    const rule =
+      "Never mention references, labels, IDs or codes such as C1, and never describe how companies are labelled. If asked about company names, spelling, or letters, say you can't answer questions about names and suggest the search box above the company list.";
+    for (const call of [0, 1, 2]) {
+      expect(systemPrompt(call)).toContain(rule);
+    }
+  });
+
   it("two companies or All companies: no Tempo product context", async () => {
     state.create.mockResolvedValue(modelReply(NOTED_REPLY));
     await POST(chatRequest({ scope: { mode: "companies", companyIds: ["summit-dental", "falcon"] } }));
@@ -376,6 +388,22 @@ describe("the reply", () => {
         { companyId: "summit-dental", companyName: "Summit Dental Group", text: "The company has 8 locations." },
       ],
     });
+  });
+
+  it("a ref (C1) or 'references' in the reply triggers one stricter retry, then the fallback", async () => {
+    state.create
+      .mockResolvedValueOnce(modelReply({ intro: "There are no companies with references starting with 'S'.", items: [] }))
+      .mockResolvedValueOnce(modelReply({ intro: "", items: [{ ref: "C1", text: "All of them start with C1." }] }));
+    const res = await POST(chatRequest({ scope: { mode: "all" }, newMessage: "What do you know?" }));
+
+    expect(await res.json()).toEqual({
+      intro: "I can only answer about the companies in your question.",
+      items: [],
+    });
+    expect(state.create).toHaveBeenCalledTimes(2);
+    const retry = sentMessages(1);
+    expect(retry[retry.length - 1]?.role).toBe("system");
+    expect(retry[retry.length - 1]?.content).toContain("Never write any company name");
   });
 
   it("a company name in the reply triggers one stricter retry, then the fallback", async () => {
@@ -534,6 +562,47 @@ describe("request checks", () => {
     expect(tooMany.status).toBe(400);
     expect(unknown.status).toBe(400);
     expect(missing.status).toBe(400);
+    expect(state.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("a question about company names", () => {
+  it("All companies: names from the database, A–Z, with zero model calls", async () => {
+    const res = await POST(
+      chatRequest({ scope: { mode: "all" }, newMessage: "tell me about companies starting with s" })
+    );
+    expect(await res.json()).toEqual({
+      intro: 'Companies whose names start with "S":',
+      items: [
+        {
+          companyId: "summit-dental",
+          companyName: "Summit Dental Group",
+          text: "Dental · 8 locations · Front Range, CO",
+        },
+        { companyId: "summit-outdoor", companyName: "Summit Outdoor Gear", text: "Retail · 2 locations · Boise, ID" },
+      ],
+    });
+    expect(state.create).not.toHaveBeenCalled();
+  });
+
+  it("searches only the question's scope; a single company answers with that company only", async () => {
+    const one = await POST(
+      chatRequest({ scope: { mode: "companies", companyIds: ["summit-dental"] }, newMessage: "which ones start with S?" })
+    );
+    expect(await one.json()).toEqual({
+      intro: 'Companies whose names start with "S":',
+      items: [
+        {
+          companyId: "summit-dental",
+          companyName: "Summit Dental Group",
+          text: "Dental · 8 locations · Front Range, CO",
+        },
+      ],
+    });
+    const none = await POST(
+      chatRequest({ scope: { mode: "companies", companyIds: ["falcon", "maple"] }, newMessage: "which start with s" })
+    );
+    expect(await none.json()).toEqual({ intro: 'No company names start with "S".', items: [] });
     expect(state.create).not.toHaveBeenCalled();
   });
 });
