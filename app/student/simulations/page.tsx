@@ -33,8 +33,6 @@ export const metadata: Metadata = {
 type AttemptSimJoin = {
   id: string;
   title: string;
-  persona_name: string;
-  persona_role?: string;
   product_context?: string;
 } | null;
 
@@ -69,14 +67,15 @@ export default async function StudentSimulationsPage(): Promise<React.ReactEleme
     supabase
       .from("attempts")
       .select(
-        "id, class_id, current_stage, stage_data, simulation_id, started_at, simulations ( id, title, persona_name, persona_role, product_context ), classes ( id, name )"
+        "id, class_id, current_stage, stage_data, simulation_id, started_at, simulations ( id, title, product_context ), classes ( id, name )"
       )
       .eq("student_id", session.studentId)
       .eq("status", ATTEMPT_STATUS.IN_PROGRESS)
       .order("started_at", { ascending: false }),
     supabase
       .from("attempts")
-      .select("id, total_score, completed_at, simulations ( id, title, persona_name )")
+      // No persona name: it can give away the right contact.
+      .select("id, total_score, completed_at, simulations ( id, title )")
       .eq("student_id", session.studentId)
       .eq("status", ATTEMPT_STATUS.COMPLETED)
       .order("completed_at", { ascending: false })
@@ -135,8 +134,6 @@ export default async function StudentSimulationsPage(): Promise<React.ReactEleme
       attemptId: row.id,
       simulationId,
       title,
-      personaName: sim?.persona_name ?? null,
-      personaRole: sim?.persona_role ?? null,
       className: cls?.name ?? null,
       stagesCompleted: stageCountByAttempt.get(row.id) ?? 0,
       continueHref,

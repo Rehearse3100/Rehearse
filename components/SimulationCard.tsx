@@ -1,6 +1,9 @@
 /**
  * SimulationCard.tsx
- * Student class-detail simulation card — Stitch visual treatment.
+ * Student class-detail simulation card — Stitch visual treatment. Shows the title
+ * and description only: no persona name or role, which can give away the right
+ * contact (in Tempo, the persona is the answer). It is a client component, so it
+ * takes only the fields it shows; nothing else reaches the browser.
  */
 
 "use client";
@@ -10,8 +13,11 @@ import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import { TOTAL_STAGES_COUNT } from "@/lib/constants";
 import type { Simulation } from "@/types";
 
+/** The simulation fields the card shows (never the persona or its prompt). */
+export type SimulationCardSummary = Pick<Simulation, "title" | "description" | "product_context">;
+
 type SimulationCardProps = {
-  simulation: Simulation;
+  simulation: SimulationCardSummary;
   actionLabel: string;
   href: string;
   stagesCompleted?: number;
@@ -36,9 +42,6 @@ export function SimulationCard({
     100,
     Math.round((stagesCompleted / TOTAL_STAGES_COUNT) * 100)
   );
-  const personaLine = [simulation.persona_name, simulation.persona_role]
-    .filter(Boolean)
-    .join(" · ");
   const descriptionLine =
     simulation.description?.trim() || simulation.product_context?.trim() || null;
 
@@ -63,12 +66,6 @@ export function SimulationCard({
         </div>
 
         <div className="space-y-2 mb-6 flex-1">
-          {personaLine && (
-            <div className="flex items-center gap-2 text-on-surface-variant font-body-md text-body-md">
-              <MaterialIcon name="person" className="text-[16px] shrink-0" />
-              <span>{personaLine}</span>
-            </div>
-          )}
           {descriptionLine && (
             <div className="flex items-start gap-2 text-on-surface-variant font-body-md text-body-md">
               <MaterialIcon name="inventory_2" className="text-[16px] shrink-0 mt-0.5" />

@@ -196,10 +196,11 @@ export default async function StudentClassPage({
                 stagesCompleted,
               });
 
+              // Only what the card shows reaches the browser (no persona or its prompt).
               return (
                 <SimulationCard
                   key={sim.id}
-                  simulation={sim}
+                  simulation={{ title: sim.title, description: sim.description, product_context: sim.product_context }}
                   accentColor={isDefaultClass ? "#00000b" : classDetail.accentColor}
                   actionLabel={hasStarted ? "Continue" : "Start Simulation"}
                   href={href}

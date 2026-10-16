@@ -1,6 +1,7 @@
 /**
  * StudentAttemptHistory.tsx
- * Lists completed simulation attempts with scores.
+ * Lists completed simulation attempts with scores. Shows no persona name, which can
+ * give away the right contact (in Tempo, the persona is the answer).
  */
 
 "use client";
@@ -14,7 +15,7 @@ export type StudentAttemptRow = {
   id: string;
   total_score: number;
   completed_at: string | null;
-  simulations: { id: string; title: string; persona_name: string } | null;
+  simulations: { id: string; title: string } | null;
 };
 
 type StudentAttemptHistoryProps = {
@@ -77,11 +78,6 @@ export function StudentAttemptHistory({
               >
                 <td className="py-3 px-4 font-body-md text-body-md text-on-surface font-medium">
                   <p>{sim?.title ?? "Simulation"}</p>
-                  {sim?.persona_name && (
-                    <p className="font-label-sm text-label-sm text-on-surface-variant font-normal">
-                      {sim.persona_name}
-                    </p>
-                  )}
                 </td>
                 <td className="py-3 px-4 font-code-md text-code-md text-on-surface">
                   {row.total_score}/600

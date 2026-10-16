@@ -1,19 +1,18 @@
 /**
  * StudentOngoingSimulations.tsx
- * Lists in-progress attempts the student has actually started.
+ * Lists in-progress attempts the student has actually started. Shows no persona
+ * name or role, which can give away the right contact (in Tempo, the persona is
+ * the answer).
  */
 
 import Link from "next/link";
 import { StudentEmptyState } from "@/components/student/StudentEmptyState";
-import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import { TOTAL_STAGES_COUNT } from "@/lib/constants";
 
 export type StudentOngoingRow = {
   attemptId: string;
   simulationId: string;
   title: string;
-  personaName: string | null;
-  personaRole: string | null;
   className: string | null;
   stagesCompleted: number;
   continueHref: string;
@@ -46,7 +45,6 @@ export function StudentOngoingSimulations({
           100,
           Math.round((row.stagesCompleted / TOTAL_STAGES_COUNT) * 100)
         );
-        const personaLine = [row.personaName, row.personaRole].filter(Boolean).join(" · ");
 
         return (
           <article
@@ -70,13 +68,6 @@ export function StudentOngoingSimulations({
                   play_arrow
                 </span>
               </div>
-
-              {personaLine && (
-                <div className="flex items-center gap-2 text-on-surface-variant font-body-md text-body-md">
-                  <MaterialIcon name="person" className="text-[16px] shrink-0" />
-                  <span>{personaLine}</span>
-                </div>
-              )}
 
               <div className="mt-auto space-y-2 pt-2">
                 <div className="flex justify-between items-center font-label-sm text-label-sm">

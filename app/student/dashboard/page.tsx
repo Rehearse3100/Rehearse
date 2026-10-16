@@ -35,7 +35,8 @@ export default async function StudentDashboardPage(): Promise<React.ReactElement
   const supabase = createServiceClient();
   const { data: completedAttempts } = await supabase
     .from("attempts")
-    .select("id, total_score, completed_at, simulations ( id, title, persona_name )")
+    // No persona name: it can give away the right contact.
+    .select("id, total_score, completed_at, simulations ( id, title )")
     .eq("student_id", session.studentId)
     .eq("status", "completed")
     .order("completed_at", { ascending: false })
