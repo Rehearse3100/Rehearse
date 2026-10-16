@@ -359,6 +359,12 @@ export function buildOutOfScopeMessage(mention: OutOfScopeMention): string {
 
 // ── Scope on send ───
 
+/** The previous question: its scope, and the company that was open when it was sent. */
+export type LastQuestion = {
+  scope: ChatScope;
+  openCompanyId: string | null;
+};
+
 export type ScopeInput = {
   index: ScopeIndex;
   text: string;
@@ -366,6 +372,8 @@ export type ScopeInput = {
   /** Companies picked from suggestions (or from "Which one did you mean?"). */
   pickedIds: readonly string[];
   openCompanyId: string | null;
+  /** The previous question, for follow-ups that name no company (null or omitted: none). */
+  lastQuestion?: LastQuestion | null;
 };
 
 export type ScopeDecision =
@@ -374,9 +382,25 @@ export type ScopeDecision =
   | { kind: "error"; message: string };
 
 /**
+ * Follow-up scope: the previous question's 1–3 companies, as long as the student
+ * hasn't opened a different company since it was sent (the open company then is
+ * compared with the open company now). Null when it doesn't apply, including when
+ * the previous question was about All companies.
+ */
+function followUpScopeIds(input: ScopeInput): string[] | null {
+  const last = input.lastQuestion;
+  if (!last || last.scope.mode !== "companies" || last.openCompanyId !== input.openCompanyId) {
+    return null;
+  }
+  const ids = last.scope.companyIds.filter((id) => input.index.byId.has(id));
+  return ids.length > 0 ? ids : null;
+}
+
+/**
  * Scope for sending, in priority order: (1) All companies; (2) picked companies
  * plus companies named in the text (an ambiguous first word asks instead, and
- * more than 3 is an error); (3) the open company; (4) nothing → error.
+ * more than 3 is an error); (3) the previous question's companies, unless a
+ * different company was opened since; (4) the open company; (5) nothing → error.
  */
 export function resolveSendScope(input: ScopeInput): ScopeDecision {
   if (input.allCompanies) {
@@ -396,6 +420,10 @@ export function resolveSendScope(input: ScopeInput): ScopeDecision {
   if (ids.length > 0) {
     return { kind: "send", scope: { mode: "companies", companyIds: ids } };
   }
+  const followUp = followUpScopeIds(input);
+  if (followUp) {
+    return { kind: "send", scope: { mode: "companies", companyIds: followUp } };
+  }
   if (input.openCompanyId && input.index.byId.has(input.openCompanyId)) {
     return { kind: "send", scope: { mode: "companies", companyIds: [input.openCompanyId] } };
   }
@@ -408,8 +436,9 @@ export type ScopePreview =
   | { kind: "none" };
 
 /**
- * Live scope for the header chip: the same priority as resolveSendScope, but an
- * ambiguous word or too many companies never blocks the preview.
+ * Live scope for the "Current:" line: the same priority as resolveSendScope
+ * (including follow-ups), but an ambiguous word or too many companies never
+ * blocks the preview.
  */
 export function previewScope(input: ScopeInput): ScopePreview {
   if (input.allCompanies) {
@@ -418,10 +447,9 @@ export function previewScope(input: ScopeInput): ScopePreview {
   const picked = input.pickedIds.filter((id) => input.index.byId.has(id));
   const detected = detectCompanies(input.index, input.text, picked).companyIds;
   const ids = Array.from(new Set([...picked, ...detected]));
-  const fallback =
-    ids.length === 0 && input.openCompanyId && input.index.byId.has(input.openCompanyId)
-      ? [input.openCompanyId]
-      : ids;
+  const openCompanyIds =
+    input.openCompanyId && input.index.byId.has(input.openCompanyId) ? [input.openCompanyId] : [];
+  const fallback = ids.length > 0 ? ids : followUpScopeIds(input) ?? openCompanyIds;
   const companies = fallback
     .map((id) => input.index.byId.get(id))
     .filter((company): company is ScopeCompany => Boolean(company));

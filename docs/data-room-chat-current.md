@@ -19,10 +19,11 @@ The client works out a scope for every question; the server trusts only the comp
    - A name is detected by its **full name** (any case, whole words) or by its **first word** when that word is non-generic, at least 4 letters, and belongs to exactly one company.
    - A first word shared by 2+ companies (e.g. "Summit") is **ambiguous**: nothing is sent; the student sees "Which one did you mean?" with the options in the dropdown above the input, and picking one sends.
    - More than 3 companies → "Ask about up to 3 companies, or turn on All companies." (not sent).
-3. **The open company** on the company page.
-4. Nothing → "Open a company or type a company's name first." (not sent).
+3. **Follow-ups: the previous question's companies** (one, or the same 2–3), when the message names no company, and the student hasn't opened a different company in the list since that question. The client keeps `{ scope, openCompanyId }` for the last question sent (in memory; the saved transcript is unchanged) and compares that open company with the one open now. A previous All-companies question is not reused. After a page reload there is no previous question yet, so follow-ups start from the open company.
+4. **The open company** on the company page.
+5. Nothing → "Open a company or type a company's name first." (not sent).
 
-A plain text line next to the **All companies** toggle (above the input) shows the same scope live ("Current: …", "Current: All companies", or "Open a company or type a company's name"). The toggle is a pill: a dotted outline (grey round dots) when off, a solid soft-black outline on hover, and a solid soft-black outline filled soft black (white text) when selected (`on-surface-variant`, not blue, so it doesn't stand out). Nothing else changes on hover (no shadow, tint or bold).
+A plain text line next to the **All companies** toggle (above the input) shows the same scope live, follow-ups included, ("Current: …", "Current: All companies", or "Open a company or type a company's name"). The toggle is a pill: a dotted outline (grey round dots) when off, a solid soft-black outline on hover, and a solid soft-black outline filled soft black (white text) when selected (`on-surface-variant`, not blue, so it doesn't stand out). Nothing else changes on hover (no shadow, tint or bold).
 
 ### 1.2 Generic words (computed from the roster itself)
 

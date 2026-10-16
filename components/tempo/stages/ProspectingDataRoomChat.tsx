@@ -2,8 +2,9 @@
  * ProspectingDataRoomChat.tsx
  * Data Room AI Research Assistant: one transcript for the whole Data Room.
  * Each question is about a scope worked out live (lib/data-room-chat-scope.ts):
- * All companies, companies picked from suggestions or named in the text, or the
- * open company. Type-to-pick: after 3 letters, matching companies appear in a
+ * All companies, companies picked from suggestions or named in the text, the
+ * previous question's companies (follow-ups, until a different company is opened),
+ * or the open company. Type-to-pick: after 3 letters, matching companies appear in a
  * dropdown above the input (Enter picks the highlighted one, then Enter sends); "Which one did you
  * mean?" uses the same dropdown. The server receives company ids only and returns
  * per-company blocks; names shown come from the server reply.
@@ -23,6 +24,7 @@ import {
   textContainsCompanyName,
   wordFragmentBeforeCaret,
   type ChatScope,
+  type LastQuestion,
   type ScopeCompany,
   type ScopeIndex,
 } from "@/lib/data-room-chat-scope";
@@ -243,6 +245,10 @@ export function ProspectingDataRoomChat({
   const [allCompanies, setAllCompanies] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const [suggestionsHidden, setSuggestionsHidden] = useState(false);
+  // The previous question's scope and the company open when it was sent (follow-ups
+  // stay on it until a different company is opened). Kept in memory only; the saved
+  // transcript is unchanged, so after a reload follow-ups start from the open company.
+  const [lastQuestion, setLastQuestion] = useState<LastQuestion | null>(null);
   const [ambiguity, setAmbiguity] = useState<{ word: string; options: ScopeCompany[] } | null>(
     null
   );
@@ -356,6 +362,7 @@ export function ProspectingDataRoomChat({
     allCompanies,
     pickedIds: activePickedIds,
     openCompanyId,
+    lastQuestion,
   });
   const scopeLabel =
     preview.kind === "all"
@@ -434,6 +441,7 @@ export function ProspectingDataRoomChat({
       allCompanies,
       pickedIds: [...activePickedIds, ...extraPickedIds],
       openCompanyId,
+      lastQuestion,
     });
     if (decision.kind === "error") {
       setNotice(decision.message);
@@ -455,6 +463,7 @@ export function ProspectingDataRoomChat({
     const withQuestion = [...messages, userMessage];
 
     setMessages(withQuestion);
+    setLastQuestion({ scope, openCompanyId });
     setInput("");
     setCaret(0);
     setPickedIds([]);

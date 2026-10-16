@@ -154,7 +154,7 @@ describe("company detection", () => {
   });
 });
 
-describe("scope on send (priority 1–4)", () => {
+describe("scope on send (priority 1–5)", () => {
   const base = { index, text: "what are their risks?", allCompanies: false, pickedIds: [], openCompanyId: "maple" };
 
   it("1. All companies wins over everything", () => {
@@ -202,6 +202,76 @@ describe("scope on send (priority 1–4)", () => {
     ).toEqual({
       kind: "send",
       scope: { mode: "companies", companyIds: ["falcon", "evergreen", "bison"] },
+    });
+  });
+
+  describe("follow-ups (the previous question's companies)", () => {
+    const askedAboutFalcon = {
+      scope: { mode: "companies" as const, companyIds: ["falcon"] },
+      openCompanyId: "maple",
+    };
+
+    it("a follow-up with no name reuses the last scope (one company, or the same 2–3)", () => {
+      expect(resolveSendScope({ ...base, lastQuestion: askedAboutFalcon })).toEqual({
+        kind: "send",
+        scope: { mode: "companies", companyIds: ["falcon"] },
+      });
+      const twoCompanies = {
+        scope: { mode: "companies" as const, companyIds: ["falcon", "evergreen"] },
+        openCompanyId: "maple",
+      };
+      expect(resolveSendScope({ ...base, lastQuestion: twoCompanies })).toEqual({
+        kind: "send",
+        scope: { mode: "companies", companyIds: ["falcon", "evergreen"] },
+      });
+    });
+
+    it("opening a different company since the last question resets to the open company", () => {
+      expect(resolveSendScope({ ...base, openCompanyId: "cedar", lastQuestion: askedAboutFalcon })).toEqual({
+        kind: "send",
+        scope: { mode: "companies", companyIds: ["cedar"] },
+      });
+    });
+
+    it("All companies and named or picked companies still override", () => {
+      expect(resolveSendScope({ ...base, allCompanies: true, lastQuestion: askedAboutFalcon })).toEqual({
+        kind: "send",
+        scope: { mode: "all" },
+      });
+      expect(resolveSendScope({ ...base, text: "and Bison?", lastQuestion: askedAboutFalcon })).toEqual({
+        kind: "send",
+        scope: { mode: "companies", companyIds: ["bison"] },
+      });
+      expect(
+        resolveSendScope({ ...base, text: "Oasis Supply Co.?", pickedIds: ["oasis"], lastQuestion: askedAboutFalcon })
+      ).toEqual({ kind: "send", scope: { mode: "companies", companyIds: ["oasis"] } });
+    });
+
+    it("no previous question → the open company; a previous All-companies question isn't reused", () => {
+      expect(resolveSendScope({ ...base, lastQuestion: null })).toEqual({
+        kind: "send",
+        scope: { mode: "companies", companyIds: ["maple"] },
+      });
+      expect(
+        resolveSendScope({ ...base, lastQuestion: { scope: { mode: "all" }, openCompanyId: "maple" } })
+      ).toEqual({ kind: "send", scope: { mode: "companies", companyIds: ["maple"] } });
+    });
+
+    it("with no company open, the last scope is reused instead of the 'open a company' error", () => {
+      expect(
+        resolveSendScope({ ...base, openCompanyId: null, lastQuestion: { ...askedAboutFalcon, openCompanyId: null } })
+      ).toEqual({ kind: "send", scope: { mode: "companies", companyIds: ["falcon"] } });
+    });
+
+    it("the live preview shows the same follow-up company", () => {
+      expect(previewScope({ ...base, lastQuestion: askedAboutFalcon })).toEqual({
+        kind: "companies",
+        companies: [ROSTER[6]],
+      });
+      expect(previewScope({ ...base, openCompanyId: "cedar", lastQuestion: askedAboutFalcon })).toEqual({
+        kind: "companies",
+        companies: [ROSTER[2]],
+      });
     });
   });
 
