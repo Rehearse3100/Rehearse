@@ -3,14 +3,15 @@
  * Data Room AI Research Assistant: one transcript for the whole Data Room.
  * Each question is about a scope worked out live (lib/data-room-chat-scope.ts):
  * All companies, companies picked from suggestions or named in the text, or the
- * open company. Type-to-pick: after 3 letters, matching companies appear above
- * the input (Tab picks, Enter always sends). The server receives company ids only
- * and returns per-company blocks; names shown come from the server reply.
+ * open company. Type-to-pick: after 3 letters, matching companies appear in a
+ * dropdown above the input (Tab picks, Enter always sends); "Which one did you
+ * mean?" uses the same dropdown. The server receives company ids only and returns
+ * per-company blocks; names shown come from the server reply.
  */
 
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import type { DataRoomCompany } from "@/app/api/student/data-room/route";
 import {
@@ -27,6 +28,21 @@ import {
 import { sanitizeAiResearchReply } from "@/lib/tempo-prospecting";
 
 const STORAGE_PREFIX = "tempo-data-room-chat-v2-";
+
+// Dropdown motion, the same as the ☰ menu (TempoStageMenu). Open: fade in and drop
+// 4px into place (150ms ease-out); visibility isn't transitioned, so it shows at once.
+const PANEL_OPEN =
+  "visible opacity-100 translate-y-0 scale-100 transition-[opacity,transform] duration-150 ease-out";
+// Close: the reverse (100ms ease-in); visibility is transitioned, so it hides after the fade.
+const PANEL_CLOSED =
+  "invisible opacity-0 -translate-y-1 scale-[0.98] pointer-events-none transition-[opacity,transform,visibility] duration-100 ease-in";
+
+/** What the dropdown above the input shows: suggestions, or "Which one did you mean?". */
+type DropdownPanel = {
+  mode: "suggestions" | "ambiguity";
+  rows: ScopeCompany[];
+  highlighted: number;
+};
 
 type AnswerItem = {
   companyId: string;
@@ -138,8 +154,8 @@ type ProspectingDataRoomChatProps = {
 };
 
 /**
- * AI Research Assistant pane: scope chip, transcript, All companies toggle,
- * type-to-pick suggestions, and the input.
+ * AI Research Assistant pane: scope chip, transcript, All companies toggle, and
+ * the input with its suggestions / "Which one did you mean?" dropdown.
  */
 export function ProspectingDataRoomChat({
   attemptId,
@@ -163,6 +179,11 @@ export function ProspectingDataRoomChat({
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const pendingCaretRef = useRef<number | null>(null);
+  // Wraps the dropdown and the input (outside-click detection).
+  const comboRef = useRef<HTMLDivElement>(null);
+  // Last open dropdown, kept on screen while the close animation plays.
+  const lastPanelRef = useRef<DropdownPanel | null>(null);
+  const listboxId = useId();
 
   const index = useMemo(
     () =>
@@ -172,6 +193,18 @@ export function ProspectingDataRoomChat({
           name: company.name,
           industry: company.industry,
         }))
+      ),
+    [companies]
+  );
+
+  // "Industry · City" under each dropdown row, so look-alike names can be told apart.
+  const detailById = useMemo(
+    () =>
+      new Map(
+        companies.map((company) => {
+          const city = company.metro?.split(",")[0]?.trim() ?? "";
+          return [company.id, [company.industry, city].filter((part) => part.length > 0).join(" · ")];
+        })
       ),
     [companies]
   );
@@ -212,7 +245,36 @@ export function ProspectingDataRoomChat({
   const fragment = wordFragmentBeforeCaret(input, caret);
   const suggestions =
     suggestionsHidden || !fragment ? [] : suggestCompanies(index, fragment.fragment);
-  const highlighted = Math.min(highlight, Math.max(0, suggestions.length - 1));
+
+  // "Which one did you mean?" takes the dropdown over from suggestions while it's open.
+  const panelRows = ambiguity ? ambiguity.options : suggestions;
+  const highlighted = Math.min(highlight, Math.max(0, panelRows.length - 1));
+  const panel: DropdownPanel | null =
+    panelRows.length > 0
+      ? { mode: ambiguity ? "ambiguity" : "suggestions", rows: panelRows, highlighted }
+      : null;
+  if (panel) {
+    lastPanelRef.current = panel;
+  }
+  const shownPanel = panel ?? lastPanelRef.current;
+  const isPanelOpen = panel !== null;
+  const optionId = (companyId: string): string => `${listboxId}-option-${companyId}`;
+  const activeOption = panel ? panel.rows[panel.highlighted] : undefined;
+
+  // Close the dropdown on a click anywhere outside it and the input.
+  useEffect(() => {
+    if (!isPanelOpen) {
+      return;
+    }
+    const handlePointerDown = (event: MouseEvent): void => {
+      if (comboRef.current && !comboRef.current.contains(event.target as Node)) {
+        setSuggestionsHidden(true);
+        setAmbiguity(null);
+      }
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [isPanelOpen]);
 
   const preview = previewScope({
     index,
@@ -249,6 +311,8 @@ export function ProspectingDataRoomChat({
     setHighlight(0);
     setNotice(null);
     setAmbiguity(null);
+    // The dropdown closes after a pick; typing opens it again.
+    setSuggestionsHidden(true);
   };
 
   const sendMessage = async (extraPickedIds: string[] = []): Promise<void> => {
@@ -270,6 +334,9 @@ export function ProspectingDataRoomChat({
     }
     if (decision.kind === "ask") {
       setAmbiguity({ word: decision.word, options: decision.options });
+      setHighlight(0);
+      // Keep keyboard control (↑/↓, Tab, Escape) even when Send was clicked.
+      inputRef.current?.focus();
       return;
     }
 
@@ -335,24 +402,34 @@ export function ProspectingDataRoomChat({
       void sendMessage();
       return;
     }
-    if (suggestions.length === 0) {
+    if (!panel) {
       return;
     }
     if (event.key === "Tab" && !event.shiftKey) {
       event.preventDefault();
-      const company = suggestions[highlighted];
+      const company = panel.rows[panel.highlighted];
       if (company) {
-        pickSuggestion(company);
+        chooseRow(company);
       }
     } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       const step = event.key === "ArrowDown" ? 1 : -1;
-      setHighlight((highlighted + step + suggestions.length) % suggestions.length);
+      setHighlight((panel.highlighted + step + panel.rows.length) % panel.rows.length);
     } else if (event.key === "Escape") {
-      // Hide suggestions only; don't also close the slide-over.
+      // Close the dropdown only (the typed text stays); don't also close the slide-over.
       event.preventDefault();
       event.stopPropagation();
       setSuggestionsHidden(true);
+      setAmbiguity(null);
+    }
+  };
+
+  /** A dropdown row was chosen: insert the name (suggestions) or send (ambiguity). */
+  const chooseRow = (company: ScopeCompany): void => {
+    if (panel?.mode === "ambiguity") {
+      void sendMessage([company.id]);
+    } else {
+      pickSuggestion(company);
     }
   };
 
@@ -463,77 +540,103 @@ export function ProspectingDataRoomChat({
           </button>
         </div>
 
-        {ambiguity ? (
-          <div className="space-y-1.5" role="group" aria-label="Which one did you mean?">
-            <p className="text-[12px] font-medium text-on-surface">Which one did you mean?</p>
-            <div className="flex flex-wrap gap-1.5">
-              {ambiguity.options.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  onClick={() => void sendMessage([option.id])}
-                  className="h-7 px-2.5 rounded-full border border-outline-variant bg-white text-[12px] font-medium text-on-surface hover:bg-surface-container transition-colors"
-                >
-                  {option.name}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {suggestions.length > 0 ? (
-          <div className="flex flex-wrap gap-1.5" role="listbox" aria-label="Suggested companies">
-            {suggestions.map((company, i) => (
-              <button
-                key={company.id}
-                type="button"
-                role="option"
-                aria-selected={i === highlighted}
-                // Keep focus in the input so typing can continue.
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => pickSuggestion(company)}
-                className={`h-7 px-2.5 rounded-full text-[12px] font-medium flex items-center gap-1.5 transition-colors ${
-                  i === highlighted
-                    ? "bg-secondary-fixed text-secondary"
-                    : "bg-surface-container text-on-surface-variant hover:bg-surface-container-high"
-                }`}
-              >
-                {company.name}
-                {i === highlighted ? (
-                  <span className="px-1 rounded border border-secondary/30 text-[10px] leading-4">
-                    Tab
-                  </span>
-                ) : null}
-              </button>
-            ))}
-          </div>
-        ) : null}
-
         {notice ? <p className="text-[12px] text-error">{notice}</p> : null}
 
-        <div className="relative flex items-center">
-          <input
-            ref={inputRef}
-            type="text"
-            value={input}
-            onChange={handleInputChange}
-            onSelect={(event) =>
-              setCaret(event.currentTarget.selectionStart ?? event.currentTarget.value.length)
-            }
-            onKeyDown={handleKeyDown}
-            placeholder="Type a message"
-            aria-label="Ask the AI Research Assistant"
-            className="w-full h-10 pl-3.5 pr-10 text-[13px] bg-surface-container-low border border-outline-variant rounded-lg text-on-surface placeholder:text-on-surface-variant/70 focus:outline-none focus:border-secondary focus:bg-white transition-all"
-          />
-          <button
-            type="button"
-            onClick={() => void sendMessage()}
-            disabled={isLoading || !input.trim()}
-            className="absolute right-1.5 w-7 h-7 rounded-md bg-primary-container text-white flex items-center justify-center hover:bg-primary transition-colors disabled:opacity-40"
-            aria-label="Send message"
+        <div ref={comboRef} className="relative">
+          {/* Dropdown above the input, same width; stays mounted so closing can animate. */}
+          <div
+            // Clicks inside keep focus in the input so typing can continue.
+            onMouseDown={(event) => event.preventDefault()}
+            className={`absolute bottom-full left-0 right-0 mb-1.5 z-20 py-1 bg-white border border-outline-variant rounded-lg shadow-lg origin-bottom motion-reduce:transition-none ${
+              isPanelOpen ? PANEL_OPEN : PANEL_CLOSED
+            }`}
           >
-            <MaterialIcon name="arrow_upward" className="text-[16px]" />
-          </button>
+            {shownPanel?.mode === "ambiguity" ? (
+              <p
+                id={`${listboxId}-heading`}
+                className="px-3 pt-1 pb-1.5 text-[12px] font-medium text-on-surface"
+              >
+                Which one did you mean?
+              </p>
+            ) : null}
+            <div
+              id={listboxId}
+              role="listbox"
+              aria-label={shownPanel?.mode === "ambiguity" ? undefined : "Suggested companies"}
+              aria-labelledby={shownPanel?.mode === "ambiguity" ? `${listboxId}-heading` : undefined}
+            >
+              {(shownPanel?.rows ?? []).map((company, i) => {
+                const isHighlighted = i === shownPanel?.highlighted;
+                const detail = detailById.get(company.id) ?? company.industry;
+                return (
+                  <button
+                    key={company.id}
+                    id={optionId(company.id)}
+                    type="button"
+                    role="option"
+                    tabIndex={-1}
+                    aria-selected={isHighlighted}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => chooseRow(company)}
+                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-left transition-colors ${
+                      isHighlighted ? "bg-secondary-fixed" : "hover:bg-surface-container-low"
+                    }`}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-medium text-on-surface">
+                        {company.name}
+                      </span>
+                      {detail ? (
+                        <span className="block truncate text-[12px] text-on-surface-variant">
+                          {detail}
+                        </span>
+                      ) : null}
+                    </span>
+                    {isHighlighted ? (
+                      <span className="shrink-0 px-1 rounded border border-secondary/30 text-[10px] leading-4 text-secondary">
+                        Tab
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="relative flex items-center">
+            <input
+              ref={inputRef}
+              type="text"
+              value={input}
+              onChange={handleInputChange}
+              onSelect={(event) =>
+                setCaret(event.currentTarget.selectionStart ?? event.currentTarget.value.length)
+              }
+              onKeyDown={handleKeyDown}
+              onBlur={() => {
+                // The dropdown closes when the input loses focus.
+                setSuggestionsHidden(true);
+                setAmbiguity(null);
+              }}
+              placeholder="Type a message"
+              aria-label="Ask the AI Research Assistant"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={isPanelOpen}
+              aria-controls={listboxId}
+              aria-activedescendant={activeOption ? optionId(activeOption.id) : undefined}
+              className="w-full h-10 pl-3.5 pr-10 text-[13px] bg-surface-container-low border border-outline-variant rounded-lg text-on-surface placeholder:text-on-surface-variant/70 focus:outline-none focus:border-secondary focus:bg-white transition-all"
+            />
+            <button
+              type="button"
+              onClick={() => void sendMessage()}
+              disabled={isLoading || !input.trim()}
+              className="absolute right-1.5 w-7 h-7 rounded-md bg-primary-container text-white flex items-center justify-center hover:bg-primary transition-colors disabled:opacity-40"
+              aria-label="Send message"
+            >
+              <MaterialIcon name="arrow_upward" className="text-[16px]" />
+            </button>
+          </div>
         </div>
       </div>
     </section>
