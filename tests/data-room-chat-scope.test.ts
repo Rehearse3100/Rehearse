@@ -498,8 +498,18 @@ describe("questions about company names", () => {
     expect(parseNameQuery("list all companies")).toEqual({ kind: "list", value: "" });
   });
 
+  it("starts-with and contains beat a list; typo'd verbs count", () => {
+    expect(parseNameQuery("what is names of companies startign with S")).toEqual({ kind: "startsWith", value: "S" });
+    expect(parseNameQuery("names of companies starting with B")).toEqual({ kind: "startsWith", value: "B" });
+    expect(parseNameQuery("list the companies whose names begining with t")).toEqual({ kind: "startsWith", value: "t" });
+    expect(parseNameQuery("which ones statring with c")).toEqual({ kind: "startsWith", value: "c" });
+    expect(parseNameQuery("list company names containing dental")).toEqual({ kind: "contains", value: "dental" });
+  });
+
   it("leaves ordinary questions alone", () => {
     for (const text of [
+      "Are they staffed with nurses?",
+      "Does the clinic stay with its current vendor?",
       "tell me about them",
       "Tell me about this company.",
       "What do they start with on Mondays?",

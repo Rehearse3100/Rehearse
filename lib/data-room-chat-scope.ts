@@ -668,10 +668,17 @@ const NAME_VALUE = `(?:["“]([^"”]{1,40})["”]|'([^']{1,40})'|([a-z0-9][a-z0
 const VALUE_END = `(?=\\s*(?:[?.!,;:]|$))`;
 const LETTER_OR_WORD = `(?:the\\s+)?(?:letters?\\s+|word\\s+)?`;
 
+// A starts-with verb, typos included: any word starting "sta" or "beg", 5–9 letters,
+// followed by "with" (start, starting, startign, begins, beginning …).
 const STARTS_WITH_PATTERN = new RegExp(
-  `\\b(?:start(?:s|ing)?|begin(?:s|ning)?)\\s+with\\s+${LETTER_OR_WORD}${NAME_VALUE}${VALUE_END}`,
+  `\\b((?:sta|beg)[a-z]{2,6})\\s+with\\s+${LETTER_OR_WORD}${NAME_VALUE}${VALUE_END}`,
   "i"
 );
+const CORRECT_STARTS_WITH_VERB = /^(?:start(?:s|ing)?|begin(?:s|ning)?)$/i;
+// A typo'd verb counts only in a name context or for a letter or two, so ordinary
+// questions like "Are they staffed with nurses?" are never name questions.
+const NAME_CONTEXT = /\b(?:names?|compan(?:y|ies)|business(?:es)?)\b/i;
+const MAX_TYPO_VALUE_LENGTH_WITHOUT_CONTEXT = 2;
 const NAMES_CONTAINING_PATTERN = new RegExp(
   `\\bnames?\\s+(?:with|containing|that\\s+contains?|contains?|including|that\\s+includes?|having)\\s+${LETTER_OR_WORD}${NAME_VALUE}${VALUE_END}`,
   "i"
@@ -691,20 +698,38 @@ const LIST_PATTERNS = [
   /\b(?:list|show)\s+(?:me\s+)?(?:all\s+)?(?:of\s+)?(?:the\s+)?(?:compan(?:y|ies)|business(?:es)?)\s*(?:[?.!]|$)/i,
 ];
 
-function matchedValue(match: RegExpMatchArray | null): string | null {
-  const value = match ? match[1] ?? match[2] ?? match[3] : undefined;
+/** The NAME_VALUE groups (quoted, single-quoted, bare) start at `firstGroup`. */
+function matchedValue(match: RegExpMatchArray | null, firstGroup = 1): string | null {
+  const value = match
+    ? match[firstGroup] ?? match[firstGroup + 1] ?? match[firstGroup + 2]
+    : undefined;
   return value && value.trim().length > 0 ? value.trim() : null;
 }
 
+/** The starts-with value, if the text asks which names start with something. */
+function startsWithValue(text: string): string | null {
+  const match = text.match(STARTS_WITH_PATTERN);
+  const value = matchedValue(match, 2);
+  if (!match || !value) {
+    return null;
+  }
+  const isTypo = !CORRECT_STARTS_WITH_VERB.test(match[1] ?? "");
+  return !isTypo || NAME_CONTEXT.test(text) || value.length <= MAX_TYPO_VALUE_LENGTH_WITHOUT_CONTEXT
+    ? value
+    : null;
+}
+
 /**
- * Recognizes a question about company NAMES (deterministic, no AI):
- * "start(s/ing) with X" / "begin(s/ning) with X" → startsWith; "names with /
- * containing X", "with X in the name", "a company called / named X" → contains;
- * "list (all) company names", "names of all companies", "list all companies" →
- * list. Returns null for anything else (e.g. "tell me about them").
+ * Recognizes a question about company NAMES (deterministic, no AI), checked in
+ * this order so starts-with and contains beat a list:
+ * "start(s/ing) with X" / "begin(s/ning) with X" (typos too, e.g. "startign with")
+ * → startsWith; "names with / containing X", "with X in the name", "a company
+ * called / named X" → contains; "list (all) company names", "names of all
+ * companies", "list all companies" → list. Returns null for anything else (e.g.
+ * "tell me about them").
  */
 export function parseNameQuery(text: string): NameQuery | null {
-  const startsWith = matchedValue(text.match(STARTS_WITH_PATTERN));
+  const startsWith = startsWithValue(text);
   if (startsWith) {
     return { kind: "startsWith", value: startsWith };
   }
