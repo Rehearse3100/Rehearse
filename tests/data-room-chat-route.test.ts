@@ -4,9 +4,11 @@
  * client (no network). One to three companies, extractive answers: overview,
  * compare and attribute questions are rendered with no answering call; specific
  * research and filter questions show every finding the policy allowed, then the
- * public facts one selection call picks (it sees public facts only); selected ids
- * are checked against the facts given and rendered from the stored text with names
- * from the database. All companies: one validated filter run in code
+ * public facts one selection call picks (it sees the allowed findings and public
+ * facts and can't add or remove a finding); the exact-detail intro when the router
+ * asks for one exact detail and no fact states it (also above contacts); selected
+ * ids are checked against the facts given and rendered from the stored text with
+ * names from the database. All companies: one validated filter run in code
  * (only the classifier is called), anything else the fixed reply. Also: the router
  * call (sees no facts, fails closed), the out-of-scope mention reply, company-name
  * questions and request checks.
@@ -218,13 +220,14 @@ function modelReply(body: unknown): { choices: Array<{ message: { content: strin
 function routerReply(
   intent: string,
   topic: string | null = null,
-  attribute: string | null = null
+  attribute: string | null = null,
+  exactValue = false
 ): { choices: Array<{ message: { content: string } }> } {
-  return modelReply({ intent, topic, attribute, confidence: "high" });
+  return modelReply({ intent, topic, attribute, exact_value: exactValue, confidence: "high" });
 }
 
-function selection(ids: unknown[], noRelevantFacts = false): { choices: Array<{ message: { content: string } }> } {
-  return modelReply({ fact_ids: ids, no_relevant_facts: noRelevantFacts });
+function selection(ids: unknown[], exactAnswer = false): { choices: Array<{ message: { content: string } }> } {
+  return modelReply({ fact_ids: ids, exact_answer: exactAnswer });
 }
 
 function chatRequest(body: Record<string, unknown>): Request {
@@ -303,6 +306,27 @@ describe("answers rendered with no answering call", () => {
     expect(state.create).not.toHaveBeenCalled();
   });
 
+  it("contacts asked for an exact detail (an email or phone): the intro above the contacts line, no model call", async () => {
+    state.classify.mockResolvedValueOnce(routerReply("attribute_lookup", null, "contacts", true));
+    expect(await ask({ scope: ONE, newMessage: "What's the office manager's email?" })).toEqual({
+      intro: "That exact detail isn't publicly findable. Related facts:",
+      items: [
+        {
+          companyId: "summit-dental",
+          companyName: "Summit Dental Group",
+          text: "Contacts: Dana Reyes, Director of Operations (Operations).",
+        },
+      ],
+    });
+    // No contacts at all: the nothing-findable reply stays, without the intro.
+    state.classify.mockResolvedValueOnce(routerReply("attribute_lookup", null, "contacts", true));
+    expect(await ask({ scope: { mode: "companies", companyIds: ["maple"] }, newMessage: "What's their phone number?" })).toEqual({
+      intro: "",
+      items: [{ companyId: "maple", companyName: "Maple Family Dentistry", text: NOTHING_FINDABLE_REPLY }],
+    });
+    expect(state.create).not.toHaveBeenCalled();
+  });
+
   it("compare: each company's overview, side by side, with no model after the router", async () => {
     state.classify.mockResolvedValueOnce(routerReply("compare"));
     expect(await ask({ scope: TWO, newMessage: "Compare these companies" })).toEqual({
@@ -331,7 +355,7 @@ describe("answers rendered with no answering call", () => {
 });
 
 describe("specific research and the selection call", () => {
-  it("one company: the selection call gets the question and the public facts only, as 'id: fact' lines", async () => {
+  it("one company: the selection call gets the question, the allowed findings and the public facts, as 'id: fact' lines", async () => {
     state.classify.mockResolvedValueOnce(routerReply("specific_research", "risks"));
     state.create.mockResolvedValueOnce(selection([]));
     await ask({
@@ -351,6 +375,8 @@ describe("specific research and the selection call", () => {
     expect(messages[0]).toEqual({ role: "system", content: SELECTION_SYSTEM_PROMPT });
     expect(messages[1]?.content.split("\n").slice(0, 2)).toEqual(["Question: What risks does [C1] have?", "Facts:"]);
     expect(factLines()).toEqual([
+      `C1:h:0: ${TOOLS_FINDING}`,
+      `C1:h:1: ${BUDGET_FINDING}`,
       "C1:p:industry: Industry: Dental.",
       "C1:p:locations: 8 locations across Front Range, CO.",
       "C1:p:metro: Metro area: Front Range, CO.",
@@ -362,7 +388,7 @@ describe("specific research and the selection call", () => {
       "C1:s:0: Opened 8th location three months ago",
     ]);
     const sent = JSON.stringify(messages);
-    for (const leaked of [TOOLS_FINDING, BUDGET_FINDING, AMENITIES_FINDING, "Summit", "summit-dental", "Tell me about them"]) {
+    for (const leaked of [AMENITIES_FINDING, "Summit", "summit-dental", "Tell me about them"]) {
       expect(sent, leaked).not.toContain(leaked);
     }
   });
@@ -381,6 +407,48 @@ describe("specific research and the selection call", () => {
           text: `${TOOLS_FINDING}\n${BUDGET_FINDING}\nSummit Dental Group runs eight clinics. Summit is growing fast.`,
         },
       ],
+    });
+  });
+
+  it("findings are always every allowed one, in stored order, whatever the selection picks, omits or reorders", async () => {
+    const expected = {
+      intro: "",
+      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: `${TOOLS_FINDING}\n${BUDGET_FINDING}` }],
+    };
+    for (const picked of [[], ["C1:h:1"], ["C1:h:1", "C1:h:0", "C1:h:1"], ["C1:h:2"]]) {
+      state.classify.mockResolvedValueOnce(routerReply("specific_research", "risks"));
+      state.create.mockResolvedValueOnce(selection(picked, true));
+      expect(await ask({ scope: ONE }), JSON.stringify(picked)).toEqual(expected);
+    }
+  });
+
+  it("an exact detail no fact states: the intro, then the related facts; not when a fact states it or no exact detail was asked", async () => {
+    const revenue = { scope: ONE, newMessage: "What's their annual revenue?" };
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "budget", null, true));
+    state.create.mockResolvedValueOnce(selection([], false));
+    expect(await ask(revenue)).toEqual({
+      intro: "That exact detail isn't publicly findable. Related facts:",
+      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: BUDGET_FINDING }],
+    });
+
+    const plain = {
+      intro: "",
+      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: BUDGET_FINDING }],
+    };
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "budget", null, true));
+    state.create.mockResolvedValueOnce(selection(["C1:h:1"], true));
+    expect(await ask(revenue)).toEqual(plain);
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "budget", null, false));
+    state.create.mockResolvedValueOnce(selection([], false));
+    expect(await ask(revenue)).toEqual(plain);
+  });
+
+  it("an exact detail with no facts at all keeps the nothing-findable reply (no intro)", async () => {
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "ownership", null, true));
+    state.create.mockResolvedValueOnce(selection([], false));
+    expect(await ask({ scope: ONE, newMessage: "How many owners does it have?" })).toEqual({
+      intro: "",
+      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: NOTHING_FINDABLE_REPLY }],
     });
   });
 

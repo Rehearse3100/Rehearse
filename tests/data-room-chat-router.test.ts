@@ -98,10 +98,41 @@ describe("classifier reply", () => {
   it("accepts a valid, confident decision", () => {
     expect(
       parseRouterReply(reply({ intent: "specific_research", topic: "risks", attribute: null, confidence: "high" }))
-    ).toEqual({ intent: "specific_research", topic: "risks", attribute: null, filter: null, criteriaCount: null });
+    ).toEqual({
+      intent: "specific_research",
+      topic: "risks",
+      attribute: null,
+      filter: null,
+      criteriaCount: null,
+      exactValue: false,
+    });
     expect(
       parseRouterReply(reply({ intent: "attribute_lookup", topic: null, attribute: "locations", confidence: "high" }))
-    ).toEqual({ intent: "attribute_lookup", topic: null, attribute: "locations", filter: null, criteriaCount: null });
+    ).toEqual({
+      intent: "attribute_lookup",
+      topic: null,
+      attribute: "locations",
+      filter: null,
+      criteriaCount: null,
+      exactValue: false,
+    });
+  });
+
+  it("exact_value is true only when the reply says exactly true; missing or invalid → false", () => {
+    const exact = (value: unknown): boolean =>
+      parseRouterReply(
+        reply({ intent: "specific_research", topic: "budget", attribute: null, exact_value: value, confidence: "high" })
+      ).exactValue;
+    expect(exact(true)).toBe(true);
+    expect(exact(false)).toBe(false);
+    for (const invalid of [undefined, null, "true", "yes", 1, {}]) {
+      expect(exact(invalid), String(invalid)).toBe(false);
+    }
+    expect(OVERVIEW_DECISION.exactValue).toBe(false);
+    expect(ROUTER_SYSTEM_PROMPT).toContain('"exact_value": boolean');
+    expect(ROUTER_SYSTEM_PROMPT).toContain(
+      "exact_value: true when the question asks for one specific detail (a number, amount, count, email or phone number, or a named vendor or product); false otherwise."
+    );
   });
 
   it("reads one whitelisted filter and the criteria count; anything else becomes null, the decision stays", () => {
@@ -115,6 +146,7 @@ describe("classifier reply", () => {
       attribute: null,
       filter: { field: "online_booking", op: "eq", value: true },
       criteriaCount: 1,
+      exactValue: false,
     });
     expect(filterReply({ field: "software", op: "eq", value: "Zentrix" }, 1)).toMatchObject({
       intent: "filter_list",

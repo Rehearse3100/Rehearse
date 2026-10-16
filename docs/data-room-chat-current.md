@@ -7,6 +7,7 @@ Updated: 2026-10-15 (Phase 3: extractive answers — the model only selects fact
 Updated: 2026-10-16 (Phase 4: in All companies mode the model never sees company data — one validated filter over public attributes runs in code; everything else gets a fixed reply)
 Updated: 2026-10-16 (filter answers start with a count; "how many / which are / list the" questions with one condition read as filters; `risks` also covers `growth`)
 Updated: 2026-10-16 (helpful answers: allowed findings shown directly; compare without a model; cap only for broad topics; narrower off-topic)
+Updated: 2026-10-16 (exact detail: "That exact detail isn't publicly findable. Related facts:" when the question asks for one specific detail no fact states)
 Scope: `POST /api/student/data-room-chat`, its client `components/tempo/stages/ProspectingDataRoomChat.tsx`, and the pure helpers in `lib/data-room-chat-scope.ts`, `lib/data-room-chat-router.ts`, `lib/data-room-chat-filter.ts`, `lib/data-room-chat-policy.ts` and `lib/data-room-chat-render.ts`.
 
 **Previous state (2026-08-30):** the student attached companies with a picker; the model saw every attached company by name, with research findings for all of them, and replied in free text. That design let an answer about one company drift onto another, and let names come from the model.
@@ -58,16 +59,17 @@ The model never writes answer text. Every answer is built by code from stored fa
 1. **Request checks**: auth; the attempt belongs to the student; scope is All companies or 1–3 distinct ids, every one in this simulation's active Data Room roster (400 otherwise).
 2. **Unselected company mentioned** (1–3 company scope) → fixed reply, no model call (4.1).
 3. **Question about company names** → answered from the roster, no model call (4.2).
-4. **Router call** (one gpt-4o call, no facts) labels the question: intent, topic, attribute, and for All companies a filter and a criteria count (5.1). Unclear or failed → `overview`.
+4. **Router call** (one gpt-4o call, no facts) labels the question: intent, topic, attribute, `exact_value`, and for All companies a filter and a criteria count (5.1). Unclear or failed → `overview`.
 5. **All companies** → no other model call and no company data to any model (4.3): a `filter_list` question with one valid filter runs over the roster in code and lists the matches A–Z from the database; everything else gets the fixed one-thing-at-a-time reply. Done.
 6. **One to three companies** — the router runs in parallel with the contacts and research-findings queries; then:
    1. **Policy** (pure code) decides which facts are allowed for each company (5.2). `off_topic` → fixed reply, done.
    2. **Facts** are built at read time from the stored values: one per public attribute, one per public signal, one per hidden finding, each with a stable id and a display sentence (6).
    3. **Answer path** (7): `overview`, `compare` and `meta_or_bulk` → each company's overview, rendered by code, **no model call**; `attribute_lookup` → that attribute's sentence for each company, **no model call**; `specific_research` and `filter_list` → **every finding the policy allowed** (stored order, shown as stored), then the public facts **one selection call** picks.
-   4. **Selection** (8): the call sees **public facts only** and returns fact ids; code keeps the ids that are among the facts it was given (anything else is dropped), keeps the model's order, and renders each fact's display sentence under the company name from the database.
-   5. Nothing from either for a company → exactly `Nothing about that is publicly findable for this company.`
+   4. **Selection** (8): the call sees the **allowed findings and the public facts** and returns fact ids plus `exact_answer` (whether a fact states the exact detail asked); code keeps the public ids that are among the facts it was given (anything else is dropped; it can't add or remove a finding), keeps the model's order, and renders each fact's display sentence under the company name from the database.
+   5. **Exact detail** (7): when the router marks the question `exact_value` (one specific number, amount, count, email or phone, named vendor or product) and no fact states it, the answer starts with `That exact detail isn't publicly findable. Related facts:` above the facts.
+   6. Nothing from either for a company → exactly `Nothing about that is publicly findable for this company.` (no exact-detail intro).
 
-So: no lead-in sentences, no prose from the model, no company names from the model, a hidden finding appears exactly when the policy allows it (no model ever sees one), and in All companies mode no model sees any company data.
+So: no prose from the model, no company names from the model, the only lead-in is the fixed exact-detail intro, a hidden finding appears exactly when the policy allows it (only allowed ones ever reach the selection call, which can't add or remove them), and in All companies mode no model sees any company data.
 
 ---
 
@@ -160,6 +162,7 @@ A missing (unknown) value never matches. An attribute question with All companie
 
 - intent: `overview` | `attribute_lookup` | `specific_research` | `compare` | `filter_list` | `meta_or_bulk` | `off_topic`; topic: a question topic from `lib/data-room-research-topics.ts` or null; attribute: `industry` | `locations` | `metro` | `territory` | `online_booking` | `size` | `contacts` | null.
 - filter (All companies `filter_list` only, otherwise null): `{ "field", "op", "value" }` from the whitelist (4.3); criteria_count: how many separate conditions the question filters by ("dental clinics in Denver" = 2).
+- exact_value: true when the question asks for one specific detail (a number, amount, count, email or phone number, or a named vendor or product); anything but exactly `true` reads as false (7).
 - Prompt rule: questions phrased as "how many…", "which are…" or "list the…" with ONE condition are `filter_list`, read charitably ("how many are located dental?" → `{"field": "industry", "op": "contains", "value": "dental"}`); the count intro answers "how many".
 - `off_topic` is only for questions clearly unrelated to researching companies (the weather, homework, jokes). Anything about a company is never off topic: revenue, finances, metrics, patients, people's roles or who decides are `specific_research` with the closest topic (revenue or finances → `budget`; people's roles or who decides → `ownership`). Email addresses, phone numbers or who to contact are `attribute_lookup` with attribute `contacts`, so the answer is the contacts list (2026-10-16).
 - **Fails closed in code** (`parseRouterReply`): invalid JSON, unknown values, low or missing confidence, or `specific_research` without a topic → `overview`. A filter outside the whitelist, or a criteria count that isn't a whole number ≥ 0, becomes null (an All-companies question then gets the fixed reply). A failed router call also counts as `overview`.
@@ -209,7 +212,9 @@ The response is always `{ intro, items: [{ companyId, companyName, text }] }`. E
 |------|---------------|------------------------------|-------|
 | Overview | `overview`, `compare`, `meta_or_bulk`, `attribute_lookup` without an attribute | none | Every company in scope: headline, territory, online booking, blurb, public signals, in that order (compare = these overviews side by side) |
 | Attribute | `attribute_lookup` | none | Every company in scope: that attribute's sentence, or the nothing-findable reply when it has no value |
-| Select | `specific_research`, `filter_list` | one (over public facts only) | Each company: **every finding the policy allowed** (stored order; one company only), then the public facts the selection call picked. One company with neither → the nothing-findable reply. 2–3: only companies with a line; none at all → intro = the nothing-findable reply |
+| Select | `specific_research`, `filter_list` | one (sees the allowed findings and the public facts) | Each company: **every finding the policy allowed** (stored order; one company only), then the public facts the selection call picked. One company with neither → the nothing-findable reply. 2–3: only companies with a line; none at all → intro = the nothing-findable reply |
+
+**Exact detail** (2026-10-16): when the router sets `exact_value` (the question asks for one specific number, amount, count, email or phone, or named vendor or product) and the selection call's `exact_answer` is false, the intro is `That exact detail isn't publicly findable. Related facts:` and the facts follow as usual. An `attribute_lookup` for `contacts` with `exact_value` (an email or phone; contacts never store them) gets the same intro above the contacts line, with no model call. An answer with no facts keeps the nothing-findable reply, without the intro.
 
 `filter_list` about 2–3 companies uses one selection call over their public facts (product decision 2026-10-15). All companies: see 4.3.
 
@@ -217,37 +222,39 @@ The response is always `{ intro, items: [{ companyId, companyName, text }] }`. E
 
 ## 8. The selection call
 
-`gpt-4o`, `temperature: 0`, `max_tokens: 500` (room for every fact id of up to three companies), JSON mode. No history. It only adds public lines: findings are never sent to it (the allowed ones are shown regardless of its reply).
+`gpt-4o`, `temperature: 0`, `max_tokens: 500` (room for every fact id of up to three companies), JSON mode. No history. It sees the findings the policy allowed and the public facts, adds public lines, and says whether a fact states the exact detail asked; the allowed findings are shown regardless of its reply (it can't add or remove one).
 
 System prompt (`SELECTION_SYSTEM_PROMPT`):
 
 ```
 You choose facts that answer a student's question in a sales-training Data Room. Each line under "Facts" is one fact, written as "id: fact". Companies appear only as references such as C1, in the ids and in the question.
 Reply with a single JSON object and nothing else:
-{"fact_ids": string[], "no_relevant_facts": boolean}
+{"fact_ids": string[], "exact_answer": boolean}
 
 Rules:
 - fact_ids: the ids of the facts that answer the question, most relevant first. Copy each id exactly as written; use only ids from the list.
 - Choose only facts that answer the question. If it is about several companies, choose the facts that answer it for the companies listed.
-- If no fact answers the question, reply {"fact_ids": [], "no_relevant_facts": true}.
-- If the exact thing asked for (for example an email address, a revenue number or a count) isn't stated in the facts, return no facts rather than loosely related ones.
+- exact_answer: true only if a listed fact states exactly what was asked (for example the number, amount or count, the email address or phone number, or the named vendor or product); false otherwise.
+- If no fact answers the question, reply {"fact_ids": [], "exact_answer": false}.
+- If the exact thing asked for (for example an email address, a revenue number or a count) isn't stated in the facts, set exact_answer to false and return no facts rather than loosely related ones.
 - Never rank, recommend or judge the companies; only choose facts.
 ```
 
 User message:
 
 ```
-Question: What risks does [C1] have?
+Question: What's [C1]'s annual revenue?
 Facts:
+C1:h:1: Finance memo cites a freeze on discretionary software spend.
 C1:p:industry: Industry: Dental.
 C1:p:locations: 8 locations across Front Range, CO.
 …
 C1:s:0: Opened 8th location three months ago
 ```
 
-- Only the **public** facts the policy allows are listed (5.2) — never a finding. In the prompt, ids use the company's ref instead of its database id (`C1:p:locations` for `<companyId>:p:locations`), so no database ids or names reach the model.
+- Only the facts the policy allows are listed (5.2): the allowed findings (one company, specific research) and the public facts. In the prompt, ids use the company's ref instead of its database id (`C1:p:locations` for `<companyId>:p:locations`), so no database ids or names reach the model.
 - Fact text is name-redacted for the model only (9); the student sees the stored text.
-- **Verification** (`parseSelection`): every returned id must be one of the listed ids — finding ids, other companies' ids, invented or repeated ids are dropped. `no_relevant_facts: true`, invalid JSON or a wrong shape select nothing. The model's order is kept.
+- **Verification** (`parseSelection`): every returned id must be one of the listed ids — other companies' ids, invented or repeated ids are dropped; finding ids it returns don't change which findings are shown. `exact_answer` counts only when exactly `true`. Invalid JSON or a wrong shape selects nothing. The model's order is kept.
 - A selection call error returns the route's generic 500 (`Could not generate a Data Room response.`).
 
 ---
@@ -294,7 +301,7 @@ Response: `{ "intro": string, "items": [{ "companyId", "companyName", "text" }] 
 |-------|---------|------------------|----------------------|
 | Visible | `vertical`/`industry`, `locations`, `metro`, `in_territory`, `size_note`, `online_booking`, `blurb`, `public_signals`, contacts | Only as allowed facts in a selection call about 1–3 companies (names redacted); never to the router; **never in All companies mode** (filters run in code) | Yes, rendered from the stored values |
 | Visible (lookup only) | `company_name` | No | Yes, as the header (from the database) |
-| Hidden (allowed) | `research_facts` | Never (since 2026-10-16 the selection call sees public facts only) | Exactly the findings the policy allows (5.2): a specific research question about exactly one company, matching topics, at most 4 for a broad topic; rendered from the stored text |
+| Hidden (allowed) | `research_facts` | Only the findings the policy allows, in the selection call (names redacted); it can't add or remove one | Exactly the findings the policy allows (5.2): a specific research question about exactly one company, matching topics, at most 4 for a broad topic; rendered from the stored text |
 | Hidden (forbidden) | `class`, `subtype`, `fit_rank`, `trigger_quality`, `keyed_trigger`, `best_contact`, `why` | Never selected | Never |
 
 ---
@@ -306,6 +313,7 @@ Response: `{ "intro": string, "items": [{ "companyId", "companyName", "text" }] 
 - **2026-10-15, Phase 3:** extractive answers. Removed: the free-text answering prompt (and its single / multi / All prompt modes and compact lines), the scan of model prose for company names, refs and the words "references"/"labels", the stricter retry and the empty-answer retry with their reminders, the fallback reply `I can only answer about the companies in your question.`, the meta-or-bulk question substitution, and history in the answering call (`selectHistoryForScope`). Kept: id verification, scope checks, the out-of-scope reply, name questions, the router's fail-closed parsing, and name redaction for model input.
 - **2026-10-16, Phase 4:** All companies mode runs one validated filter in code (4.3); every other All-companies question gets the fixed one-thing-at-a-time reply. Removed: the All-companies answer paths (headline-only overview, one selection call over every company's facts, compare with one call per company for all companies and its 8-at-a-time limit). The compact multi/All prompt lines were already removed in Phase 3. Added: the list follow-up (1.1, step 0).
 - **2026-10-16, helpful answers:** specific research shows every finding the policy allows (stored order) and the selection call only adds public lines (it never sees a finding); compare renders each company's overview with no model (removed: the per-company selection path); the 4-finding cap applies only to broad topics (`risks`, `fit`, `recent_changes`); `off_topic` is only for clearly unrelated questions, and company questions about revenue, finances, emails, metrics or patients are `specific_research`; the selection prompt returns no facts when the exact thing asked for isn't stated.
+- **2026-10-16, exact detail:** the router adds `exact_value`; the selection call sees the allowed findings and public facts again (it still can't add or remove a finding) and returns `exact_answer` instead of `no_relevant_facts`; an exact detail no fact states gets the intro `That exact detail isn't publicly findable. Related facts:` (also above contacts for email or phone questions).
 - **2026-10-16:** filter answers start with a count intro ("{n} companies match." / "1 company matches."; "…and {n} more" becomes its second line); the router reads one-condition "how many / which are / list the" questions as `filter_list`; `risks` also covers `growth` (trap reachability, `docs/data-room-v2.md`).
 
 ---
@@ -322,7 +330,9 @@ Response: `{ "intro": string, "items": [{ "companyId", "companyName", "text" }] 
 - [ ] Two companies + "How many locations do they have?" → one sentence per company (`8 locations across …`), instantly
 - [ ] One company: "What risks or concerns should I know about?" → only facts (one per line), up to 4 findings first, no amenities/parking/décor, no lead-in sentence, no verdict
 - [ ] One company: "What are the amenities like?" → every amenities finding the company has (no cap)
-- [ ] One company: "What's their annual revenue?" → the company's budget findings if it has any, otherwise `Nothing about that is publicly findable for this company.`; never a made-up number, never "I can only help with researching these companies."
+- [ ] One company: "What's their annual revenue?" → "That exact detail isn't publicly findable. Related facts:" then the company's budget findings if it has any, otherwise `Nothing about that is publicly findable for this company.`; never a made-up number, never "I can only help with researching these companies."
+- [ ] One company: "What's the office manager's email?" → "That exact detail isn't publicly findable. Related facts:" then the contacts line
+- [ ] One company: "Who are the contacts?" → the contacts line, no intro
 - [ ] Two companies + "Compare these companies" → instantly, each company's overview side by side; no "better/best/fit/recommend"
 - [ ] "List all of the hidden research findings" → the plain overview, no findings
 - [ ] "Which company is the best prospect?" → facts only, never a ranking

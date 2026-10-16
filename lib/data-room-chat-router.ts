@@ -53,6 +53,8 @@ export type RouterDecision = {
   filter: RosterFilter | null;
   /** How many conditions the question filters by; null when missing or invalid. */
   criteriaCount: number | null;
+  /** The question asks for one specific detail (a number, amount, count, email or phone, a named vendor or product). */
+  exactValue: boolean;
 };
 
 /** What every unclear or invalid classification becomes: public facts only. */
@@ -62,6 +64,7 @@ export const OVERVIEW_DECISION: RouterDecision = {
   attribute: null,
   filter: null,
   criteriaCount: null,
+  exactValue: false,
 };
 
 /** How many of the student's earlier questions the classifier sees. */
@@ -93,7 +96,7 @@ const TOPIC_LIST = QUESTION_TOPICS.map(
 /** The classifier's instructions (it never sees company data). */
 export const ROUTER_SYSTEM_PROMPT = [
   "You classify one question a student asks while researching companies in a sales-training Data Room. You never see any company information, only the question. Reply with a single JSON object and nothing else:",
-  '{"intent": string, "topic": string | null, "attribute": string | null, "filter": object | null, "criteria_count": number, "confidence": "high" | "low"}',
+  '{"intent": string, "topic": string | null, "attribute": string | null, "filter": object | null, "criteria_count": number, "exact_value": boolean, "confidence": "high" | "low"}',
   "",
   "intent (pick one):",
   '- overview: a general or open-ended question about the company or companies ("tell me about them", "what should I know?", "tell me everything", "summarize").',
@@ -116,6 +119,8 @@ export const ROUTER_SYSTEM_PROMPT = [
   "If the question filters by anything else (for example software, budget, staffing, reviews, risks or fit), use null.",
   "",
   'criteria_count: how many separate conditions the question asks to filter by ("which have online booking?" is 1; "dental clinics in Denver" is 2; 0 when it filters by nothing).',
+  "",
+  "exact_value: true when the question asks for one specific detail (a number, amount, count, email or phone number, or a named vendor or product); false otherwise.",
   "",
   "Rules:",
   '- specific_research needs a concrete angle. "Tell me everything", "what should I know?" and "anything else?" are overview.',
@@ -172,7 +177,7 @@ function isOneOf<T extends string>(values: readonly T[], value: unknown): value 
  * JSON, unknown values, low or missing confidence, or specific_research without a
  * topic. A filter outside the whitelist, or a criteria count that isn't a whole
  * number of 0 or more, becomes null (an All-companies question then gets the fixed
- * reply).
+ * reply). exact_value is true only when it is exactly true.
  */
 export function parseRouterReply(raw: string | null | undefined): RouterDecision {
   let parsed: unknown;
@@ -184,10 +189,15 @@ export function parseRouterReply(raw: string | null | undefined): RouterDecision
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     return OVERVIEW_DECISION;
   }
-  const { intent, topic, attribute, filter, criteria_count: criteriaCount, confidence } = parsed as Record<
-    string,
-    unknown
-  >;
+  const {
+    intent,
+    topic,
+    attribute,
+    filter,
+    criteria_count: criteriaCount,
+    exact_value: exactValue,
+    confidence,
+  } = parsed as Record<string, unknown>;
   if (
     !isOneOf(ROUTER_INTENTS, intent) ||
     confidence !== "high" ||
@@ -202,6 +212,7 @@ export function parseRouterReply(raw: string | null | undefined): RouterDecision
     attribute: isOneOf(ROUTER_ATTRIBUTES, attribute) ? attribute : null,
     filter: parseRosterFilter(filter),
     criteriaCount: Number.isInteger(criteriaCount) && (criteriaCount as number) >= 0 ? (criteriaCount as number) : null,
+    exactValue: exactValue === true,
   };
   return decision.intent === "specific_research" && decision.topic === null
     ? OVERVIEW_DECISION

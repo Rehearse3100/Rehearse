@@ -12,10 +12,14 @@
  * decides which facts are allowed; overview, compare and attribute questions are
  * rendered with no further model call; specific research and filter questions show
  * every finding the policy allowed (stored order) plus the public facts one
- * selection call picks — it sees public facts only and returns fact ids, checked
- * against the facts it was given and rendered from the stored text
- * (lib/data-room-chat-render.ts). Company names in answers come from the database;
- * the model sees companies only as refs ([C1]…).
+ * selection call picks — it sees the allowed findings and the public facts, returns
+ * fact ids (checked against the facts it was given; it can't add or remove a
+ * finding) and whether one states the exact detail asked. When the router says the
+ * question asks for one exact detail and no fact states it, the answer starts with
+ * "That exact detail isn't publicly findable. Related facts:" (also above a contacts
+ * line, which never holds emails or phone numbers). Everything is rendered from the
+ * stored text (lib/data-room-chat-render.ts). Company names in answers come from the
+ * database; the model sees companies only as refs ([C1]…).
  */
 
 import { NextResponse } from "next/server";
@@ -34,10 +38,11 @@ import {
   parseSelection,
   renderAnswer,
   toSelectableFacts,
+  withExactDetailIntro,
   type CompanyBlock,
   type CompanyFacts,
-  type Fact,
   type SelectableFact,
+  type Selection,
 } from "@/lib/data-room-chat-render";
 import {
   buildRouterMessages,
@@ -195,11 +200,12 @@ async function classifyQuestion(
 
 /**
  * One selection call (gpt-4o, temperature 0, JSON): the redacted question and the
- * allowed facts in, fact ids out; only ids among the given facts are kept.
+ * allowed facts in; fact ids and whether one states the exact detail out (only ids
+ * among the given facts are kept).
  */
-async function selectFacts(openai: OpenAI, question: string, facts: SelectableFact[]): Promise<Fact[]> {
+async function selectFacts(openai: OpenAI, question: string, facts: SelectableFact[]): Promise<Selection> {
   if (facts.length === 0) {
-    return [];
+    return { facts: [], exactAnswer: false };
   }
   const response = await openai.chat.completions.create({
     model: "gpt-4o",
@@ -438,10 +444,13 @@ export async function POST(request: Request): Promise<NextResponse> {
       companyName: company.name,
       lines,
     });
-    // The selection call sees public facts only (allowed findings are shown as they are).
-    const selectablePublic = (company: ScopedCompany): SelectableFact[] =>
+    // The selection call sees the allowed findings and public facts (name-redacted).
+    const selectable = (company: ScopedCompany): SelectableFact[] =>
       toSelectableFacts(
-        allowedPublicFacts(company.facts, allowed.companies[company.id]),
+        [
+          ...allowedFindings(company.facts, allowed.companies[company.id]),
+          ...allowedPublicFacts(company.facts, allowed.companies[company.id]),
+        ],
         refLabels.get(company.id) ?? "C1",
         (text) => redactFactText(text, index, company)
       );
@@ -454,21 +463,31 @@ export async function POST(request: Request): Promise<NextResponse> {
           companies.map((company) => block(company, attributeLines(company.facts, path.attribute))),
           true
         );
+        // Contacts never hold emails or phone numbers: an exact contact detail isn't findable.
+        if (path.attribute === "contacts" && decision.exactValue) {
+          answer = withExactDetailIntro(answer);
+        }
         break;
       }
       case "select": {
-        // Every finding the policy allowed (stored order), then the public lines the
-        // selection call adds; nothing from either → the nothing-findable reply.
-        const selected = await selectFacts(openai, question, companies.flatMap(selectablePublic));
+        // Every finding the policy allowed (stored order, whatever the model picked),
+        // then the public lines the selection call adds; nothing from either → the
+        // nothing-findable reply.
+        const selection = await selectFacts(openai, question, companies.flatMap(selectable));
         answer = renderAnswer(
           companies.map((company) =>
             block(company, [
               ...allowedFindings(company.facts, allowed.companies[company.id]).map((entry) => entry.display),
-              ...selected.filter((entry) => entry.companyId === company.id).map((entry) => entry.display),
+              ...selection.facts
+                .filter((entry) => entry.companyId === company.id && entry.kind !== "h")
+                .map((entry) => entry.display),
             ])
           ),
           singleCompanyId !== null
         );
+        if (decision.exactValue && !selection.exactAnswer) {
+          answer = withExactDetailIntro(answer);
+        }
         break;
       }
       default: {

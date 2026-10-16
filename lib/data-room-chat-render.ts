@@ -5,11 +5,13 @@
  * company fact gets a stable id and a display sentence, built at read time from the
  * stored values: one fact per public attribute, one per public signal, one per
  * hidden finding (display = the stored text). The model never writes an answer and
- * never chooses findings: the findings the policy allows are shown as they are, and
- * the model only selects public fact ids to add (the selection call's messages and
- * reply parsing live here); code keeps the ids that are in the set it was given, and
- * the renderers turn facts into the { intro, items } answer. Used by POST
- * /api/student/data-room-chat; the local eval maps rendered lines back to fact ids.
+ * can't add or remove findings: the findings the policy allows are always shown as
+ * they are; the selection call sees them and the public facts, picks public fact ids
+ * to add, and says whether any fact states the exact detail asked for (the selection
+ * call's messages and reply parsing live here). Code keeps the ids that are in the
+ * set it was given, and the renderers turn facts into the { intro, items } answer.
+ * Used by POST /api/student/data-room-chat; the local eval maps rendered lines back
+ * to fact ids.
  */
 
 import type { CompanyAllowance } from "@/lib/data-room-chat-policy";
@@ -19,6 +21,9 @@ import type { ResearchFinding } from "@/lib/data-room-research-topics";
 
 /** The reply for a company when no fact answers the question (or none is allowed). */
 export const NOTHING_FINDABLE_REPLY = "Nothing about that is publicly findable for this company.";
+
+/** The intro when the question asks for one exact detail that no fact states, above related facts. */
+export const EXACT_DETAIL_MISSING_INTRO = "That exact detail isn't publicly findable. Related facts:";
 
 // ── Facts ───
 
@@ -181,7 +186,7 @@ export function allowedFindings(facts: CompanyFacts, allowance: CompanyAllowance
   return facts.hidden.filter((entry) => allowedTexts.has(entry.display));
 }
 
-/** The facts the selection call may see for a company: its public facts, when the policy allows them. */
+/** A company's public facts, when the policy allows them (the selection call picks among these to add). */
 export function allowedPublicFacts(facts: CompanyFacts, allowance: CompanyAllowance | undefined): Fact[] {
   return allowance?.public ? publicFacts(facts) : [];
 }
@@ -190,8 +195,8 @@ export function allowedPublicFacts(facts: CompanyFacts, allowance: CompanyAllowa
 
 /**
  * overview: rendered, no model (also compare). attribute: one sentence per company,
- * no model. select: the allowed findings as they are, then one selection call over
- * the public facts.
+ * no model. select: the allowed findings as they are, then the public facts one
+ * selection call picks (it sees the allowed findings and the public facts).
  */
 export type AnswerPath =
   | { kind: "overview" }
@@ -258,19 +263,29 @@ export function renderAnswer(blocks: readonly CompanyBlock[], keepEmpty: boolean
   return items.length > 0 ? { intro: "", items } : { intro: NOTHING_FINDABLE_REPLY, items: [] };
 }
 
+/**
+ * Starts the answer with EXACT_DETAIL_MISSING_INTRO when it shows at least one fact;
+ * an answer with no facts keeps the nothing-findable reply as it is.
+ */
+export function withExactDetailIntro(answer: ScopedAnswer): ScopedAnswer {
+  const hasFacts = answer.items.some((item) => item.text !== NOTHING_FINDABLE_REPLY);
+  return hasFacts ? { ...answer, intro: EXACT_DETAIL_MISSING_INTRO } : answer;
+}
+
 // ── Selection call ───
 
-/** The selection call's instructions: choose fact ids, never write an answer. */
+/** The selection call's instructions: choose fact ids and say whether one is exact; never write an answer. */
 export const SELECTION_SYSTEM_PROMPT = [
   'You choose facts that answer a student\'s question in a sales-training Data Room. Each line under "Facts" is one fact, written as "id: fact". Companies appear only as references such as C1, in the ids and in the question.',
   "Reply with a single JSON object and nothing else:",
-  '{"fact_ids": string[], "no_relevant_facts": boolean}',
+  '{"fact_ids": string[], "exact_answer": boolean}',
   "",
   "Rules:",
   "- fact_ids: the ids of the facts that answer the question, most relevant first. Copy each id exactly as written; use only ids from the list.",
   "- Choose only facts that answer the question. If it is about several companies, choose the facts that answer it for the companies listed.",
-  '- If no fact answers the question, reply {"fact_ids": [], "no_relevant_facts": true}.',
-  "- If the exact thing asked for (for example an email address, a revenue number or a count) isn't stated in the facts, return no facts rather than loosely related ones.",
+  "- exact_answer: true only if a listed fact states exactly what was asked (for example the number, amount or count, the email address or phone number, or the named vendor or product); false otherwise.",
+  '- If no fact answers the question, reply {"fact_ids": [], "exact_answer": false}.',
+  "- If the exact thing asked for (for example an email address, a revenue number or a count) isn't stated in the facts, set exact_answer to false and return no facts rather than loosely related ones.",
   "- Never rank, recommend or judge the companies; only choose facts.",
 ].join("\n");
 
@@ -295,7 +310,7 @@ export function toSelectableFacts(
   }));
 }
 
-/** The selection call's messages: the redacted question and the allowed facts only. */
+/** The selection call's messages: the redacted question and the allowed facts only (findings and public facts). */
 export function buildSelectionMessages(
   question: string,
   facts: readonly SelectableFact[]
@@ -311,24 +326,28 @@ export function buildSelectionMessages(
   ];
 }
 
+/** The selection call's reply: the facts it picked and whether one states the exact detail asked. */
+export type Selection = { facts: Fact[]; exactAnswer: boolean };
+
 /**
  * The selected facts, in the model's order: ids not among the facts it was given
- * (foreign, disallowed or invented) and repeats are dropped. no_relevant_facts,
- * invalid JSON or a wrong shape select nothing.
+ * (foreign, disallowed or invented) and repeats are dropped. exactAnswer is true only
+ * when exact_answer is exactly true. Invalid JSON or a wrong shape selects nothing.
  */
-export function parseSelection(raw: string | null | undefined, facts: readonly SelectableFact[]): Fact[] {
+export function parseSelection(raw: string | null | undefined, facts: readonly SelectableFact[]): Selection {
+  const none: Selection = { facts: [], exactAnswer: false };
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw ?? "");
   } catch {
-    return [];
+    return none;
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return [];
+    return none;
   }
-  const { fact_ids: ids, no_relevant_facts: noneRelevant } = parsed as Record<string, unknown>;
-  if (noneRelevant === true || !Array.isArray(ids)) {
-    return [];
+  const { fact_ids: ids, exact_answer: exactAnswer } = parsed as Record<string, unknown>;
+  if (!Array.isArray(ids)) {
+    return none;
   }
   const byPromptId = new Map(facts.map((entry) => [entry.promptId, entry.fact]));
   const selected: Fact[] = [];
@@ -338,5 +357,5 @@ export function parseSelection(raw: string | null | undefined, facts: readonly S
       selected.push(entry);
     }
   }
-  return selected;
+  return { facts: selected, exactAnswer: exactAnswer === true };
 }
