@@ -91,8 +91,8 @@ export const DISCOVERY_TIPS = [
 
 /** The manager note on the Discovery pre-call lobby, one paragraph per entry. */
 export const DISCOVERY_MANAGER_NOTE = [
-  "This is your first call with the practice. Your job is to understand how they handle scheduling and phones today, and what that costs them.",
-  "Ask open questions and let them talk. Dig into the answers that matter. Don't pitch the product or talk price yet.",
+  "Quick one before your call with Dana Reyes, Director of Operations at Summit Dental Group. This is your first real conversation with them, so don't sell anything yet. I want to know how they book appointments and handle the phones today, and what it costs them when that goes wrong.",
+  "Ask open questions, then let Dana talk. When something sounds painful, dig in and get a number on it. Save the product and pricing for later.",
 ] as const;
 
 export const TEMPO_VALUE_DRIVERS = [

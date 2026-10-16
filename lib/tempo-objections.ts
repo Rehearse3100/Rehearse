@@ -100,8 +100,8 @@ export const OBJECTION_TIPS = [
 
 /** The manager note on the Objection Handling pre-call lobby, one paragraph per entry. */
 export const OBJECTION_MANAGER_NOTE = [
-  "This is your follow-up call with the practice owner after the demo. Expect pushback on price, on staff workload, and on timing.",
-  "Let them finish each objection before you respond. Ask a question to understand what's really behind it, then connect your answer to what you learned in discovery. Don't discount just to make the tension go away.",
+  "Heads up: this is your follow-up with Dr. Saul Kim, who owns Summit Dental Group. Dr. Kim has read the proposal and will push back on price, on the extra work for the staff, and on timing. Dana will be on the call too, but expect Dr. Kim to do most of the talking.",
+  "Let Dr. Kim get the whole objection out before you jump in. Ask what's really behind it, then tie your answer back to what you heard from Dana in discovery. And don't offer a discount just to make the conversation less awkward.",
 ] as const;
 
 const PRICE_RAISED = /price|cost|worth it|adds up|budget|expensive|pay for itself|monthly/i;
