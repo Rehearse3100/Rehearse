@@ -17,12 +17,12 @@ The client works out a scope for every question; the server trusts only the comp
 1. **All companies** toggle on → `{ mode: "all" }`.
 2. **Companies picked from suggestions, plus companies named in the text** → `{ mode: "companies", companyIds }`.
    - A name is detected by its **full name** (any case, whole words) or by its **first word** when that word is non-generic, at least 4 letters, and belongs to exactly one company.
-   - A first word shared by 2+ companies (e.g. "Summit") is **ambiguous**: nothing is sent; the student sees "Which one did you mean?" with the options as chips, and picking one sends.
+   - A first word shared by 2+ companies (e.g. "Summit") is **ambiguous**: nothing is sent; the student sees "Which one did you mean?" with the options in the dropdown above the input, and picking one sends.
    - More than 3 companies → "Ask about up to 3 companies, or turn on All companies." (not sent).
 3. **The open company** on the company page.
 4. Nothing → "Open a company or type a company's name first." (not sent).
 
-The header chip shows the same scope live ("About: …", "About: All companies", or "Open a company or type a company's name").
+A plain text line next to the **All companies** toggle (above the input) shows the same scope live ("About: …", "About: All companies", or "Open a company or type a company's name"). The toggle has a dotted outline when off, a solid blue outline on hover, and is filled blue with a check when on.
 
 ### 1.2 Generic words (computed from the roster itself)
 
@@ -33,7 +33,7 @@ The header chip shows the same scope live ("About: …", "About: All companies",
 - The current word (letters/digits before the caret) needs **3+ letters**; it suggests companies with a **non-generic word starting with it** (any word of the name; first-word matches listed first), up to 5, in a dropdown above the input (name, then "Industry · City").
 - While the dropdown is open, **Enter** picks the highlighted one, **↑/↓** move the highlight, a click picks any, **Escape** closes it. When it is closed, **Enter** sends. "Which one did you mean?" uses the same dropdown (Enter or a click sends with that company).
 - Picking replaces the typed fragment with the full name and adds the company to the scope (it stays picked while its full name is in the text).
-- Selected companies (the ones the "About:" chip shows) are coloured in the input, and in sent questions.
+- Selected companies (the ones the "About:" line shows) are coloured in the input, and in sent questions.
 
 ### 1.4 Decision log
 

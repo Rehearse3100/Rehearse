@@ -224,7 +224,7 @@ type ProspectingDataRoomChatProps = {
 };
 
 /**
- * AI Research Assistant pane: scope chip, transcript, All companies toggle, and
+ * AI Research Assistant pane: transcript, All companies toggle with the "About:" line, and
  * the input with its suggestions / "Which one did you mean?" dropdown.
  */
 export function ProspectingDataRoomChat({
@@ -355,14 +355,14 @@ export function ProspectingDataRoomChat({
     pickedIds: activePickedIds,
     openCompanyId,
   });
-  const scopeChipLabel =
+  const scopeLabel =
     preview.kind === "all"
       ? "About: All companies"
       : preview.kind === "companies"
         ? `About: ${preview.companies.map((company) => company.name).join(", ")}`
         : "Open a company or type a company's name";
 
-  // Selected companies (the same ones the "About:" chip shows) are coloured in the input.
+  // Selected companies (the same ones the "About:" line shows) are coloured in the input.
   const mirrorSegments = splitIntoSegments(
     input,
     findSelectedNameRanges(
@@ -540,21 +540,10 @@ export function ProspectingDataRoomChat({
   return (
     <section className="flex-1 flex flex-col min-h-0 overflow-hidden bg-surface-container-lowest">
       {/* Header */}
-      <div className="p-4 border-b border-outline-variant shrink-0 flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <h3 className="text-[16px] font-semibold leading-none text-on-surface">
-            AI Research Assistant
-          </h3>
-          <p
-            className={`mt-2 inline-flex max-w-full px-2 py-0.5 rounded-full text-[12px] font-medium ${
-              preview.kind === "none"
-                ? "bg-surface-container text-on-surface-variant"
-                : "bg-secondary-fixed text-secondary"
-            }`}
-          >
-            <span className="truncate">{scopeChipLabel}</span>
-          </p>
-        </div>
+      <div className="p-4 border-b border-outline-variant shrink-0 flex items-center justify-between gap-2">
+        <h3 className="min-w-0 text-[16px] font-semibold leading-none text-on-surface">
+          AI Research Assistant
+        </h3>
         {onClose ? (
           <button
             type="button"
@@ -629,7 +618,8 @@ export function ProspectingDataRoomChat({
 
       {/* Footer */}
       <div className="p-4 border-t border-outline-variant shrink-0 space-y-2">
-        <div className="flex items-center">
+        <div className="flex items-center gap-2.5 min-w-0">
+          {/* Off: dotted outline. Hover: solid blue outline and tint. On: filled blue with a check. */}
           <button
             type="button"
             onClick={() => {
@@ -638,19 +628,27 @@ export function ProspectingDataRoomChat({
               setAmbiguity(null);
             }}
             aria-pressed={allCompanies}
-            className={`h-6 px-2 rounded-full text-[11px] font-medium flex items-center gap-1 transition-colors ${
+            className={`shrink-0 h-6 px-2.5 rounded-full border text-[11px] font-medium flex items-center gap-1 cursor-pointer active:scale-95 transition-all duration-150 motion-reduce:transition-none ${
               allCompanies
-                ? "bg-secondary text-white"
-                : "bg-surface-container text-on-surface-variant hover:bg-surface-container-high"
+                ? "border-solid border-secondary bg-secondary text-white shadow-sm hover:bg-secondary/90"
+                : "border-dotted border-on-surface-variant/70 bg-transparent text-on-surface-variant hover:border-solid hover:border-secondary hover:bg-secondary-fixed hover:text-secondary"
             }`}
           >
-            <span
-              className={`w-1.5 h-1.5 rounded-full ${
-                allCompanies ? "bg-white" : "bg-on-surface-variant/60"
-              }`}
-            />
+            {allCompanies ? (
+              <MaterialIcon name="check" className="text-[13px]" />
+            ) : (
+              <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60" />
+            )}
             All companies
           </button>
+          {/* What the next question is about: plain text, not a control. */}
+          <p
+            className={`min-w-0 truncate text-[12px] ${
+              preview.kind === "none" ? "text-on-surface-variant" : "text-on-surface"
+            }`}
+          >
+            {scopeLabel}
+          </p>
         </div>
 
         {notice ? <p className="text-[12px] text-error">{notice}</p> : null}

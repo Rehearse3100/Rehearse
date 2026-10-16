@@ -275,8 +275,9 @@ export function ProspectingWizard({
                 <span className="text-label-md font-semibold text-on-surface truncate">
                   Shortlist 3 companies that fit your ICP
                 </span>
-                <span className="shrink-0 px-2.5 py-0.5 rounded-full bg-surface-container-lowest border border-outline-variant text-[12px] font-medium text-on-surface-variant">
-                  {state.shortlistedCompanyIds.length} of 3 shortlisted
+                {/* Plain status text (not a pill), so it doesn't read as a button. */}
+                <span className="shrink-0 text-[12px] text-on-surface-variant">
+                  · {state.shortlistedCompanyIds.length} of 3 shortlisted
                 </span>
               </div>
             ) : (
