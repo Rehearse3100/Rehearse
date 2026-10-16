@@ -621,7 +621,8 @@ export function ProspectingDataRoomChat({
       {/* Footer */}
       <div className="p-4 border-t border-outline-variant shrink-0 space-y-2">
         <div className="flex items-center gap-2.5 min-w-0">
-          {/* Off: dotted outline. Hover: solid outline. Selected: solid outline, filled.
+          {/* Off: dotted outline. Hover: solid soft-black outline. Selected: solid outline,
+              filled soft black (on-surface-variant, so it doesn't stand out).
               Nothing else changes (no shadow, tint, bold or press effect). */}
           <button
             type="button"
@@ -633,8 +634,8 @@ export function ProspectingDataRoomChat({
             aria-pressed={allCompanies}
             className={`group/all relative shrink-0 h-7 px-3 rounded-full border-[1.5px] text-[12px] font-medium flex items-center gap-1.5 cursor-pointer transition-colors duration-150 motion-reduce:transition-none ${
               allCompanies
-                ? "border-secondary bg-secondary text-white"
-                : "border-transparent bg-white text-on-surface-variant hover:border-secondary"
+                ? "border-on-surface-variant bg-on-surface-variant text-white"
+                : "border-transparent bg-white text-on-surface-variant hover:border-on-surface-variant"
             }`}
           >
             {!allCompanies ? (

@@ -22,7 +22,7 @@ The client works out a scope for every question; the server trusts only the comp
 3. **The open company** on the company page.
 4. Nothing → "Open a company or type a company's name first." (not sent).
 
-A plain text line next to the **All companies** toggle (above the input) shows the same scope live ("Current: …", "Current: All companies", or "Open a company or type a company's name"). The toggle is a pill: a dotted outline (grey round dots) when off, a solid blue outline on hover, and a solid blue outline filled blue (white text) when selected. Nothing else changes on hover (no shadow, tint or bold).
+A plain text line next to the **All companies** toggle (above the input) shows the same scope live ("Current: …", "Current: All companies", or "Open a company or type a company's name"). The toggle is a pill: a dotted outline (grey round dots) when off, a solid soft-black outline on hover, and a solid soft-black outline filled soft black (white text) when selected (`on-surface-variant`, not blue, so it doesn't stand out). Nothing else changes on hover (no shadow, tint or bold).
 
 ### 1.2 Generic words (computed from the roster itself)
 
