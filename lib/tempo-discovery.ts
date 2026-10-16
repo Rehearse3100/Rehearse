@@ -89,6 +89,12 @@ export const DISCOVERY_TIPS = [
   "Get her to put numbers on the pain",
 ] as const;
 
+/** The manager note on the Discovery pre-call lobby, one paragraph per entry. */
+export const DISCOVERY_MANAGER_NOTE = [
+  "This is your first call with the practice. Your job is to understand how they handle scheduling and phones today, and what that costs them.",
+  "Ask open questions and let them talk. Dig into the answers that matter. Don't pitch the product or talk price yet.",
+] as const;
+
 export const TEMPO_VALUE_DRIVERS = [
   "Cut no-shows: automated reminders",
   "Free the front desk: self-booking",

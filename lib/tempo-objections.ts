@@ -98,6 +98,12 @@ export const OBJECTION_TIPS = [
   "Hold firm on price; trade value, not margin.",
 ] as const;
 
+/** The manager note on the Objection Handling pre-call lobby, one paragraph per entry. */
+export const OBJECTION_MANAGER_NOTE = [
+  "This is your follow-up call with the practice owner after the demo. Expect pushback on price, on staff workload, and on timing.",
+  "Let them finish each objection before you respond. Ask a question to understand what's really behind it, then connect your answer to what you learned in discovery. Don't discount just to make the tension go away.",
+] as const;
+
 const PRICE_RAISED = /price|cost|worth it|adds up|budget|expensive|pay for itself|monthly/i;
 const ADOPTION_RAISED =
   /adopt|front desk|staff|homework|rollout|training|onboard|new software|twenty years/i;
