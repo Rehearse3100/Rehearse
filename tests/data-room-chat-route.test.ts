@@ -12,8 +12,9 @@
  * the question and the finished answer text only (names as Company 1…): on every
  * answer path and above a filter list or the exact-detail line; no call on fixed
  * replies, name questions or the nothing-findable reply; dropped when it fails a
- * check or the call fails. All companies: one validated filter run in code (no
- * selection call), anything else the fixed reply. Also: the router call (sees no
+ * check or the call fails. All companies: 1–3 validated conditions run in code (no
+ * selection call; different fields AND, same field OR, locations AND; valid filters
+ * used even at low confidence), anything else the fixed reply. Also: the router call (sees no
  * facts, fails closed), the out-of-scope mention reply, company-name questions and
  * request checks.
  */
@@ -781,7 +782,7 @@ describe("All companies: one validated filter, run in code", () => {
     expect(reply.items.map((item) => item.companyName)).toEqual(
       Array.from({ length: 20 }, (_, i) => `Clinic ${String(i).padStart(2, "0")} Health`)
     );
-    expect(reply.intro).toBe("23 companies match.\n…and 3 more. Use the search box above the list to narrow it down.");
+    expect(reply.intro).toBe("23 companies match. Showing the first 20; use the search box above the list to see the rest.");
 
     state.classify.mockResolvedValueOnce(filterReply({ field: "industry", op: "eq", value: "Legal" }));
     expect(await ask({ scope: ALL, newMessage: "Which are law firms?" })).toEqual({ intro: "No companies match that.", items: [] });
@@ -808,6 +809,100 @@ describe("All companies: one validated filter, run in code", () => {
     }
     errorSpy.mockRestore();
     expect(state.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("All companies: up to 3 conditions, run in code", () => {
+  const DENTAL = { field: "industry", op: "contains", value: "dental" };
+  const CO = { field: "state", op: "eq", value: "CO" };
+  const BOOKING = { field: "online_booking", op: "eq", value: true };
+  function filtersReply(filters: unknown, confidence = "high", intent = "filter_list"): ReturnType<typeof modelReply> {
+    const criteriaCount = Array.isArray(filters) ? filters.length : 1;
+    return modelReply({ intent, topic: null, attribute: null, filters, criteria_count: criteriaCount, confidence });
+  }
+  const run = async (reply: ReturnType<typeof modelReply>, newMessage = "Which ones?"): Promise<unknown> => {
+    state.classify.mockResolvedValueOnce(reply);
+    return ask({ scope: ALL, newMessage });
+  };
+  const names = (reply: unknown): string[] =>
+    (reply as { items: Array<{ companyName: string }> }).items.map((item) => item.companyName);
+  const fixed = { intro: ALL_MODE_REPLY, items: [] };
+
+  it("two and three conditions on different fields must all match; no selection call", async () => {
+    expect(names(await run(filtersReply([DENTAL, CO]), "Which dental companies are in Colorado?"))).toEqual([
+      "Cedar Grove Family Dentistry",
+      "Harbor Family Dentistry",
+      "Maple Family Dentistry",
+      "Summit Dental Group",
+    ]);
+    expect(await run(filtersReply([DENTAL, CO, BOOKING]), "Which dental companies in Colorado have online booking?")).toEqual({
+      intro: "1 company matches.",
+      items: [{ companyId: "maple", companyName: "Maple Family Dentistry", text: "Dental · 3 locations · Boulder, CO" }],
+    });
+    expect(state.create).not.toHaveBeenCalled();
+  });
+
+  it("two conditions on the same field mean either one; two locations conditions both hold", async () => {
+    expect(names(await run(filtersReply([CO, { field: "state", op: "eq", value: "Idaho" }]), "Which are in Colorado or Idaho?"))).toEqual([
+      "Cedar Grove Family Dentistry",
+      "Falcon Market",
+      "Harbor Family Dentistry",
+      "Maple Family Dentistry",
+      "Summit Dental Group",
+      "Summit Outdoor Gear",
+    ]);
+    const range = [
+      { field: "locations", op: "gte", value: 2 },
+      { field: "locations", op: "lte", value: 3 },
+    ];
+    expect(names(await run(filtersReply(range), "Which have between 2 and 3 locations?"))).toEqual([
+      "Harbor Family Dentistry",
+      "Maple Family Dentistry",
+      "Summit Outdoor Gear",
+    ]);
+  });
+
+  it('"Which companies are in CO?" lists the Colorado companies', async () => {
+    expect(names(await run(filtersReply([CO]), "Which companies are in CO?"))).toEqual([
+      "Cedar Grove Family Dentistry",
+      "Falcon Market",
+      "Harbor Family Dentistry",
+      "Maple Family Dentistry",
+      "Summit Dental Group",
+    ]);
+  });
+
+  it("low confidence: valid filters still run in All companies mode, but not about 1–3 companies", async () => {
+    expect(names(await run(filtersReply([DENTAL, CO], "low")))).toHaveLength(4);
+    state.classify.mockResolvedValueOnce(filtersReply([CO], "low"));
+    expect(await ask({ scope: ONE, newMessage: "Is it in Colorado?" })).toEqual({
+      intro: "",
+      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: SUMMIT_OVERVIEW }],
+    });
+    expect(state.create).not.toHaveBeenCalled();
+  });
+
+  it("more than 3 conditions, an invalid one, an unknown locations comparison or a hidden-research question → the new fixed reply", async () => {
+    expect(ALL_MODE_REPLY).toBe(
+      "In All companies mode I can filter by industry, city or state, number of locations, territory and online booking, up to 3 at a time. Open a company to research it in depth."
+    );
+    const territory = { field: "territory", op: "eq", value: true };
+    for (const reply of [
+      filtersReply([DENTAL, CO, BOOKING, territory]),
+      filtersReply([DENTAL, { field: "software", op: "eq", value: "Zentrix" }]),
+      filtersReply([{ field: "locations", op: "about", value: 3 }]),
+      filtersReply([{ field: "budget", op: "contains", value: "freeze" }]),
+      filtersReply(null),
+      routerReply("specific_research", "risks"),
+      routerReply("specific_research", "customer_feedback"),
+      routerReply("specific_research", "current_tools"),
+      routerReply("specific_research", "fit"),
+      routerReply("compare"),
+    ]) {
+      expect(await run(reply, "Which companies have a budget freeze?"), JSON.stringify(reply)).toEqual(fixed);
+    }
+    expect(state.create).not.toHaveBeenCalled();
+    expect(state.open).not.toHaveBeenCalled();
   });
 });
 

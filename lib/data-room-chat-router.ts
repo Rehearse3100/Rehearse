@@ -4,13 +4,14 @@
  * messages: the student's question, their last 3 questions (both already
  * name-redacted) and the scope kind — never any facts or company data — and parses
  * its JSON reply, failing closed to "overview". For All-companies filter questions
- * the reply also carries one filter and how many conditions the question asks for
- * (validated by lib/data-room-chat-filter.ts). POST /api/student/data-room-chat
+ * the reply also carries up to three filters and how many conditions the question
+ * asks for (validated by lib/data-room-chat-filter.ts); in All companies mode valid
+ * filters are used even when the router is unsure. POST /api/student/data-room-chat
  * makes the gpt-4o call; lib/data-room-chat-policy.ts turns the decision into the
  * allowed facts and lib/data-room-chat-render.ts into the answer path.
  */
 
-import { parseRosterFilter, type RosterFilter } from "@/lib/data-room-chat-filter";
+import { parseRosterFilters, type RosterFilter } from "@/lib/data-room-chat-filter";
 import {
   FACT_TOPIC_DESCRIPTIONS,
   QUESTION_TOPICS,
@@ -48,8 +49,8 @@ export type RouterDecision = {
   intent: RouterIntent;
   topic: QuestionTopic | null;
   attribute: RouterAttribute | null;
-  /** One whitelisted filter (All-companies filter questions only); null when missing or invalid. */
-  filter: RosterFilter | null;
+  /** 1–3 whitelisted conditions (All-companies filter questions only); null when missing, invalid or more than 3. */
+  filters: RosterFilter[] | null;
   /** How many conditions the question filters by; null when missing or invalid. */
   criteriaCount: number | null;
   /** The question asks for one specific detail (a number, amount, count, email or phone, a named vendor or product). */
@@ -61,7 +62,7 @@ export const OVERVIEW_DECISION: RouterDecision = {
   intent: "overview",
   topic: null,
   attribute: null,
-  filter: null,
+  filters: null,
   criteriaCount: null,
   exactValue: false,
 };
@@ -95,7 +96,7 @@ const TOPIC_LIST = QUESTION_TOPICS.map(
 /** The classifier's instructions (it never sees company data). */
 export const ROUTER_SYSTEM_PROMPT = [
   "You classify one question a student asks while researching companies in a sales-training Data Room. You never see any company information, only the question. Reply with a single JSON object and nothing else:",
-  '{"intent": string, "topic": string | null, "attribute": string | null, "filter": object | null, "criteria_count": number, "exact_value": boolean, "confidence": "high" | "low"}',
+  '{"intent": string, "topic": string | null, "attribute": string | null, "filters": object[] | null, "criteria_count": number, "exact_value": boolean, "confidence": "high" | "low"}',
   "",
   "intent (pick one):",
   '- overview: a general or open-ended question about the company or companies ("tell me about them", "what should I know?", "tell me everything", "summarize").',
@@ -110,12 +111,13 @@ export const ROUTER_SYSTEM_PROMPT = [
   "",
   `attribute (set it for attribute_lookup; otherwise null): one of ${ROUTER_ATTRIBUTES.join(", ")}.`,
   "",
-  'filter (set it only when the scope is all companies and the intent is filter_list; otherwise null): {"field": string, "op": string, "value": string | number | boolean}, one of:',
+  'filters (set them only when the scope is all companies and the intent is filter_list; otherwise null): a list of 1 to 3 conditions, one per condition the question asks for, each {"field": string, "op": string, "value": string | number | boolean}, one of:',
   '- field "industry" or "metro" (a city or area): op "eq" or "contains", value a word or phrase;',
   '- field "state": op "eq", value the two-letter state code (for example "CO");',
   '- field "locations" (number of locations): op "eq", "gt", "gte", "lt" or "lte", value a number;',
   '- field "territory" (in the sales territory) or "online_booking": op "eq", value true or false.',
-  "If the question filters by anything else (for example software, budget, staffing, reviews, risks or fit), use null.",
+  'Conditions on different fields must all hold. Two conditions on the same field mean either one ("in Colorado or Utah" is two state conditions), except locations, where both hold ("between 3 and 8 locations" is gte 3 and lte 8).',
+  "If any condition is about anything else (for example software, budget, staffing, reviews, risks or fit), use null.",
   "",
   'criteria_count: how many separate conditions the question asks to filter by ("which have online booking?" is 1; "dental clinics in Denver" is 2; 0 when it filters by nothing).',
   "",
@@ -127,9 +129,10 @@ export const ROUTER_SYSTEM_PROMPT = [
   "- Read typos charitably.",
   "- Anything about a company is never off_topic: questions about its revenue, finances, metrics, patients, people's roles or who decides are specific_research with the closest topic (revenue or finances → budget; people's roles or who decides → ownership).",
   '- Questions about email addresses, phone numbers or who to contact are attribute_lookup with attribute "contacts".',
-  '- Questions phrased as "how many…", "which are…" or "list the…" with ONE condition are filter_list; read them charitably (for example "how many are located dental?" is filter_list with {"field": "industry", "op": "contains", "value": "dental"}).',
+  '- Questions phrased as "how many…", "which are…" or "list the…" with one to three conditions are filter_list; read them charitably (for example "how many are located dental?" is filter_list with filters [{"field": "industry", "op": "contains", "value": "dental"}]).',
+  "- Two-letter uppercase tokens such as CO, CA or TX are US state codes.",
   '- Use the recent questions only to understand a follow-up such as "tell me more about that".',
-  '- Use "low" confidence when you are unsure.',
+  '- Use "low" confidence when you are unsure. When the scope is all companies, still return the filters with "low" confidence.',
 ].join("\n");
 
 const SCOPE_KIND_LABELS: Record<ScopeKind, string> = {
@@ -174,13 +177,15 @@ function isOneOf<T extends string>(values: readonly T[], value: unknown): value 
 /**
  * Parses the classifier's reply, failing closed to OVERVIEW_DECISION on invalid
  * JSON, unknown values, low or missing confidence, or specific_research without a
- * topic. For filter_list an unknown topic or attribute just becomes null. A filter
- * the whitelist can't read becomes null (an All-companies question then gets the
- * fixed reply); a criteria count that isn't a whole number of 0 or more (as a
- * number or numeric string) becomes null. exact_value is true only when it is
- * exactly true.
+ * topic. With scopeKind "all", a filter_list reply with valid filters is kept
+ * whatever its confidence (code checks every condition). For filter_list an unknown
+ * topic or attribute just becomes null. Filters come from "filters" (or a single
+ * "filter", read as a one-item list); any condition the whitelist can't read, or
+ * more than 3, makes them null (an All-companies question then gets the fixed
+ * reply); a criteria count that isn't a whole number of 0 or more (as a number or
+ * numeric string) becomes null. exact_value is true only when it is exactly true.
  */
-export function parseRouterReply(raw: string | null | undefined): RouterDecision {
+export function parseRouterReply(raw: string | null | undefined, scopeKind?: ScopeKind): RouterDecision {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw ?? "");
@@ -194,16 +199,20 @@ export function parseRouterReply(raw: string | null | undefined): RouterDecision
     intent,
     topic,
     attribute,
-    filter,
+    filters: rawFilters,
+    filter: rawFilter,
     criteria_count: criteriaCount,
     exact_value: exactValue,
     confidence,
   } = parsed as Record<string, unknown>;
-  // filter_list never uses topic or attribute, so a stray value there doesn't sink the filter.
+  const filters = parseRosterFilters(rawFilters, rawFilter);
+  // All companies only: valid filters are used even when the router is unsure.
+  const isTrusted = confidence === "high" || (scopeKind === "all" && intent === "filter_list" && filters !== null);
+  // filter_list never uses topic or attribute, so a stray value there doesn't sink the filters.
   const isStrict = intent !== "filter_list";
   if (
     !isOneOf(ROUTER_INTENTS, intent) ||
-    confidence !== "high" ||
+    !isTrusted ||
     (isStrict && topic !== null && topic !== undefined && !isOneOf(QUESTION_TOPICS, topic)) ||
     (isStrict && attribute !== null && attribute !== undefined && !isOneOf(ROUTER_ATTRIBUTES, attribute))
   ) {
@@ -214,7 +223,7 @@ export function parseRouterReply(raw: string | null | undefined): RouterDecision
     intent,
     topic: isOneOf(QUESTION_TOPICS, topic) ? topic : null,
     attribute: isOneOf(ROUTER_ATTRIBUTES, attribute) ? attribute : null,
-    filter: parseRosterFilter(filter),
+    filters,
     criteriaCount: Number.isInteger(count) && (count as number) >= 0 ? (count as number) : null,
     exactValue: exactValue === true,
   };

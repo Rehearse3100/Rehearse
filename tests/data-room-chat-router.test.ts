@@ -2,8 +2,10 @@
  * data-room-chat-router.test.ts
  * Data Room question router (pure): the classifier sees only the redacted question,
  * the last 3 redacted questions and the scope kind; its reply fails closed to
- * "overview" on anything invalid, unknown, low-confidence, or specific_research
- * without a topic (for filter_list an unknown topic or attribute just becomes null).
+ * "overview" on anything invalid, unknown, low-confidence (except valid filters in
+ * All companies mode), or specific_research without a topic (for filter_list an
+ * unknown topic or attribute just becomes null). Filters: 1–3 conditions, or a
+ * single "filter" read as a one-item list.
  */
 
 import { describe, expect, it } from "vitest";
@@ -53,11 +55,11 @@ describe("classifier input", () => {
       "recent_changes (what changed recently)",
       "current_tools (software, systems, vendors, contracts, recent rollouts)",
       "industry, locations, metro, territory, online_booking, size, contacts",
-      "filter (set it only when the scope is all companies and the intent is filter_list; otherwise null)",
+      "filters (set them only when the scope is all companies and the intent is filter_list; otherwise null)",
       'field "state": op "eq", value the two-letter state code',
       "criteria_count: how many separate conditions the question asks to filter by",
-      'Questions phrased as "how many…", "which are…" or "list the…" with ONE condition are filter_list; read them charitably',
-      '"how many are located dental?" is filter_list with {"field": "industry", "op": "contains", "value": "dental"}',
+      'Questions phrased as "how many…", "which are…" or "list the…" with one to three conditions are filter_list; read them charitably',
+      '"how many are located dental?" is filter_list with filters [{"field": "industry", "op": "contains", "value": "dental"}]',
     ]) {
       expect(ROUTER_SYSTEM_PROMPT, text).toContain(text);
     }
@@ -102,7 +104,7 @@ describe("classifier reply", () => {
       intent: "specific_research",
       topic: "risks",
       attribute: null,
-      filter: null,
+      filters: null,
       criteriaCount: null,
       exactValue: false,
     });
@@ -112,7 +114,7 @@ describe("classifier reply", () => {
       intent: "attribute_lookup",
       topic: null,
       attribute: "locations",
-      filter: null,
+      filters: null,
       criteriaCount: null,
       exactValue: false,
     });
@@ -155,23 +157,23 @@ describe("classifier reply", () => {
       intent: "filter_list",
       topic: null,
       attribute: null,
-      filter: { field: "online_booking", op: "eq", value: true },
+      filters: [{ field: "online_booking", op: "eq", value: true }],
       criteriaCount: 1,
       exactValue: false,
     });
     expect(filterReply({ field: "software", op: "eq", value: "Zentrix" }, 1)).toMatchObject({
       intent: "filter_list",
-      filter: null,
+      filters: null,
       criteriaCount: 1,
     });
     expect(filterReply({ field: "state", op: "eq", value: "CO" }, 1.5)).toMatchObject({ criteriaCount: null });
-    expect(filterReply(null, -1)).toMatchObject({ filter: null, criteriaCount: null });
+    expect(filterReply(null, -1)).toMatchObject({ filters: null, criteriaCount: null });
   });
 
   it('"Which companies are in Colorado?": state + contains + a full name is read as CO', () => {
     expect(filterReply({ field: "state", op: "contains", value: "Colorado" }, 1)).toMatchObject({
       intent: "filter_list",
-      filter: { field: "state", op: "eq", value: "CO" },
+      filters: [{ field: "state", op: "eq", value: "CO" }],
       criteriaCount: 1,
     });
   });
@@ -180,7 +182,7 @@ describe("classifier reply", () => {
     expect(filterReply({ field: "state", op: "eq", value: "CO" }, "1")).toMatchObject({ criteriaCount: 1 });
     expect(filterReply({ field: "state", op: "eq", value: "CO" }, " 2 ")).toMatchObject({ criteriaCount: 2 });
     expect(filterReply({ field: "state", op: "eq", value: "CO" }, undefined)).toMatchObject({
-      filter: { field: "state", op: "eq", value: "CO" },
+      filters: [{ field: "state", op: "eq", value: "CO" }],
       criteriaCount: null,
     });
     expect(filterReply({ field: "state", op: "eq", value: "CO" }, "one")).toMatchObject({ criteriaCount: null });
@@ -203,9 +205,64 @@ describe("classifier reply", () => {
       intent: "filter_list",
       topic: null,
       attribute: null,
-      filter: { field: "state", op: "eq", value: "CO" },
+      filters: [{ field: "state", op: "eq", value: "CO" }],
       criteriaCount: 1,
     });
+  });
+
+  const filtersReply = (filters: unknown, confidence: unknown = "high", intent = "filter_list"): string =>
+    reply({ intent, topic: null, attribute: null, filters, criteria_count: Array.isArray(filters) ? filters.length : 1, confidence });
+  const DENTAL = { field: "industry", op: "contains", value: "dental" };
+  const CO = { field: "state", op: "eq", value: "CO" };
+  const UT = { field: "state", op: "eq", value: "UT" };
+  const BOOKING = { field: "online_booking", op: "eq", value: true };
+
+  it("filters: 1–3 conditions, including two on the same field; more than 3 or any invalid one → null", () => {
+    expect(parseRouterReply(filtersReply([DENTAL]))).toMatchObject({ filters: [DENTAL], criteriaCount: 1 });
+    expect(parseRouterReply(filtersReply([DENTAL, CO]))).toMatchObject({ filters: [DENTAL, CO], criteriaCount: 2 });
+    expect(parseRouterReply(filtersReply([DENTAL, CO, BOOKING]))).toMatchObject({ filters: [DENTAL, CO, BOOKING], criteriaCount: 3 });
+    expect(parseRouterReply(filtersReply([CO, UT]))).toMatchObject({ filters: [CO, UT] });
+    expect(parseRouterReply(filtersReply([DENTAL, CO, BOOKING, UT]))).toMatchObject({ intent: "filter_list", filters: null });
+    expect(parseRouterReply(filtersReply([DENTAL, { field: "software", op: "eq", value: "Zentrix" }]))).toMatchObject({
+      intent: "filter_list",
+      filters: null,
+    });
+    expect(parseRouterReply(filtersReply([{ field: "locations", op: "about", value: 3 }]))).toMatchObject({ filters: null });
+    expect(ROUTER_SYSTEM_PROMPT).toContain('"filters": object[] | null');
+    expect(ROUTER_SYSTEM_PROMPT).toContain(
+      'Conditions on different fields must all hold. Two conditions on the same field mean either one ("in Colorado or Utah" is two state conditions), except locations, where both hold ("between 3 and 8 locations" is gte 3 and lte 8).'
+    );
+  });
+
+  it('"CO", "CA", "TX": the prompt reads two-letter uppercase tokens as state codes, and they parse as codes', () => {
+    expect(ROUTER_SYSTEM_PROMPT).toContain("- Two-letter uppercase tokens such as CO, CA or TX are US state codes.");
+    for (const code of ["CO", "CA", "TX"]) {
+      expect(parseRouterReply(filtersReply([{ field: "state", op: "eq", value: code }]), "all"), code).toMatchObject({
+        filters: [{ field: "state", op: "eq", value: code }],
+      });
+    }
+  });
+
+  it("All companies only: valid filters are used even when confidence is low", () => {
+    expect(ROUTER_SYSTEM_PROMPT).toContain(
+      '- Use "low" confidence when you are unsure. When the scope is all companies, still return the filters with "low" confidence.'
+    );
+    expect(parseRouterReply(filtersReply([DENTAL, CO], "low"), "all")).toMatchObject({
+      intent: "filter_list",
+      filters: [DENTAL, CO],
+    });
+    expect(parseRouterReply(filtersReply([CO], undefined), "all")).toMatchObject({ filters: [CO] });
+    // Not in 1–3 company mode, not without valid filters, not for another intent.
+    for (const [raw, scopeKind] of [
+      [filtersReply([CO], "low"), "one"],
+      [filtersReply([CO], "low"), "several"],
+      [filtersReply([CO], "low"), undefined],
+      [filtersReply([{ field: "software", op: "eq", value: "Zentrix" }], "low"), "all"],
+      [filtersReply(null, "low"), "all"],
+      [filtersReply([CO], "low", "specific_research"), "all"],
+    ] as const) {
+      expect(parseRouterReply(raw, scopeKind), `${raw} ${scopeKind}`).toEqual(OVERVIEW_DECISION);
+    }
   });
 
   it("fails closed to overview", () => {

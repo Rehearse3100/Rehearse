@@ -10,7 +10,7 @@
  * server-side. Flow: unselected-company mention or company-names question → server
  * reply; otherwise a router call (lib/data-room-chat-router.ts; sees only the
  * redacted question, recent questions and scope kind) labels the question. All
- * companies: no model picks or reads company data — one validated filter runs over
+ * companies: no model picks or reads company data — 1–3 validated conditions run over
  * the roster in code (only the opening call sees the finished list), and anything
  * else gets a fixed reply (lib/data-room-chat-filter.ts).
  * One to three companies: the code-side policy (lib/data-room-chat-policy.ts)
@@ -60,6 +60,7 @@ import {
   parseRouterReply,
   scopeKindOf,
   type RouterDecision,
+  type ScopeKind,
 } from "@/lib/data-room-chat-router";
 import {
   answerNameQuery,
@@ -108,7 +109,7 @@ const ROSTER_COLUMNS =
   "id, company_name, industry, vertical, locations, metro, in_territory, size_note, online_booking, blurb, public_signals";
 
 const ROUTER_TEMPERATURE = 0;
-/** Room for the decision and its All-companies filter. */
+/** Room for the decision and up to three All-companies filters. */
 const ROUTER_MAX_TOKENS = 300;
 const SELECTION_TEMPERATURE = 0;
 /** Room for every fact id of up to three companies. */
@@ -195,7 +196,8 @@ function redactFactText(text: string, index: ScopeIndex, company: ScopedCompany)
  */
 async function classifyQuestion(
   openai: OpenAI,
-  messages: OpenAI.Chat.ChatCompletionMessageParam[]
+  messages: OpenAI.Chat.ChatCompletionMessageParam[],
+  scopeKind: ScopeKind
 ): Promise<RouterDecision> {
   try {
     const response = await openai.chat.completions.create({
@@ -205,7 +207,7 @@ async function classifyQuestion(
       response_format: { type: "json_object" },
       messages,
     });
-    return parseRouterReply(response.choices[0]?.message?.content);
+    return parseRouterReply(response.choices[0]?.message?.content, scopeKind);
   } catch (error) {
     console.error("[data-room-chat] router:", error);
     return OVERVIEW_DECISION;
@@ -384,26 +386,27 @@ export async function POST(request: Request): Promise<NextResponse> {
     const openai = new OpenAI({ apiKey });
 
     // The router never sees facts or company data.
+    const scopeKind = scopeKindOf(scope);
     const routerMessages = buildRouterMessages({
       question,
       recentQuestions: parseHistoryQuestions(body.history).map((text) =>
         redactStudentText(text, index, refLabels)
       ),
-      scopeKind: scopeKindOf(scope),
+      scopeKind,
     });
 
-    // All companies: one validated filter runs over the roster in code (results from
-    // the database), then the opening is written for the list; anything else gets
-    // the fixed one-thing-at-a-time reply (no opening call).
+    // All companies: 1–3 validated conditions run over the roster in code (results
+    // from the database), then the opening is written for the list; anything else
+    // gets the fixed reply (no opening call).
     if (scope.mode === "all") {
-      const decision = await classifyQuestion(openai, routerMessages);
+      const decision = await classifyQuestion(openai, routerMessages, scopeKind);
       const answer = answerAllCompanies(decision, roster.map(toListCompany));
       return NextResponse.json(await withWrittenOpening(openai, openingQuestion, answer, index));
     }
 
     // One to three companies: the router runs alongside the data loads.
     const [decision, researchResult, contactsResult] = await Promise.all([
-      classifyQuestion(openai, routerMessages),
+      classifyQuestion(openai, routerMessages, scopeKind),
       singleCompanyId
         ? supabase
             .from("crm_prospect_directory")

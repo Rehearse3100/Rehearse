@@ -1,12 +1,13 @@
 /**
  * data-room-chat-filter.ts
  * All-companies questions for the Data Room assistant (pure; no DB, no network). In
- * All companies mode the model never sees company data: the router returns at most
- * one filter over public roster attributes, this module validates it against a
- * whitelist and runs it over the roster in code, and the answer lists the matching
- * companies A–Z from the database. Any other All-companies question gets one fixed
- * reply. Used by lib/data-room-chat-router.ts (filter validation), POST
- * /api/student/data-room-chat and the local eval.
+ * All companies mode no model picks or reads company data: the router returns up to
+ * three conditions (filters) over public roster attributes, this module validates
+ * them against a whitelist and runs them over the roster in code (different fields
+ * must all match; two conditions on the same field mean either one, except
+ * locations, where both must hold), and the answer lists the matching companies A–Z
+ * from the database. Any other All-companies question gets one fixed reply. Used by
+ * lib/data-room-chat-router.ts (filter validation) and POST /api/student/data-room-chat.
  */
 
 import type { RouterDecision } from "@/lib/data-room-chat-router";
@@ -15,25 +16,29 @@ import { formatRosterListLine, type NameQueryCompany, type ScopedAnswer } from "
 // ── Config ───
 
 /** How many conditions one All-companies question may filter by. */
-export const MAX_FILTER_CRITERIA = 1;
+export const MAX_FILTER_CRITERIA = 3;
 
 /** Most companies one filter answer lists. */
 export const MAX_FILTER_RESULTS = 20;
 
-/** The reply to every All-companies question that isn't one valid filter (or a name question). */
+/** The reply to every All-companies question that isn't 1–3 valid conditions (or a name question). */
 export const ALL_MODE_REPLY =
-  "In All companies mode I can filter by one thing at a time, such as industry, city or state, number of locations, territory, or online booking. Open a company to research it in depth.";
+  "In All companies mode I can filter by industry, city or state, number of locations, territory and online booking, up to 3 at a time. Open a company to research it in depth.";
 
 export const NO_FILTER_MATCHES_REPLY = "No companies match that.";
 
-/** The first intro line of every filter answer with matches. */
+/**
+ * The intro of every filter answer with matches: "{n} companies match." ("1 company
+ * matches."); with more than 20, the same line goes on to say only the first 20 are shown.
+ */
 export function matchCountIntro(count: number): string {
-  return count === 1 ? "1 company matches." : `${count} companies match.`;
-}
-
-/** The second intro line when more companies match than are listed. */
-export function moreMatchesIntro(extra: number): string {
-  return `…and ${extra} more. Use the search box above the list to narrow it down.`;
+  if (count === 1) {
+    return "1 company matches.";
+  }
+  const line = `${count} companies match.`;
+  return count > MAX_FILTER_RESULTS
+    ? `${line} Showing the first ${MAX_FILTER_RESULTS}; use the search box above the list to see the rest.`
+    : line;
 }
 
 // ── Filter shape ───
@@ -46,14 +51,19 @@ export type FilterOp = (typeof FILTER_OPS)[number];
 
 export type RosterFilter = { field: FilterField; op: FilterOp; value: string | number | boolean };
 
-/** Number comparisons for locations, with the spellings a model may use. */
+/** Number comparisons for locations, with the spellings a model may use; anything else is invalid. */
 const LOCATION_OPS: Record<string, FilterOp> = {
   eq: "eq", "=": "eq", "==": "eq", equals: "eq",
   gt: "gt", ">": "gt", greater_than: "gt", more_than: "gt",
   gte: "gte", ">=": "gte", at_least: "gte",
-  lt: "lt", "<": "lt", less_than: "lt", fewer_than: "lt",
+  lt: "lt", "<": "lt", less_than: "lt", fewer_than: "lt", under: "lt",
   lte: "lte", "<=": "lte", at_most: "lte",
 };
+
+/** A locations comparison as LOCATION_OPS spells it ("fewer than" → "fewer_than"); "" when missing. */
+function locationOpKey(op: unknown): string {
+  return typeof op === "string" ? op.trim().toLowerCase().replace(/\s+/g, "_") : "";
+}
 
 /** Yes/no values given as words. */
 const BOOLEAN_WORDS: Record<string, boolean> = { true: true, yes: true, false: false, no: false };
@@ -107,8 +117,9 @@ function textValue(value: unknown): string {
  * takes eq or contains with a two-letter code or a full name, any case; territory
  * and online booking take true/false or "true"/"false"/"yes"/"no"; locations takes
  * a number or a numeric string (0 or more) with eq/gt/gte/lt/lte (or a common
- * spelling; anything else means eq). Only a field outside the whitelist or a
- * missing value gives null.
+ * spelling such as "fewer_than", "under", "at_most", "<", "<="). A field outside
+ * the whitelist, a missing value, or a locations comparison it doesn't recognise
+ * (never read as "equals") gives null.
  */
 export function parseRosterFilter(raw: unknown): RosterFilter | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
@@ -131,14 +142,35 @@ export function parseRosterFilter(raw: unknown): RosterFilter | null {
     case "locations": {
       const text = textValue(value);
       const count = text ? Number(text) : NaN;
-      const comparison = LOCATION_OPS[typeof op === "string" ? op.trim().toLowerCase() : ""] ?? "eq";
-      return Number.isFinite(count) && count >= 0 ? { field, op: comparison, value: count } : null;
+      const comparison = LOCATION_OPS[locationOpKey(op)];
+      return comparison && Number.isFinite(count) && count >= 0 ? { field, op: comparison, value: count } : null;
     }
     default: {
       const flag = typeof value === "boolean" ? value : BOOLEAN_WORDS[textValue(value).toLowerCase()];
       return typeof flag === "boolean" ? { field, op: "eq", value: flag } : null;
     }
   }
+}
+
+/**
+ * The router's conditions: its "filters" list, or a reply that still uses the single
+ * "filter" field read as a one-item list. Null (→ the fixed reply) when there are
+ * none, more than MAX_FILTER_CRITERIA, or any one the whitelist can't read.
+ */
+export function parseRosterFilters(rawFilters: unknown, rawFilter: unknown): RosterFilter[] | null {
+  const list =
+    rawFilters === null || rawFilters === undefined
+      ? rawFilter === null || rawFilter === undefined
+        ? []
+        : [rawFilter]
+      : Array.isArray(rawFilters)
+        ? rawFilters
+        : [rawFilters];
+  if (list.length === 0 || list.length > MAX_FILTER_CRITERIA) {
+    return null;
+  }
+  const filters = list.map(parseRosterFilter);
+  return filters.every((filter): filter is RosterFilter => filter !== null) ? filters : null;
 }
 
 // ── Running a filter ───
@@ -194,21 +226,41 @@ export function matchesFilter(company: FilterCompany, filter: RosterFilter): boo
 }
 
 /**
- * The filter's answer: a count intro ("{n} companies match."; with more than 20, a
- * second line "…and {n} more. …"), then the matching companies A–Z (no other order,
- * no ranking), up to 20, each "{Industry} · {N} locations · {Metro}" under its name
- * from the database.
+ * True when the company matches every condition: conditions on different fields must
+ * all match; two on the same field mean either one ("Colorado or Utah"), except
+ * locations, where both must hold ("between 3 and 8 locations").
  */
-export function answerFilter(filter: RosterFilter, companies: readonly FilterCompany[]): ScopedAnswer {
+export function matchesFilters(company: FilterCompany, filters: readonly RosterFilter[]): boolean {
+  return FILTER_FIELDS.every((field) => {
+    const conditions = filters.filter((filter) => filter.field === field);
+    if (conditions.length === 0) {
+      return true;
+    }
+    return field === "locations"
+      ? conditions.every((filter) => matchesFilter(company, filter))
+      : conditions.some((filter) => matchesFilter(company, filter));
+  });
+}
+
+/**
+ * The answer for one condition or several (matchesFilters): the count intro
+ * (matchCountIntro; with more than 20 it says only the first 20 are shown), then the
+ * matching companies A–Z (no other order, no ranking), up to 20, each
+ * "{Industry} · {N} locations · {Metro}" under its name from the database.
+ */
+export function answerFilter(
+  filter: RosterFilter | readonly RosterFilter[],
+  companies: readonly FilterCompany[]
+): ScopedAnswer {
+  const filters: readonly RosterFilter[] = Array.isArray(filter) ? filter : [filter as RosterFilter];
   const matches = companies
-    .filter((company) => matchesFilter(company, filter))
+    .filter((company) => matchesFilters(company, filters))
     .sort((a, b) => a.name.localeCompare(b.name));
   if (matches.length === 0) {
     return { intro: NO_FILTER_MATCHES_REPLY, items: [] };
   }
-  const extra = matches.length - MAX_FILTER_RESULTS;
   return {
-    intro: [matchCountIntro(matches.length), ...(extra > 0 ? [moreMatchesIntro(extra)] : [])].join("\n"),
+    intro: matchCountIntro(matches.length),
     items: matches.slice(0, MAX_FILTER_RESULTS).map((company) => ({
       companyId: company.id,
       companyName: company.name,
@@ -218,16 +270,20 @@ export function answerFilter(filter: RosterFilter, companies: readonly FilterCom
 }
 
 /**
- * The answer to an All-companies question: a filter_list question with one valid
- * filter (and no more than MAX_FILTER_CRITERIA conditions; a missing count is read
- * as one) runs over the roster; everything else gets ALL_MODE_REPLY.
+ * The answer to an All-companies question: a filter_list question with 1–3 valid
+ * conditions runs over the roster; everything else gets ALL_MODE_REPLY. A criteria
+ * count above the number of conditions means the question asked for something the
+ * filters can't express, so it is refused too (a missing count is fine).
  */
 export function answerAllCompanies(decision: RouterDecision, companies: readonly FilterCompany[]): ScopedAnswer {
-  const { intent, filter, criteriaCount } = decision;
-  // A missing criteria count reads as one condition; only more than one is refused.
-  const isOneCriterion = criteriaCount === null || criteriaCount <= MAX_FILTER_CRITERIA;
-  if (intent === "filter_list" && filter && isOneCriterion) {
-    return answerFilter(filter, companies);
+  const { intent, filters, criteriaCount } = decision;
+  const isComplete =
+    filters !== null &&
+    filters.length > 0 &&
+    filters.length <= MAX_FILTER_CRITERIA &&
+    (criteriaCount === null || criteriaCount <= filters.length);
+  if (intent === "filter_list" && filters && isComplete) {
+    return answerFilter(filters, companies);
   }
   return { intro: ALL_MODE_REPLY, items: [] };
 }
