@@ -63,21 +63,28 @@ describe("classifier input", () => {
     }
   });
 
-  it("off_topic is only for clearly unrelated questions; anything about a company is specific_research", () => {
+  it("off_topic is only for clearly unrelated questions; company questions are research, contact details the contacts", () => {
     expect(ROUTER_SYSTEM_PROMPT).toContain(
       "- off_topic: only questions clearly unrelated to researching companies (for example the weather, homework or jokes)."
     );
     expect(ROUTER_SYSTEM_PROMPT).toContain(
-      "- Anything about a company is never off_topic: questions about its revenue, finances, email addresses, metrics or patients are specific_research with the closest topic (revenue or finances → budget; emails or people → ownership)."
+      "- Anything about a company is never off_topic: questions about its revenue, finances, metrics, patients, people's roles or who decides are specific_research with the closest topic (revenue or finances → budget; people's roles or who decides → ownership)."
     );
+    expect(ROUTER_SYSTEM_PROMPT).toContain(
+      '- Questions about email addresses, phone numbers or who to contact are attribute_lookup with attribute "contacts".'
+    );
+    expect(ROUTER_SYSTEM_PROMPT).not.toContain("emails or people → ownership");
     expect(ROUTER_SYSTEM_PROMPT).not.toContain("not about researching these companies");
-    // The topics it points to are real question topics.
+    // The topics and attribute it points to are real values.
     expect(
       parseRouterReply(reply({ intent: "specific_research", topic: "budget", attribute: null, confidence: "high" })).topic
     ).toBe("budget");
     expect(
       parseRouterReply(reply({ intent: "specific_research", topic: "ownership", attribute: null, confidence: "high" })).topic
     ).toBe("ownership");
+    expect(
+      parseRouterReply(reply({ intent: "attribute_lookup", topic: null, attribute: "contacts", confidence: "high" }))
+    ).toMatchObject({ intent: "attribute_lookup", attribute: "contacts" });
   });
 
   it("knows the scope kind", () => {
