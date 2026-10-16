@@ -621,9 +621,8 @@ export function ProspectingDataRoomChat({
       {/* Footer */}
       <div className="p-4 border-t border-outline-variant shrink-0 space-y-2">
         <div className="flex items-center gap-2.5 min-w-0">
-          {/* Dotted pill (design pattern "Pill, Tag & Ghost"): dotted in every state.
-              Off: grey dots on white, hollow dot. Hover: blue dots, light tint, soft blue
-              glow, bold blue text. On: blue dots, light blue fill, filled blue dot. */}
+          {/* Off: dotted outline. Hover: solid outline. Selected: solid outline, filled.
+              Nothing else changes (no shadow, tint, bold or press effect). */}
           <button
             type="button"
             onClick={() => {
@@ -632,45 +631,36 @@ export function ProspectingDataRoomChat({
               setAmbiguity(null);
             }}
             aria-pressed={allCompanies}
-            className={`group/all relative shrink-0 h-7 px-3 rounded-full text-[12px] flex items-center gap-1.5 cursor-pointer active:scale-95 transition-[background-color,color,box-shadow,transform] duration-150 motion-reduce:transition-none hover:shadow-[0_4px_14px_-2px_rgba(0,91,191,0.18)] ${
+            className={`group/all relative shrink-0 h-7 px-3 rounded-full border-[1.5px] text-[12px] font-medium flex items-center gap-1.5 cursor-pointer transition-colors duration-150 motion-reduce:transition-none ${
               allCompanies
-                ? "bg-secondary-fixed/40 text-secondary hover:bg-secondary-fixed/60"
-                : "bg-white text-on-surface-variant hover:bg-surface-container-low hover:text-secondary"
+                ? "border-secondary bg-secondary text-white"
+                : "border-transparent bg-white text-on-surface-variant hover:border-secondary"
             }`}
           >
-            {/* Round dots: 1.5px stroke, "2 4" dash, round caps, centred on the pill's edge
-                (overflow visible, so no dot is clipped). 28px tall, so rx 14 = rounded-full. */}
-            <svg
-              aria-hidden="true"
-              className={`pointer-events-none absolute inset-0 h-full w-full overflow-visible transition-colors duration-150 motion-reduce:transition-none ${
-                allCompanies ? "text-secondary" : "text-outline group-hover/all:text-secondary"
-              }`}
-            >
-              <rect
-                width="100%"
-                height="100%"
-                rx="14"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeDasharray="2 4"
-                strokeLinecap="round"
-              />
-            </svg>
+            {!allCompanies ? (
+              // Round dots (1.5px, "2 4", round caps) drawn on the centre line of the 1.5px
+              // border, so hover's solid border lands exactly where the dots were. The pill
+              // is 28px tall: centre line 26.5px, so rx 13.25 = rounded-full.
+              <svg
+                aria-hidden="true"
+                className="pointer-events-none absolute -inset-[0.75px] h-[calc(100%_+_1.5px)] w-[calc(100%_+_1.5px)] overflow-visible text-outline transition-opacity duration-150 group-hover/all:opacity-0 motion-reduce:transition-none"
+              >
+                <rect
+                  width="100%"
+                  height="100%"
+                  rx="13.25"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeDasharray="2 4"
+                  strokeLinecap="round"
+                />
+              </svg>
+            ) : null}
             <span
               className={`w-2 h-2 rounded-full shrink-0 ${allCompanies ? "bg-current" : "border border-current"}`}
             />
-            {/* The bold width is reserved, so going bold on hover doesn't nudge the line beside it. */}
-            <span className="grid justify-items-center">
-              <span className="invisible col-start-1 row-start-1 font-semibold">All companies</span>
-              <span
-                className={`col-start-1 row-start-1 ${
-                  allCompanies ? "font-semibold" : "font-medium group-hover/all:font-semibold"
-                }`}
-              >
-                All companies
-              </span>
-            </span>
+            All companies
           </button>
           {/* What the next question is about: plain text, not a control. */}
           <p
