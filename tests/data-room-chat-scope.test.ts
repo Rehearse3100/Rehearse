@@ -264,6 +264,35 @@ describe("scope on send (priority 1–5)", () => {
       ).toEqual({ kind: "send", scope: { mode: "companies", companyIds: ["falcon"] } });
     });
 
+    it("live repro: open A, ask about B by one unique word, then 'tell me about them' → B", () => {
+      const liveIndex = buildScopeIndex([
+        { id: "echo-fitness", name: "Echo Fitness", industry: "Fitness Studio" },
+        { id: "echo-attorneys", name: "Echo Attorneys", industry: "Legal Services" },
+        { id: "cascade", name: "Cascade Hospitality", industry: "Hospitality" },
+        { id: "summit-dental", name: "Summit Dental Group", industry: "Dental" },
+      ]);
+      const open = { index: liveIndex, allCompanies: false, pickedIds: [], openCompanyId: "echo-fitness" };
+
+      const first = resolveSendScope({ ...open, text: "how many locations does cascade have?", lastQuestion: null });
+      expect(first).toEqual({ kind: "send", scope: { mode: "companies", companyIds: ["cascade"] } });
+      if (first.kind !== "send") {
+        return;
+      }
+      // What the chat records for every sent question: the resolved scope + the open company.
+      const lastQuestion = { scope: first.scope, openCompanyId: open.openCompanyId };
+
+      // "Current:" shows B before the second send…
+      expect(previewScope({ ...open, text: "tell me about them", lastQuestion })).toEqual({
+        kind: "companies",
+        companies: [liveIndex.byId.get("cascade")],
+      });
+      // …and the follow-up is sent about B, not the open company.
+      expect(resolveSendScope({ ...open, text: "tell me about them", lastQuestion })).toEqual({
+        kind: "send",
+        scope: { mode: "companies", companyIds: ["cascade"] },
+      });
+    });
+
     it("the live preview shows the same follow-up company", () => {
       expect(previewScope({ ...base, lastQuestion: askedAboutFalcon })).toEqual({
         kind: "companies",

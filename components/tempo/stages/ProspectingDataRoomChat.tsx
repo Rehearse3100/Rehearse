@@ -55,7 +55,13 @@ type UserMessage = {
   id: string;
   role: "user";
   content: string;
+  /** The final resolved scope this question was sent with. */
   scope: ChatScope;
+  /**
+   * Company open on the company page when it was sent (follow-ups compare it with
+   * the open company now). Missing on questions saved before 2026-10-15.
+   */
+  openCompanyId?: string | null;
 };
 
 type AssistantMessage = {
@@ -245,10 +251,6 @@ export function ProspectingDataRoomChat({
   const [allCompanies, setAllCompanies] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const [suggestionsHidden, setSuggestionsHidden] = useState(false);
-  // The previous question's scope and the company open when it was sent (follow-ups
-  // stay on it until a different company is opened). Kept in memory only; the saved
-  // transcript is unchanged, so after a reload follow-ups start from the open company.
-  const [lastQuestion, setLastQuestion] = useState<LastQuestion | null>(null);
   const [ambiguity, setAmbiguity] = useState<{ word: string; options: ScopeCompany[] } | null>(
     null
   );
@@ -321,6 +323,23 @@ export function ProspectingDataRoomChat({
 
   // Suggestion picks only count while their full name is still in the text.
   const activePickedIds = pickedIds.filter((id) => textContainsCompanyName(index, input, id));
+
+  // Follow-ups: the latest sent question's resolved scope and the company open when it
+  // was sent. Every question saves both on its transcript entry, however its scope was
+  // chosen (picked, full name, unique word, ambiguity choice, open company, follow-up),
+  // so this survives remounts and reloads. Older entries without it don't count.
+  const lastQuestion = useMemo((): LastQuestion | null => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message?.role === "user") {
+        const { openCompanyId: openAtSend } = message;
+        return typeof openAtSend === "string" || openAtSend === null
+          ? { scope: message.scope, openCompanyId: openAtSend }
+          : null;
+      }
+    }
+    return null;
+  }, [messages]);
 
   const fragment = wordFragmentBeforeCaret(input, caret);
   const suggestions =
@@ -459,11 +478,17 @@ export function ProspectingDataRoomChat({
     const history = messages
       .filter((message) => !(message.role === "assistant" && message.isError))
       .map(toHistoryEntry);
-    const userMessage: UserMessage = { id: newMessageId(), role: "user", content: text, scope };
+    // Saved with the question: its final scope and the company open right now.
+    const userMessage: UserMessage = {
+      id: newMessageId(),
+      role: "user",
+      content: text,
+      scope,
+      openCompanyId,
+    };
     const withQuestion = [...messages, userMessage];
 
     setMessages(withQuestion);
-    setLastQuestion({ scope, openCompanyId });
     setInput("");
     setCaret(0);
     setPickedIds([]);
