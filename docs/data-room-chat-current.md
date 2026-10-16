@@ -22,7 +22,7 @@ The client works out a scope for every question; the server trusts only the comp
 3. **The open company** on the company page.
 4. Nothing → "Open a company or type a company's name first." (not sent).
 
-A plain text line next to the **All companies** toggle (above the input) shows the same scope live ("About: …", "About: All companies", or "Open a company or type a company's name"). The toggle has a dotted outline when off, a solid blue outline on hover, and is filled blue with a check when on.
+A plain text line next to the **All companies** toggle (above the input) shows the same scope live ("Current: …", "Current: All companies", or "Open a company or type a company's name"). The toggle has a dotted outline when off, a solid blue outline on hover, and is filled blue with a check when on.
 
 ### 1.2 Generic words (computed from the roster itself)
 
@@ -33,7 +33,7 @@ A plain text line next to the **All companies** toggle (above the input) shows t
 - The current word (letters/digits before the caret) needs **3+ letters**; it suggests companies with a **non-generic word starting with it** (any word of the name; first-word matches listed first), up to 5, in a dropdown above the input (name, then "Industry · City").
 - While the dropdown is open, **Enter** picks the highlighted one, **↑/↓** move the highlight, a click picks any, **Escape** closes it. When it is closed, **Enter** sends. "Which one did you mean?" uses the same dropdown (Enter or a click sends with that company).
 - Picking replaces the typed fragment with the full name and adds the company to the scope (it stays picked while its full name is in the text).
-- Selected companies (the ones the "About:" line shows) are coloured in the input, and in sent questions.
+- Selected companies (the ones the "Current:" line shows) are coloured in the input, and in sent questions.
 
 ### 1.4 Decision log
 

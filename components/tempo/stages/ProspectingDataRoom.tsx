@@ -1,7 +1,8 @@
 /**
  * ProspectingDataRoom.tsx
  * Prospecting research step (Data Room): three panes on one screen — the company
- * list (search the in_data_room roster), the open company's page with a single
+ * list (search the in_data_room roster; shortlisted companies first, sliding into
+ * place when the shortlist changes), the open company's page with a single
  * shortlist action, and the AI Research Assistant. Below 1360px wide the assistant
  * becomes a right slide-over (same motion as the Reference Library drawer).
  * Shortlisting still goes through ProspectingShortlistForm and the crm-leads routes.
@@ -9,7 +10,7 @@
 
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ProspectingDataRoomChat } from "@/components/tempo/stages/ProspectingDataRoomChat";
 import { ProspectingShortlistForm } from "@/components/tempo/stages/ProspectingShortlistForm";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
@@ -20,6 +21,10 @@ import type { CrmLead } from "@/types";
 const SHORTLIST_SIZE = 3;
 
 const CARD_CLASS = "bg-white border border-outline-variant rounded-xl p-5 shadow-sm";
+
+/** Company cards slide to their new place in the list after a shortlist change. */
+const REORDER_ANIMATION_MS = 220;
+const REORDER_EASING = "cubic-bezier(0.2, 0, 0, 1)";
 
 function formatVerticalLabel(vertical: string | null): string | null {
   if (!vertical?.trim()) {
@@ -194,6 +199,47 @@ export function ProspectingDataRoom({
     ? shortlist.find((entry) => entry.companyId === selected.id) ?? null
     : null;
 
+  // Shortlisted companies first; each group keeps its usual order.
+  const orderedCompanies = useMemo(
+    () => [
+      ...filtered.filter((company) => shortlistedIds.has(company.id)),
+      ...filtered.filter((company) => !shortlistedIds.has(company.id)),
+    ],
+    [filtered, shortlistedIds]
+  );
+
+  // ── List reorder animation (FLIP) ───
+  // After the student adds or removes a shortlisted company, each card that moved
+  // slides from its old spot to its new one. The first shortlist load and search
+  // filtering don't animate; reduced-motion users get no animation.
+  const cardRefs = useRef(new Map<string, HTMLButtonElement>());
+  const previousTopsRef = useRef(new Map<string, number>());
+  const animateNextReorderRef = useRef(false);
+  const orderKey = orderedCompanies.map((company) => company.id).join(",");
+  const shortlistKey = shortlist.map((entry) => entry.companyId).join(",");
+
+  useLayoutEffect(() => {
+    const tops = new Map<string, number>();
+    cardRefs.current.forEach((card, id) => tops.set(id, card.offsetTop));
+    const shouldAnimate =
+      animateNextReorderRef.current &&
+      !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    animateNextReorderRef.current = false;
+    if (shouldAnimate) {
+      tops.forEach((top, id) => {
+        const previousTop = previousTopsRef.current.get(id);
+        const card = cardRefs.current.get(id);
+        if (previousTop !== undefined && previousTop !== top && typeof card?.animate === "function") {
+          card.animate(
+            [{ transform: `translateY(${previousTop - top}px)` }, { transform: "translateY(0)" }],
+            { duration: REORDER_ANIMATION_MS, easing: REORDER_EASING }
+          );
+        }
+      });
+    }
+    previousTopsRef.current = tops;
+  }, [orderKey, shortlistKey]);
+
   const handleShortlistSaved = (lead: CrmLead): void => {
     if (!formCompany) {
       return;
@@ -206,6 +252,7 @@ export function ProspectingDataRoom({
         companyName: formCompany.name,
       },
     ];
+    animateNextReorderRef.current = true;
     setShortlist(next);
     onShortlistChange(next.map((e) => e.companyId));
     setFormCompany(null);
@@ -224,6 +271,7 @@ export function ProspectingDataRoom({
         return;
       }
       const next = shortlist.filter((e) => e.leadId !== entry.leadId);
+      animateNextReorderRef.current = true;
       setShortlist(next);
       onShortlistChange(next.map((e) => e.companyId));
     } finally {
@@ -268,7 +316,7 @@ export function ProspectingDataRoom({
         </div>
 
         {/* Each company is its own bordered card on a light gray list background. */}
-        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar bg-surface-container-low p-2 space-y-1">
+        <div className="relative flex-1 min-h-0 overflow-y-auto custom-scrollbar bg-surface-container-low p-2 space-y-1">
           {isLoading ? (
             <p className="text-body-md text-on-surface-variant py-4 text-center">Loading…</p>
           ) : error ? (
@@ -276,12 +324,19 @@ export function ProspectingDataRoom({
           ) : filtered.length === 0 ? (
             <p className="text-body-md text-on-surface-variant py-4 text-center">No matches.</p>
           ) : (
-            filtered.map((company) => {
+            orderedCompanies.map((company) => {
               const isOpen = selectedCompanyId === company.id;
               const isShortlisted = shortlistedIds.has(company.id);
               return (
                 <button
                   key={company.id}
+                  ref={(card) => {
+                    if (card) {
+                      cardRefs.current.set(company.id, card);
+                    } else {
+                      cardRefs.current.delete(company.id);
+                    }
+                  }}
                   type="button"
                   onClick={() => onSelectCompany(company.id)}
                   aria-current={isOpen ? "true" : undefined}

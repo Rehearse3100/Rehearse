@@ -224,7 +224,7 @@ type ProspectingDataRoomChatProps = {
 };
 
 /**
- * AI Research Assistant pane: transcript, All companies toggle with the "About:" line, and
+ * AI Research Assistant pane: transcript, All companies toggle with the "Current:" line, and
  * the input with its suggestions / "Which one did you mean?" dropdown.
  */
 export function ProspectingDataRoomChat({
@@ -357,12 +357,12 @@ export function ProspectingDataRoomChat({
   });
   const scopeLabel =
     preview.kind === "all"
-      ? "About: All companies"
+      ? "Current: All companies"
       : preview.kind === "companies"
-        ? `About: ${preview.companies.map((company) => company.name).join(", ")}`
+        ? `Current: ${preview.companies.map((company) => company.name).join(", ")}`
         : "Open a company or type a company's name";
 
-  // Selected companies (the same ones the "About:" line shows) are coloured in the input.
+  // Selected companies (the same ones the "Current:" line shows) are coloured in the input.
   const mirrorSegments = splitIntoSegments(
     input,
     findSelectedNameRanges(
