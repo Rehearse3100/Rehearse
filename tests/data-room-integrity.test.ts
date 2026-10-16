@@ -2,8 +2,10 @@
  * data-room-integrity.test.ts
  * Local PGlite: FULL-SETUP summary + prospect-directory answer-key invariants, and
  * the research-finding rules: reproducible from the seed, topic-tagged, never
- * shared by two companies, never a repeat of the company's own public signals.
- * The generator is seeded from config.seed; CI runs it with fixed seeds.
+ * shared by two companies, never a repeat of the company's own public signals, and
+ * every trap disqualifier shared by the real fact policy for "risks", "fit" and
+ * each of its own topics. The live seed is secret (TEMPO_DIRECTORY_SEED); these
+ * tests use their own fixed seeds.
  */
 
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -11,10 +13,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { PGlite } from "@electric-sql/pglite";
+import { allowedFacts } from "../lib/data-room-chat-policy";
 import {
   FACT_TOPICS,
-  QUESTION_TOPIC_FACT_TOPICS,
   parseResearchFindings,
+  type QuestionTopic,
 } from "../lib/tempo-research-topics";
 import { TEMPO_ICP } from "../scripts/config/tempo-icp";
 import { tempoDirectorySeed } from "../scripts/config/tempo-directory-seed";
@@ -25,6 +28,7 @@ import {
   findingRepeatsSignals,
   generateProspectDirectory,
   normalizeSentence,
+  parseDirectorySeed,
 } from "../scripts/generate-prospect-directory";
 import {
   adaptFullSetupForPglite,
@@ -32,14 +36,8 @@ import {
   createSetupDatabase,
 } from "./helpers/pglite-harness";
 
-/** Fixed seeds used in CI — same every run. */
+/** Fixed test seeds (never the live one, which is secret) — same every run. */
 const CI_SEEDS = [1009, 4242, 7777, 13579, 24680] as const;
-
-/** Fact topics a student reaches by asking about risks or fit. */
-const DISQUALIFIER_REACHABLE_TOPICS = new Set<string>([
-  ...QUESTION_TOPIC_FACT_TOPICS.risks,
-  ...QUESTION_TOPIC_FACT_TOPICS.fit,
-]);
 
 const SUMMARY_COLUMNS = [
   "expected_tables_present",
@@ -235,12 +233,22 @@ async function assertDirectoryInvariants(
       ).toHaveLength(1);
       expect(disqualifierIndexes[0], `${row.company_name} index`).not.toBe(0);
 
-      // The disqualifier is reachable: a "risks" or "fit" question surfaces its topic.
+      // Reachable within the cap: the real fact policy shares the disqualifier (among
+      // its first MAX_SHARED_FINDINGS) for "risks", "fit" and each of its own topics.
       const disqualifier = findings[disqualifierIndexes[0] as number];
-      expect(
-        disqualifier?.topics.some((topic) => DISQUALIFIER_REACHABLE_TOPICS.has(topic)),
-        `${row.company_name} disqualifier topics [${disqualifier?.topics.join(", ")}]`
-      ).toBe(true);
+      for (const topic of ["risks", "fit", ...(disqualifier?.topics ?? [])] as QuestionTopic[]) {
+        const shared =
+          allowedFacts({
+            intent: "specific_research",
+            topic,
+            scope: { mode: "companies", companyIds: ["trap"] },
+            companies: [{ id: "trap", findings }],
+          }).companies.trap?.hidden ?? [];
+        expect(
+          shared.map((finding) => finding.text),
+          `${row.company_name} (${row.subtype}) "${topic}" [${disqualifier?.topics.join(", ")}]`
+        ).toContain(disqualifier?.text);
+      }
     }
   }
 
@@ -276,13 +284,25 @@ describe("data-room integrity (seeded, local PGlite)", () => {
   });
 
   it("the same seed generates an identical roster; another seed does not", () => {
-    const first = buildCompanyRoster(tempoDirectorySeed);
-    const second = buildCompanyRoster(tempoDirectorySeed);
+    const first = buildCompanyRoster({ ...tempoDirectorySeed, seed: CI_SEEDS[0] });
+    const second = buildCompanyRoster({ ...tempoDirectorySeed, seed: CI_SEEDS[0] });
     expect(second).toEqual(first);
-    expect(buildCompanyRoster({ ...tempoDirectorySeed, seed: CI_SEEDS[0] })).not.toEqual(first);
+    expect(buildCompanyRoster({ ...tempoDirectorySeed, seed: CI_SEEDS[1] })).not.toEqual(first);
   });
 
-  it.each([tempoDirectorySeed.seed, ...CI_SEEDS])(
+  it("the live seed comes only from TEMPO_DIRECTORY_SEED: a positive whole number, no default", () => {
+    expect(parseDirectorySeed("12345")).toBe(12345);
+    expect(parseDirectorySeed(" 7 ")).toBe(7);
+    expect(parseDirectorySeed("4294967295")).toBe(4294967295);
+    expect(() => parseDirectorySeed(undefined)).toThrow("TEMPO_DIRECTORY_SEED is not set");
+    expect(() => parseDirectorySeed("")).toThrow("TEMPO_DIRECTORY_SEED is not set");
+    for (const bad of ["0", "-5", "1.5", "12abc", "abc", "4294967296", "1e6"]) {
+      expect(() => parseDirectorySeed(bad), bad).toThrow("TEMPO_DIRECTORY_SEED must be a positive whole number");
+    }
+    expect("seed" in tempoDirectorySeed).toBe(false);
+  });
+
+  it.each(CI_SEEDS)(
     "seed %s: FULL-SETUP summary true + directory invariants",
     async (seed) => {
       db = await createSetupDatabase(dataDir);

@@ -3,14 +3,20 @@
  * Reusable prospect-directory seeder — simulation content lives in config files.
  * Wipes and regenerates crm_prospect_directory + contacts for one simulation_id.
  * Reproducible: all randomness comes from config.seed (same seed → same output).
+ * The live seed is secret: the CLI reads it from TEMPO_DIRECTORY_SEED and stops
+ * before building anything when it is missing or invalid (tests pass their own).
  * Research findings are stored as [{ text, topics }]: every finding carries 1–2
  * topics from config.factTopics, and no finding text is shared by two companies.
- * Runnable via: npx tsx scripts/generate-prospect-directory.ts
+ * Each trap's disqualifier is placed so the Data Room assistant's fact policy
+ * shares it for "risks", "fit" and each of its own topics.
+ * Runnable via: TEMPO_DIRECTORY_SEED=<seed> npx tsx scripts/generate-prospect-directory.ts
  */
 
 import { readFileSync } from "fs";
 import { join } from "path";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { MAX_SHARED_FINDINGS } from "../lib/data-room-chat-policy";
+import { QUESTION_TOPIC_FACT_TOPICS, type QuestionTopic } from "../lib/tempo-research-topics";
 import {
   failsVisibleIcpAxis,
   scoreIcpFit,
@@ -176,6 +182,30 @@ export interface TempoDirectorySeedConfig {
   contactDepartmentPool: string[];
   contactTitleSeniorityRank: string[];
   contactComparableAxes: ComparableAxis<ContactEntry>[];
+}
+
+/** The simulation's content config: everything but the seed, which is secret (TEMPO_DIRECTORY_SEED). */
+export type TempoDirectoryContentConfig = Omit<TempoDirectorySeedConfig, "seed">;
+
+/** Seeds feed mulberry32, which keeps 32 bits: larger values would repeat smaller ones. */
+const MAX_DIRECTORY_SEED = 4_294_967_295;
+
+/**
+ * Reads the live seed from TEMPO_DIRECTORY_SEED: a positive whole number up to
+ * 4294967295. Throws a clear message when it is missing or invalid; there is no
+ * default.
+ */
+export function parseDirectorySeed(raw: string | undefined): number {
+  const text = raw?.trim() ?? "";
+  const seed = /^\d+$/.test(text) ? Number(text) : NaN;
+  if (!Number.isSafeInteger(seed) || seed < 1 || seed > MAX_DIRECTORY_SEED) {
+    throw new Error(
+      text
+        ? `TEMPO_DIRECTORY_SEED must be a positive whole number up to ${MAX_DIRECTORY_SEED}. Nothing was generated.`
+        : "TEMPO_DIRECTORY_SEED is not set. Set it to the secret directory seed (a positive whole number), e.g. TEMPO_DIRECTORY_SEED=<seed> npx tsx scripts/generate-prospect-directory.ts. Nothing was generated."
+    );
+  }
+  return seed;
 }
 
 type EntryType = "target" | "crafted_decoy" | "filler";
@@ -457,6 +487,37 @@ function weightedTrapDisqualifierIndex(neutralCount: number): number {
   }
   const biased = Math.pow(random(), 0.35);
   return 1 + Math.floor(biased * neutralCount);
+}
+
+/**
+ * Cap safety: the Data Room assistant shares, for a question topic, only the first
+ * MAX_SHARED_FINDINGS findings (stored order) whose topics answer it. A trap's
+ * disqualifier is shared for "risks", "fit" and each of its own topics when its
+ * topics answer each of them and fewer than MAX_SHARED_FINDINGS of the findings
+ * before it match.
+ */
+function isDisqualifierCapSafe(
+  findingsBefore: readonly ResearchFinding[],
+  disqualifierTopics: readonly string[]
+): boolean {
+  const questionTopics = ["risks", "fit", ...disqualifierTopics] as QuestionTopic[];
+  return questionTopics.every((questionTopic) => {
+    const answering = new Set<string>(QUESTION_TOPIC_FACT_TOPICS[questionTopic] ?? []);
+    const matching = findingsBefore.filter((finding) => finding.topics.some((topic) => answering.has(topic)));
+    return disqualifierTopics.some((topic) => answering.has(topic)) && matching.length < MAX_SHARED_FINDINGS;
+  });
+}
+
+/**
+ * The last insert index (≥ 1, never first) at which the disqualifier is cap-safe
+ * among the neutral findings before it. Index 1 always is (one finding before it).
+ */
+function lastCapSafeInsertIndex(neutral: readonly ResearchFinding[], disqualifierTopics: readonly string[]): number {
+  let last = 1;
+  while (last < neutral.length && isDisqualifierCapSafe(neutral.slice(0, last + 1), disqualifierTopics)) {
+    last += 1;
+  }
+  return last;
 }
 
 const NEAR_MISS_SUBTYPES: NearMissSubtype[] = [
@@ -947,7 +1008,11 @@ export function finalizeResearchFacts(
       );
 
       if (disqualifier) {
-        const insertAt = weightedTrapDisqualifierIndex(neutralFacts.length);
+        // Seeded position, limited to the cap-safe range so "risks", "fit" and the
+        // disqualifier's own topics all share it (a no-op when every position is safe).
+        const insertAt = weightedTrapDisqualifierIndex(
+          lastCapSafeInsertIndex(neutralFacts, disqualifier.topics)
+        );
         company.researchFacts = [
           ...neutralFacts.slice(0, insertAt),
           disqualifier,
@@ -1680,6 +1745,16 @@ export function validateContentQuality(
         `Trap "${company.companyName}" has disqualifier as first research_fact.`
       );
     }
+    if (
+      !isDisqualifierCapSafe(
+        company.researchFacts.slice(0, disqualifierIndex),
+        config.disqualifierTopicsBySubtype[subtype]
+      )
+    ) {
+      throw new Error(
+        `Trap "${company.companyName}" disqualifier is not shared for "risks", "fit" and each of its own topics (its topics must answer them, and it must be within the first ${MAX_SHARED_FINDINGS} matching findings).`
+      );
+    }
   }
 
   const trapDisqualifiers = companies
@@ -2254,6 +2329,8 @@ function loadEnvLocalIfNeeded(): void {
 
 async function runCli(): Promise<void> {
   loadEnvLocalIfNeeded();
+  // The secret seed comes first: without a valid one nothing is built or written.
+  const seed = parseDirectorySeed(process.env.TEMPO_DIRECTORY_SEED);
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) {
@@ -2262,7 +2339,7 @@ async function runCli(): Promise<void> {
 
   const { tempoDirectorySeed } = await import("./config/tempo-directory-seed");
   const supabase = createClient(url, key);
-  const result = await generateProspectDirectory(supabase, tempoDirectorySeed);
+  const result = await generateProspectDirectory(supabase, { ...tempoDirectorySeed, seed });
   console.log(
     `Done. Inserted ${result.insertedCompanies} company row(s), synced ${result.insertedContacts} contact row(s).`
   );

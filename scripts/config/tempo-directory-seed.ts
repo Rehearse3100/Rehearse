@@ -2,18 +2,17 @@
  * tempo-directory-seed.ts
  * Tempo simulation prospect-directory seed config (Rehearse Essentials).
  * Hand-authored companies drop in via authoredCompanies without code changes.
+ * The random seed is not here: it is secret, and the generator reads it from
+ * TEMPO_DIRECTORY_SEED (tests pass their own fixed seeds).
  */
 
 import { TEMPO_SIMULATION_ID } from "../../lib/constants";
 import { FACT_TOPICS, type FactTopic } from "../../lib/tempo-research-topics";
 import type {
   FactPoolEntry,
-  TempoDirectorySeedConfig,
+  TempoDirectoryContentConfig,
   TrapSubtype,
 } from "../generate-prospect-directory";
-
-/** Seed for every random choice in the generator: the same seed regenerates the same directory. */
-const DIRECTORY_SEED = 20261015;
 
 function factEntry(text: string, theme: string): FactPoolEntry {
   return { text, theme };
@@ -70,7 +69,7 @@ function blurbLengthBucket(blurb: string): string {
   return "long";
 }
 
-const TEMPO_STRUCTURAL_CORRELATION: TempoDirectorySeedConfig["structuralCorrelation"] = {
+const TEMPO_STRUCTURAL_CORRELATION: TempoDirectoryContentConfig["structuralCorrelation"] = {
   getClass: (company) => company.class,
   exemptPropertyNames: [],
   properties: [
@@ -88,7 +87,7 @@ const TEMPO_STRUCTURAL_CORRELATION: TempoDirectorySeedConfig["structuralCorrelat
   ],
 };
 
-const TEMPO_TEMPLATE_DENSITY: TempoDirectorySeedConfig["templateDensity"] = {
+const TEMPO_TEMPLATE_DENSITY: TempoDirectoryContentConfig["templateDensity"] = {
   getRecordLabel: (company) => company.companyName,
   fields: [
     {
@@ -1296,10 +1295,10 @@ const THEME_TO_TOPICS: Record<string, FactTopic[]> = {
 
 /**
  * Topics for each trap subtype's disqualifier finding: what a student would
- * realistically ask about to uncover it (all reachable from "risks" or "fit").
+ * realistically ask about to uncover it (all reachable from "risks" and "fit").
  */
 const DISQUALIFIER_TOPICS_BY_SUBTYPE: Record<TrapSubtype, FactTopic[]> = {
-  already_solved: ["current_tools"],
+  already_solved: ["current_tools", "operations"],
   contracting: ["budget", "staffing"],
   franchise_power: ["ownership"],
   phantom_fit: ["growth"],
@@ -1844,9 +1843,8 @@ const PASS_SUFFIX_BY_VERTICAL: Record<string, string[]> = {
   "property management": ["Properties", "Realty", "Residential"],
 };
 
-export const tempoDirectorySeed: TempoDirectorySeedConfig = {
+export const tempoDirectorySeed: TempoDirectoryContentConfig = {
   simulationId: TEMPO_SIMULATION_ID,
-  seed: DIRECTORY_SEED,
   factTopics: FACT_TOPICS,
   themeToTopics: THEME_TO_TOPICS,
   disqualifierTopicsBySubtype: DISQUALIFIER_TOPICS_BY_SUBTYPE,

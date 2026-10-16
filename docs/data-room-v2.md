@@ -5,10 +5,14 @@ Simulation ID: `00000000-0000-0000-0000-000000000002` (Sell Tempo to Summit Dent
 
 ## What changed
 
+- **2026-10-16 (secret seed; trap findings reachable — not yet regenerated live):**
+  - The seed is secret: it is no longer in `tempo-directory-seed.ts`. The generator reads it from `TEMPO_DIRECTORY_SEED` (a positive whole number up to 4294967295) and stops with a clear message before building anything when it is missing or invalid; there is no default. The integrity tests use their own fixed test seeds, never the live one.
+  - `already_solved` disqualifiers are tagged `current_tools` + `operations` (scheduling questions reach them); `risks` now also covers `growth` (so `phantom_fit` traps answer risk questions).
+  - Cap safety: each trap's disqualifier is placed (seeded) so it is within the first `MAX_SHARED_FINDINGS` (4) findings the assistant's fact policy shares for "risks", "fit" and each of its own topics; generation fails otherwise, and the integrity test checks it with the real policy for every test seed.
 - **2026-10-15 (Phase 1 of the assistant rebuild — data only; not yet regenerated live):**
   - `research_facts` is stored as an ordered array of `{ "text": string, "topics": string[] }` (jsonb; no schema change). Every finding carries 1–2 topics from `FACT_TOPICS` in `lib/tempo-research-topics.ts` (pool facts via `THEME_TO_TOPICS`, trap disqualifiers via `DISQUALIFIER_TOPICS_BY_SUBTYPE`, authored companies hand-tagged). Readers accept both this shape and the old `string[]` (`parseResearchFindings`).
   - No finding text (normalized: lowercase, punctuation and whitespace collapsed) appears at two companies, and no finding shares ≥80% of its content words with its own company's public signals; both fail generation (`validateResearchFindings`). Public signals keep their limit of 2 companies.
-  - Reproducible: every random choice comes from mulberry32 seeded with `seed` in `tempo-directory-seed.ts` (`scripts/shared/seeded-random.ts`); the same seed regenerates the same directory. Companies are spread evenly across verticals (`VerticalBalancer`) so no pool is over-drawn.
+  - Reproducible: every random choice comes from mulberry32 seeded with the directory seed (`scripts/shared/seeded-random.ts`; since 2026-10-16 the secret `TEMPO_DIRECTORY_SEED`); the same seed regenerates the same directory. Companies are spread evenly across verticals (`VerticalBalancer`) so no pool is over-drawn.
   - Fact pools: +113 sentences (`EXPANDED_RESEARCH_FACTS_BY_VERTICAL`): +13 per non-ICP vertical, +7 per ICP vertical except dental. Golden State Dental Alliance's shared "same-day emergency" finding and a duplicated property-management pool sentence were reworded.
   - The fact lists below are from the 2026-08-31 run and change on the next regeneration.
 - **2026-08-31 (this run):** Removed single-frame supplemental facts (`"Local coverage noted the … in the Mountain West region."`). Replaced with 33 hand-written facts per vertical (varied structure, subject, and length). Added generic `validateNoTemplateDensity` alongside the existing anti-correlation validator. Trap disqualifier insert index now biases toward the middle and end of the array.
@@ -154,4 +158,4 @@ No trap has the disqualifier at index 0. All seven disqualifier sentences are di
 ## Before running the generator
 
 1. Run `supabase/archive/data-room-v2-migration.sql` if schema not yet applied.
-2. Run: `npx tsx scripts/generate-prospect-directory.ts`
+2. Run: `TEMPO_DIRECTORY_SEED=<secret seed> npx tsx scripts/generate-prospect-directory.ts` (or set `TEMPO_DIRECTORY_SEED` in `.env.local`). Keep the seed out of the repo: anyone with it can regenerate the directory and its answer key. The same seed regenerates the same directory; if generation stops on a validation error (about 1 seed in 200 fails the structural-leak check), choose another seed.

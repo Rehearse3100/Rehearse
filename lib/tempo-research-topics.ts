@@ -52,7 +52,7 @@ export const QUESTION_TOPIC_FACT_TOPICS: Record<QuestionTopic, readonly FactTopi
   ownership: ["ownership"],
   customer_feedback: ["customer_feedback"],
   amenities: ["amenities"],
-  risks: ["current_tools", "budget", "staffing", "ownership", "operations"],
+  risks: ["current_tools", "budget", "staffing", "ownership", "operations", "growth"],
   fit: ["operations", "growth", "current_tools", "budget", "staffing", "ownership"],
   recent_changes: ["growth", "current_tools", "staffing", "operations"],
 };
