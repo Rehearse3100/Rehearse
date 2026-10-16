@@ -1,7 +1,8 @@
 /**
  * data-room-chat-filter.test.ts
- * All-companies filters (pure): the whitelist (fields, operators, value types,
- * state codes), matching over the roster (unknown values never match), the list
+ * All-companies filters (pure): the forgiving whitelist (only an unknown field or a
+ * missing value is refused; state codes or names, yes/no words, numeric strings),
+ * matching over the roster (unknown values never match), the list
  * answer (count intro, A–Z only, capped at 20, "…and n more", no matches) and the
  * fixed reply for anything that isn't one valid filter.
  */
@@ -60,14 +61,85 @@ describe("the whitelist", () => {
     expect(parseRosterFilter({ field: "online_booking", op: "eq", value: true })).not.toBeNull();
   });
 
-  it("a state becomes its two-letter code (a full name too)", () => {
-    expect(parseRosterFilter({ field: "state", op: "eq", value: "co" })).toEqual({ field: "state", op: "eq", value: "CO" });
-    expect(parseRosterFilter({ field: "state", op: "eq", value: "Colorado" })).toEqual({ field: "state", op: "eq", value: "CO" });
-    expect(parseRosterFilter({ field: "state", op: "eq", value: "Atlantis" })).toBeNull();
-    expect(parseRosterFilter({ field: "state", op: "eq", value: "XX" })).toBeNull();
+  it("state: eq or contains, a two-letter code or a full state name, any case → the code", () => {
+    const co = { field: "state", op: "eq", value: "CO" };
+    for (const raw of [
+      { field: "state", op: "contains", value: "Colorado" },
+      { field: "state", op: "eq", value: "Colorado" },
+      { field: "state", op: "eq", value: "colorado" },
+      { field: "state", op: "contains", value: "COLORADO" },
+      { field: "state", op: "eq", value: "co" },
+      { field: "state", op: "contains", value: "CO" },
+      { field: "state", op: "eq", value: " Co " },
+      { field: "state", op: "contains", value: "the state of Colorado" },
+      { field: "state", value: "Colorado" },
+    ]) {
+      expect(parseRosterFilter(raw), JSON.stringify(raw)).toEqual(co);
+    }
+    expect(parseRosterFilter({ field: "state", op: "contains", value: "West Virginia" })).toMatchObject({ value: "WV" });
+    expect(parseRosterFilter({ field: "state", op: "eq", value: "new york" })).toMatchObject({ value: "NY" });
   });
 
-  it("rejects other fields, operators a field doesn't allow, wrong value types and bad values", () => {
+  it("state: an unknown state is kept and matches no company (not the fixed reply)", () => {
+    expect(parseRosterFilter({ field: "state", op: "eq", value: "Atlantis" })).toEqual({ field: "state", op: "eq", value: "ATLANTIS" });
+    expect(parseRosterFilter({ field: "state", op: "eq", value: "XX" })).toEqual({ field: "state", op: "eq", value: "XX" });
+    expect(names({ field: "state", op: "eq", value: "ATLANTIS" })).toEqual([]);
+  });
+
+  it("industry and metro: eq and contains are the same case-insensitive contains", () => {
+    for (const op of ["eq", "contains", "EQ", "like", undefined]) {
+      expect(parseRosterFilter({ field: "industry", op, value: "Dental" }), String(op)).toEqual({
+        field: "industry",
+        op: "contains",
+        value: "Dental",
+      });
+      expect(parseRosterFilter({ field: "metro", op, value: "denver" }), String(op)).toEqual({
+        field: "metro",
+        op: "contains",
+        value: "denver",
+      });
+    }
+    expect(names({ field: "industry", op: "eq", value: "DENT" })).toEqual(["Summit Dental Group", "Maple Family Dentistry"]);
+    expect(names({ field: "metro", op: "eq", value: "denver" })).toEqual(["Falcon Market"]);
+    expect(parseRosterFilter({ field: "metro", op: "contains", value: "x".repeat(61) })).toMatchObject({ op: "contains" });
+  });
+
+  it("territory and online booking: true/false as booleans or the words true/false/yes/no", () => {
+    for (const [value, expected] of [
+      [true, true],
+      [false, false],
+      ["true", true],
+      ["false", false],
+      ["yes", true],
+      ["no", false],
+      [" Yes ", true],
+      ["NO", false],
+      ["True", true],
+    ] as const) {
+      expect(parseRosterFilter({ field: "territory", op: "eq", value }), String(value)).toEqual({
+        field: "territory",
+        op: "eq",
+        value: expected,
+      });
+      expect(parseRosterFilter({ field: "online_booking", op: "contains", value }), String(value)).toEqual({
+        field: "online_booking",
+        op: "eq",
+        value: expected,
+      });
+    }
+  });
+
+  it("locations: a number or a numeric string, with eq/gt/gte/lt/lte (or a common spelling)", () => {
+    expect(parseRosterFilter({ field: "locations", op: "gt", value: "3" })).toEqual({ field: "locations", op: "gt", value: 3 });
+    expect(parseRosterFilter({ field: "locations", op: "eq", value: " 1 " })).toEqual({ field: "locations", op: "eq", value: 1 });
+    expect(parseRosterFilter({ field: "locations", op: "gte", value: 5 })).toEqual({ field: "locations", op: "gte", value: 5 });
+    expect(parseRosterFilter({ field: "locations", op: ">=", value: "5" })).toEqual({ field: "locations", op: "gte", value: 5 });
+    expect(parseRosterFilter({ field: "locations", op: "less_than", value: 4 })).toEqual({ field: "locations", op: "lt", value: 4 });
+    expect(parseRosterFilter({ field: "locations", op: "contains", value: 3 })).toEqual({ field: "locations", op: "eq", value: 3 });
+    expect(parseRosterFilter({ field: "locations", value: 0 })).toEqual({ field: "locations", op: "eq", value: 0 });
+  });
+
+  it("rejects only a field outside the whitelist or a missing value", () => {
     for (const raw of [
       null,
       "online_booking",
@@ -76,16 +148,19 @@ describe("the whitelist", () => {
       { field: "research_facts", op: "contains", value: "budget" },
       { field: "fit_rank", op: "lte", value: 1 },
       { field: "class", op: "eq", value: "strong_fit" },
-      { field: "industry", op: "gt", value: "Dental" },
-      { field: "state", op: "contains", value: "CO" },
-      { field: "territory", op: "contains", value: true },
-      { field: "locations", op: "contains", value: 3 },
-      { field: "locations", op: "gt", value: "3" },
-      { field: "locations", op: "gt", value: -1 },
-      { field: "online_booking", op: "eq", value: "yes" },
+      { field: "STATE", op: "eq", value: "CO" },
+      { op: "eq", value: "CO" },
+      { field: "state", op: "eq" },
+      { field: "state", op: "eq", value: "  " },
       { field: "industry", op: "eq", value: "   " },
-      { field: "metro", op: "contains", value: "x".repeat(61) },
-      { field: "industry", op: "regex", value: "Dental" },
+      { field: "metro", op: "contains", value: null },
+      { field: "locations", op: "gt", value: "three" },
+      { field: "locations", op: "gt", value: -1 },
+      { field: "locations", op: "gt", value: "" },
+      { field: "locations", op: "gt", value: true },
+      { field: "territory", op: "eq" },
+      { field: "territory", op: "eq", value: "maybe" },
+      { field: "online_booking", op: "eq", value: 1 },
     ]) {
       expect(parseRosterFilter(raw), JSON.stringify(raw)).toBeNull();
     }
@@ -93,7 +168,7 @@ describe("the whitelist", () => {
 });
 
 describe("matching", () => {
-  it("text fields: eq or contains, any case", () => {
+  it("text fields: case-insensitive contains", () => {
     expect(names({ field: "industry", op: "eq", value: "dental" })).toEqual(["Summit Dental Group", "Maple Family Dentistry"]);
     expect(names({ field: "industry", op: "contains", value: "vet" })).toEqual(["Aspen Vet Clinic"]);
     expect(names({ field: "metro", op: "contains", value: "denver" })).toEqual(["Falcon Market"]);
@@ -163,12 +238,13 @@ describe("the list answer", () => {
 describe("All-companies answers", () => {
   const bookingFilter: RosterFilter = { field: "online_booking", op: "eq", value: true };
 
-  it("one valid filter runs; more than one criterion, no filter, or any other intent → the fixed reply", () => {
+  it("one valid filter runs (a missing criteria count reads as one); more than one criterion, no filter, or any other intent → the fixed reply", () => {
     expect(answerAllCompanies(decision({ filter: bookingFilter }), ROSTER).items).toHaveLength(3);
+    expect(answerAllCompanies(decision({ filter: bookingFilter, criteriaCount: null }), ROSTER).items).toHaveLength(3);
+    expect(answerAllCompanies(decision({ filter: bookingFilter, criteriaCount: 0 }), ROSTER).items).toHaveLength(3);
     expect(MAX_FILTER_CRITERIA).toBe(1);
     const fixed = { intro: ALL_MODE_REPLY, items: [] };
     expect(answerAllCompanies(decision({ filter: bookingFilter, criteriaCount: 2 }), ROSTER)).toEqual(fixed);
-    expect(answerAllCompanies(decision({ filter: bookingFilter, criteriaCount: null }), ROSTER)).toEqual(fixed);
     expect(answerAllCompanies(decision({ filter: null }), ROSTER)).toEqual(fixed);
     for (const intent of ["overview", "attribute_lookup", "specific_research", "compare", "meta_or_bulk", "off_topic"] as const) {
       expect(answerAllCompanies(decision({ intent, filter: bookingFilter }), ROSTER), intent).toEqual(fixed);
@@ -176,5 +252,32 @@ describe("All-companies answers", () => {
     expect(ALL_MODE_REPLY).toBe(
       "In All companies mode I can filter by one thing at a time, such as industry, city or state, number of locations, territory, or online booking. Open a company to research it in depth."
     );
+  });
+
+  it('"Which companies are in Colorado?" with {"field":"state","op":"contains","value":"Colorado"} lists the Colorado companies', () => {
+    const filter = parseRosterFilter({ field: "state", op: "contains", value: "Colorado" });
+    expect(answerAllCompanies(decision({ filter }), ROSTER)).toEqual({
+      intro: "3 companies match.",
+      items: [
+        { companyId: "falcon", companyName: "Falcon Market", text: "Retail · 1 location · Denver, CO" },
+        { companyId: "maple", companyName: "Maple Family Dentistry", text: "Dental · 3 locations · Boulder, CO" },
+        { companyId: "summit", companyName: "Summit Dental Group", text: "Dental · 8 locations · Front Range, CO" },
+      ],
+    });
+  });
+
+  it("each forgiving form runs the filter instead of the fixed reply", () => {
+    for (const [raw, count] of [
+      [{ field: "state", op: "eq", value: "co" }, 3],
+      [{ field: "industry", op: "eq", value: "dent" }, 2],
+      [{ field: "metro", op: "eq", value: "boulder" }, 1],
+      [{ field: "territory", op: "eq", value: "yes" }, 3],
+      [{ field: "online_booking", op: "eq", value: "no" }, 1],
+      [{ field: "locations", op: "gte", value: "3" }, 2],
+    ] as const) {
+      expect(answerAllCompanies(decision({ filter: parseRosterFilter(raw) }), ROSTER).items, JSON.stringify(raw)).toHaveLength(
+        count
+      );
+    }
   });
 });

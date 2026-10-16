@@ -44,19 +44,19 @@ export type FilterField = (typeof FILTER_FIELDS)[number];
 export const FILTER_OPS = ["eq", "contains", "gt", "gte", "lt", "lte"] as const;
 export type FilterOp = (typeof FILTER_OPS)[number];
 
-/** The whitelist: the operators and value type each field allows. */
-const FIELD_RULES: Record<FilterField, { ops: readonly FilterOp[]; value: "string" | "number" | "boolean" }> = {
-  industry: { ops: ["eq", "contains"], value: "string" },
-  metro: { ops: ["eq", "contains"], value: "string" },
-  state: { ops: ["eq"], value: "string" },
-  locations: { ops: ["eq", "gt", "gte", "lt", "lte"], value: "number" },
-  territory: { ops: ["eq"], value: "boolean" },
-  online_booking: { ops: ["eq"], value: "boolean" },
-};
-
 export type RosterFilter = { field: FilterField; op: FilterOp; value: string | number | boolean };
 
-const MAX_TEXT_VALUE_LENGTH = 60;
+/** Number comparisons for locations, with the spellings a model may use. */
+const LOCATION_OPS: Record<string, FilterOp> = {
+  eq: "eq", "=": "eq", "==": "eq", equals: "eq",
+  gt: "gt", ">": "gt", greater_than: "gt", more_than: "gt",
+  gte: "gte", ">=": "gte", at_least: "gte",
+  lt: "lt", "<": "lt", less_than: "lt", fewer_than: "lt",
+  lte: "lte", "<=": "lte", at_most: "lte",
+};
+
+/** Yes/no values given as words. */
+const BOOLEAN_WORDS: Record<string, boolean> = { true: true, yes: true, false: false, no: false };
 
 /** US state names → two-letter codes (the router is asked for codes; names are accepted too). */
 const STATE_CODES: Record<string, string> = {
@@ -73,42 +73,71 @@ const STATE_CODES: Record<string, string> = {
 
 const STATE_CODE_SET: ReadonlySet<string> = new Set(Object.values(STATE_CODES));
 
+/** State names longest first, so "West Virginia" is found before "Virginia". */
+const STATE_NAMES_LONGEST_FIRST: readonly string[] = Object.keys(STATE_CODES).sort((a, b) => b.length - a.length);
+
 function isOneOf<T extends string>(values: readonly T[], value: unknown): value is T {
   return typeof value === "string" && (values as readonly string[]).includes(value);
 }
 
-function stateCode(value: string): string | null {
-  const text = value.trim();
-  const code = text.length === 2 ? text.toUpperCase() : STATE_CODES[text.toLowerCase()];
-  return code && STATE_CODE_SET.has(code) ? code : null;
+/**
+ * A state's two-letter code: the code itself, the full name, or a full name inside
+ * the text ("the state of Colorado"), any case. An unrecognized state is kept as
+ * typed (uppercased) and simply matches no company.
+ */
+function stateCode(text: string): string {
+  const lower = text.toLowerCase();
+  if (text.length === 2 && STATE_CODE_SET.has(text.toUpperCase())) {
+    return text.toUpperCase();
+  }
+  const name = STATE_CODES[lower]
+    ? lower
+    : STATE_NAMES_LONGEST_FIRST.find((stateName) => new RegExp(`\\b${stateName}\\b`).test(lower));
+  return name ? STATE_CODES[name] : text.toUpperCase();
+}
+
+/** Text from a string or number; "" when missing. */
+function textValue(value: unknown): string {
+  return typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
 }
 
 /**
- * Validates the router's filter against the whitelist: a known field, an operator
- * that field allows, and a value of its type (text 1–60 characters, a number of 0
- * or more, or true/false; a state becomes its two-letter code). Anything else is null.
+ * Validates the router's filter, forgiving wherever the meaning is clear: industry
+ * and metro always match as case-insensitive "contains" (eq or contains); state
+ * takes eq or contains with a two-letter code or a full name, any case; territory
+ * and online booking take true/false or "true"/"false"/"yes"/"no"; locations takes
+ * a number or a numeric string (0 or more) with eq/gt/gte/lt/lte (or a common
+ * spelling; anything else means eq). Only a field outside the whitelist or a
+ * missing value gives null.
  */
 export function parseRosterFilter(raw: unknown): RosterFilter | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return null;
   }
   const { field, op, value } = raw as Record<string, unknown>;
-  if (!isOneOf(FILTER_FIELDS, field) || !isOneOf(FIELD_RULES[field].ops, op)) {
+  if (!isOneOf(FILTER_FIELDS, field)) {
     return null;
   }
-  switch (FIELD_RULES[field].value) {
-    case "string": {
-      const text = typeof value === "string" ? value.trim() : "";
-      if (text.length === 0 || text.length > MAX_TEXT_VALUE_LENGTH) {
-        return null;
-      }
-      const code = field === "state" ? stateCode(text) : text;
-      return code ? { field, op, value: code } : null;
+  switch (field) {
+    case "industry":
+    case "metro": {
+      const text = textValue(value);
+      return text ? { field, op: "contains", value: text } : null;
     }
-    case "number":
-      return typeof value === "number" && Number.isFinite(value) && value >= 0 ? { field, op, value } : null;
-    default:
-      return typeof value === "boolean" ? { field, op, value } : null;
+    case "state": {
+      const text = textValue(value);
+      return text ? { field, op: "eq", value: stateCode(text) } : null;
+    }
+    case "locations": {
+      const text = textValue(value);
+      const count = text ? Number(text) : NaN;
+      const comparison = LOCATION_OPS[typeof op === "string" ? op.trim().toLowerCase() : ""] ?? "eq";
+      return Number.isFinite(count) && count >= 0 ? { field, op: comparison, value: count } : null;
+    }
+    default: {
+      const flag = typeof value === "boolean" ? value : BOOLEAN_WORDS[textValue(value).toLowerCase()];
+      return typeof flag === "boolean" ? { field, op: "eq", value: flag } : null;
+    }
   }
 }
 
@@ -140,19 +169,19 @@ function compareNumber(actual: number, op: FilterOp, expected: number): boolean 
   }
 }
 
-function matchesText(actual: string | null, op: FilterOp, expected: string): boolean {
+/** Industry and metro: eq and contains both mean a case-insensitive "contains". */
+function matchesText(actual: string | null, expected: string): boolean {
   const text = actual?.trim().toLowerCase() ?? "";
-  const needle = expected.toLowerCase();
-  return text.length > 0 && (op === "contains" ? text.includes(needle) : text === needle);
+  return text.length > 0 && text.includes(expected.toLowerCase());
 }
 
 /** True when the company matches the filter. A missing (unknown) value never matches. */
 export function matchesFilter(company: FilterCompany, filter: RosterFilter): boolean {
   switch (filter.field) {
     case "industry":
-      return matchesText(company.industry, filter.op, String(filter.value));
+      return matchesText(company.industry, String(filter.value));
     case "metro":
-      return matchesText(company.metro, filter.op, String(filter.value));
+      return matchesText(company.metro, String(filter.value));
     case "state":
       return stateOfMetro(company.metro) === filter.value;
     case "locations":
@@ -190,12 +219,14 @@ export function answerFilter(filter: RosterFilter, companies: readonly FilterCom
 
 /**
  * The answer to an All-companies question: a filter_list question with one valid
- * filter (and no more than MAX_FILTER_CRITERIA conditions) runs over the roster;
- * everything else gets ALL_MODE_REPLY.
+ * filter (and no more than MAX_FILTER_CRITERIA conditions; a missing count is read
+ * as one) runs over the roster; everything else gets ALL_MODE_REPLY.
  */
 export function answerAllCompanies(decision: RouterDecision, companies: readonly FilterCompany[]): ScopedAnswer {
   const { intent, filter, criteriaCount } = decision;
-  if (intent === "filter_list" && filter && criteriaCount !== null && criteriaCount <= MAX_FILTER_CRITERIA) {
+  // A missing criteria count reads as one condition; only more than one is refused.
+  const isOneCriterion = criteriaCount === null || criteriaCount <= MAX_FILTER_CRITERIA;
+  if (intent === "filter_list" && filter && isOneCriterion) {
     return answerFilter(filter, companies);
   }
   return { intro: ALL_MODE_REPLY, items: [] };

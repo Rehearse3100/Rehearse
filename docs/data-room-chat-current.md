@@ -130,28 +130,28 @@ The answer comes from the database (no model call):
 
 With All companies on, no model ever sees company data. After the router call (5.1):
 
-- `filter_list` with **one valid filter** and `criteria_count` ≤ `MAX_FILTER_CRITERIA` (= 1, a config constant) → the filter runs over the whole roster in code. Matching companies are listed **A–Z only** (no other order, no ranking), at most **20**, each `{ companyId, companyName, text: "{Industry} · {N} locations · {Metro}" }` from the database (the same line as name answers; `industry` is the column the company list shows).
+- `filter_list` with **one valid filter** and `criteria_count` ≤ `MAX_FILTER_CRITERIA` (= 1, a config constant; a missing count is read as one) → the filter runs over the whole roster in code. Matching companies are listed **A–Z only** (no other order, no ranking), at most **20**, each `{ companyId, companyName, text: "{Industry} · {N} locations · {Metro}" }` from the database (the same line as name answers; `industry` is the column the company list shows).
   - Intro: the count, `{n} companies match.` (`1 company matches.` for one).
   - More than 20: a second intro line, `…and {n} more. Use the search box above the list to narrow it down.`
   - No match: intro `No companies match that.`
-- **Anything else** — any other intent (overview, attribute lookup, specific research, compare, meta or bulk, off topic), more than one criterion, a missing or invalid filter, or a failed router call — gets exactly:
+- **Anything else** — any other intent (overview, attribute lookup, specific research, compare, meta or bulk, off topic), `criteria_count` > 1, a missing filter, a field outside the whitelist or a missing value, or a failed (or low-confidence) router call — gets exactly:
 
 ```
 In All companies mode I can filter by one thing at a time, such as industry, city or state, number of locations, territory, or online booking. Open a company to research it in depth.
 ```
 
-The filter whitelist (`parseRosterFilter`; anything else → no filter):
+The filter whitelist (`parseRosterFilter`) is forgiving wherever the meaning is clear (2026-10-16). Only a field outside the whitelist or a missing value gives no filter:
 
 | field | op | value | matches |
 |-------|----|-------|---------|
-| `industry` | `eq`, `contains` | text (1–60 chars) | the `industry` column, any case |
-| `metro` | `eq`, `contains` | text (1–60 chars) | the `metro` column (city or area), any case |
-| `state` | `eq` | two-letter code (a full state name is converted) | the `, XX` suffix of `metro` |
-| `locations` | `eq`, `gt`, `gte`, `lt`, `lte` | number ≥ 0 | `locations` |
-| `territory` | `eq` | true / false | `in_territory` |
-| `online_booking` | `eq` | true / false | `online_booking` |
+| `industry` | any (`eq` and `contains` both mean contains) | text or number | the `industry` column contains it, any case |
+| `metro` | any (`eq` and `contains` both mean contains) | text or number | the `metro` column (city or area) contains it, any case |
+| `state` | any (`eq`, `contains`, …) | a two-letter code or a full state name (also inside text, "the state of Colorado"), any case → the code | the `, XX` suffix of `metro`; an unknown state matches nothing (`No companies match that.`) |
+| `locations` | `eq`, `gt`, `gte`, `lt`, `lte` (also `=`, `>`, `>=`, `<`, `<=`, `greater_than`, `at_least`, …); anything else → `eq` | a number ≥ 0 or a numeric string (`"3"`) | `locations` |
+| `territory` | any (read as `eq`) | `true` / `false`, or `"true"` / `"false"` / `"yes"` / `"no"`, any case | `in_territory` |
+| `online_booking` | any (read as `eq`) | `true` / `false`, or `"true"` / `"false"` / `"yes"` / `"no"`, any case | `online_booking` |
 
-A missing (unknown) value never matches. An attribute question with All companies on gets the fixed reply too (product decision 2026-10-16).
+A value that can't be read (a non-numeric locations value, a yes/no field with "maybe", an empty string) counts as missing. A missing (unknown) value on a company never matches. An attribute question with All companies on gets the fixed reply too (product decision 2026-10-16).
 
 ---
 
@@ -167,11 +167,12 @@ A missing (unknown) value never matches. An attribute question with All companie
 - intro: the opening sentence (7). Prompt lines:
   - `intro: ONE short, friendly sentence (at most 30 words) that responds to the question. It only frames what the student asked (for example "Here's what's on record about their software."): never say what the answer contains, never name or describe any company, and never use references such as C1 or [C1].`
   - `When the student asks you to judge, rank, pick or recommend, the intro says choosing is their call and points to the facts below (for example "Which one to pursue is your call; the facts below can help you compare."). Never write "better than", "the best", "recommend", "go with" or "I'd pick".`
+  - `The intro stays neutral about what the facts are: use framing like "Here's what's on record related to risks." or "Here's what's on record about their software.", never "Here are their risks", "what you should know about their risks" or "what might indicate…".`
   
   Parsed as the trimmed string ("" when it isn't one); a decision that fails closed has no intro.
 - Prompt rule: questions phrased as "how many…", "which are…" or "list the…" with ONE condition are `filter_list`, read charitably ("how many are located dental?" → `{"field": "industry", "op": "contains", "value": "dental"}`); the count intro answers "how many".
 - `off_topic` is only for questions clearly unrelated to researching companies (the weather, homework, jokes). Anything about a company is never off topic: revenue, finances, metrics, patients, people's roles or who decides are `specific_research` with the closest topic (revenue or finances → `budget`; people's roles or who decides → `ownership`). Email addresses, phone numbers or who to contact are `attribute_lookup` with attribute `contacts`, so the answer is the contacts list (2026-10-16).
-- **Fails closed in code** (`parseRouterReply`): invalid JSON, unknown values, low or missing confidence, or `specific_research` without a topic → `overview`. A filter outside the whitelist, or a criteria count that isn't a whole number ≥ 0, becomes null (an All-companies question then gets the fixed reply). A failed router call also counts as `overview`.
+- **Fails closed in code** (`parseRouterReply`): invalid JSON, unknown values, low or missing confidence, or `specific_research` without a topic → `overview`. For `filter_list` an unknown topic or attribute just becomes null (it never uses them), so it can't sink a valid filter. A filter the whitelist can't read (4.3) becomes null (an All-companies question then gets the fixed reply); a criteria count that isn't a whole number ≥ 0 (a number or a numeric string such as `"1"`) becomes null. A failed router call also counts as `overview`.
 - Follow-ups ("tell me more about that") are understood from the recent questions; no answering step sees history.
 
 ### 5.2 Policy (`lib/data-room-chat-policy.ts`, pure)
@@ -328,6 +329,7 @@ Response: `{ "intro": string, "items": [{ "companyId", "companyName", "text" }] 
 - **2026-10-16, helpful answers:** specific research shows every finding the policy allows (stored order) and the selection call only adds public lines (it never sees a finding); compare renders each company's overview with no model (removed: the per-company selection path); the 4-finding cap applies only to broad topics (`risks`, `fit`, `recent_changes`); `off_topic` is only for clearly unrelated questions, and company questions about revenue, finances, emails, metrics or patients are `specific_research`; the selection prompt returns no facts when the exact thing asked for isn't stated.
 - **2026-10-16, exact detail:** the router adds `exact_value`; the selection call sees the allowed findings and public facts again (it still can't add or remove a finding) and returns `exact_answer` instead of `no_relevant_facts`; an exact detail no fact states gets the intro `That exact detail isn't publicly findable. Related facts:` (also above contacts for email or phone questions).
 - **2026-10-16, opening sentence:** the router writes a one-sentence `intro` (no extra model call; `max_tokens` 150 → 300), checked by code and shown above the facts (7).
+- **2026-10-16, forgiving filters:** "Which companies are in Colorado?" got the one-thing-at-a-time reply on Vercel, most likely because the router returned `{"field":"state","op":"contains","value":"Colorado"}` and `state` allowed only `eq`. Filter validation now refuses only a field outside the whitelist, a missing value or `criteria_count` > 1 (4.3): state takes `eq` or `contains` with a code or a name; industry and metro treat `eq` as contains; yes/no fields take `"true"`/`"false"`/`"yes"`/`"no"`; locations takes numeric strings; a missing `criteria_count` reads as one and a numeric string is read as its number; the 60-character text limit is gone; for `filter_list` an unknown topic or attribute becomes null instead of failing the decision. The router's intro stays neutral about what the facts are ("Here's what's on record related to risks.").
 - **2026-10-16:** filter answers start with a count intro ("{n} companies match." / "1 company matches."; "…and {n} more" becomes its second line); the router reads one-condition "how many / which are / list the" questions as `filter_list`; `risks` also covers `growth` (trap reachability, `docs/data-room-v2.md`).
 
 ---
@@ -338,6 +340,9 @@ Response: `{ "intro": string, "items": [{ "companyId", "companyName", "text" }] 
 - [ ] All companies on + "Tell me about them" → "In All companies mode I can filter by one thing at a time, …"
 - [ ] All companies on + "Which companies are in Colorado?" → "{n} companies match." then the Colorado companies A–Z (`Industry · N locations · Metro`), at most 20, with "…and n more" under the count if there are more
 - [ ] All companies on + "how many are located dental?" → "{n} companies match." and the dental companies
+- [ ] All companies on + "Which companies are in colorado?" and "Which companies are in CO?" → the same Colorado list as above
+- [ ] All companies on + "Which companies have online booking?" and "Which ones have 3 or more locations?" → a count and a list, never the one-thing-at-a-time reply
+- [ ] One company: "What risks should I know about?" → the opening (when shown) reads like "Here's what's on record related to risks.", never "Here are their risks" or "what might indicate…"
 - [ ] All companies on + "Which dental clinics in Denver have online booking?" → the one-thing-at-a-time reply
 - [ ] All companies on + "Which companies have a budget freeze?" → the one-thing-at-a-time reply
 - [ ] After a list with one company, "What does it sell?" → answered about that company, and the All companies toggle turns off; with several listed → "Which one did you mean?" with them (up to 10)

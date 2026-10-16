@@ -3,7 +3,7 @@
  * Data Room question router (pure): the classifier sees only the redacted question,
  * the last 3 redacted questions and the scope kind; its reply fails closed to
  * "overview" on anything invalid, unknown, low-confidence, or specific_research
- * without a topic.
+ * without a topic (for filter_list an unknown topic or attribute just becomes null).
  */
 
 import { describe, expect, it } from "vitest";
@@ -145,6 +145,12 @@ describe("classifier reply", () => {
     );
   });
 
+  it("the prompt keeps the intro neutral about what the facts are", () => {
+    expect(ROUTER_SYSTEM_PROMPT).toContain(
+      'The intro stays neutral about what the facts are: use framing like "Here\'s what\'s on record related to risks." or "Here\'s what\'s on record about their software.", never "Here are their risks", "what you should know about their risks" or "what might indicate…".'
+    );
+  });
+
   it("exact_value is true only when the reply says exactly true; missing or invalid → false", () => {
     const exact = (value: unknown): boolean =>
       parseRouterReply(
@@ -162,11 +168,12 @@ describe("classifier reply", () => {
     );
   });
 
+  const filterReply = (filter: unknown, criteriaCount: unknown): unknown =>
+    parseRouterReply(
+      reply({ intent: "filter_list", topic: null, attribute: null, filter, criteria_count: criteriaCount, confidence: "high" })
+    );
+
   it("reads one whitelisted filter and the criteria count; anything else becomes null, the decision stays", () => {
-    const filterReply = (filter: unknown, criteriaCount: unknown): unknown =>
-      parseRouterReply(
-        reply({ intent: "filter_list", topic: null, attribute: null, filter, criteria_count: criteriaCount, confidence: "high" })
-      );
     expect(filterReply({ field: "online_booking", op: "eq", value: true }, 1)).toEqual({
       intent: "filter_list",
       topic: null,
@@ -185,6 +192,46 @@ describe("classifier reply", () => {
     expect(filterReply(null, -1)).toMatchObject({ filter: null, criteriaCount: null });
   });
 
+  it('"Which companies are in Colorado?": state + contains + a full name is read as CO', () => {
+    expect(filterReply({ field: "state", op: "contains", value: "Colorado" }, 1)).toMatchObject({
+      intent: "filter_list",
+      filter: { field: "state", op: "eq", value: "CO" },
+      criteriaCount: 1,
+    });
+  });
+
+  it("criteria_count: a numeric string is read as its number; missing stays null", () => {
+    expect(filterReply({ field: "state", op: "eq", value: "CO" }, "1")).toMatchObject({ criteriaCount: 1 });
+    expect(filterReply({ field: "state", op: "eq", value: "CO" }, " 2 ")).toMatchObject({ criteriaCount: 2 });
+    expect(filterReply({ field: "state", op: "eq", value: "CO" }, undefined)).toMatchObject({
+      filter: { field: "state", op: "eq", value: "CO" },
+      criteriaCount: null,
+    });
+    expect(filterReply({ field: "state", op: "eq", value: "CO" }, "one")).toMatchObject({ criteriaCount: null });
+    expect(filterReply({ field: "state", op: "eq", value: "CO" }, "")).toMatchObject({ criteriaCount: null });
+  });
+
+  it("filter_list: an unknown topic or attribute becomes null instead of failing the decision", () => {
+    expect(
+      parseRouterReply(
+        reply({
+          intent: "filter_list",
+          topic: "location",
+          attribute: "state",
+          filter: { field: "state", op: "contains", value: "Colorado" },
+          criteria_count: 1,
+          confidence: "high",
+        })
+      )
+    ).toMatchObject({
+      intent: "filter_list",
+      topic: null,
+      attribute: null,
+      filter: { field: "state", op: "eq", value: "CO" },
+      criteriaCount: 1,
+    });
+  });
+
   it("fails closed to overview", () => {
     for (const raw of [
       "not json",
@@ -197,6 +244,15 @@ describe("classifier reply", () => {
       reply({ intent: "dump_everything", topic: null, attribute: null, confidence: "high" }),
       reply({ intent: "specific_research", topic: "secrets", attribute: null, confidence: "high" }),
       reply({ intent: "attribute_lookup", topic: null, attribute: "revenue", confidence: "high" }),
+      reply({ intent: "attribute_lookup", topic: "location", attribute: "metro", confidence: "high" }),
+      reply({
+        intent: "filter_list",
+        topic: null,
+        attribute: null,
+        filter: { field: "state", op: "eq", value: "CO" },
+        criteria_count: 1,
+        confidence: "low",
+      }),
     ]) {
       expect(parseRouterReply(raw), String(raw)).toEqual(OVERVIEW_DECISION);
     }

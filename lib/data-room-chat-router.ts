@@ -131,6 +131,7 @@ export const ROUTER_SYSTEM_PROMPT = [
   "",
   'intro: ONE short, friendly sentence (at most 30 words) that responds to the question. It only frames what the student asked (for example "Here\'s what\'s on record about their software."): never say what the answer contains, never name or describe any company, and never use references such as C1 or [C1].',
   'When the student asks you to judge, rank, pick or recommend, the intro says choosing is their call and points to the facts below (for example "Which one to pursue is your call; the facts below can help you compare."). Never write "better than", "the best", "recommend", "go with" or "I\'d pick".',
+  'The intro stays neutral about what the facts are: use framing like "Here\'s what\'s on record related to risks." or "Here\'s what\'s on record about their software.", never "Here are their risks", "what you should know about their risks" or "what might indicate…".',
   "",
   "Rules:",
   '- specific_research needs a concrete angle. "Tell me everything", "what should I know?" and "anything else?" are overview.',
@@ -185,10 +186,12 @@ function isOneOf<T extends string>(values: readonly T[], value: unknown): value 
 /**
  * Parses the classifier's reply, failing closed to OVERVIEW_DECISION on invalid
  * JSON, unknown values, low or missing confidence, or specific_research without a
- * topic. A filter outside the whitelist, or a criteria count that isn't a whole
- * number of 0 or more, becomes null (an All-companies question then gets the fixed
- * reply). exact_value is true only when it is exactly true. intro is the trimmed
- * string, or "" when it isn't one (it is checked before it is shown).
+ * topic. For filter_list an unknown topic or attribute just becomes null. A filter
+ * the whitelist can't read becomes null (an All-companies question then gets the
+ * fixed reply); a criteria count that isn't a whole number of 0 or more (as a
+ * number or numeric string) becomes null. exact_value is true only when it is
+ * exactly true. intro is the trimmed string, or "" when it isn't one (it is checked
+ * before it is shown).
  */
 export function parseRouterReply(raw: string | null | undefined): RouterDecision {
   let parsed: unknown;
@@ -210,20 +213,23 @@ export function parseRouterReply(raw: string | null | undefined): RouterDecision
     intro,
     confidence,
   } = parsed as Record<string, unknown>;
+  // filter_list never uses topic or attribute, so a stray value there doesn't sink the filter.
+  const isStrict = intent !== "filter_list";
   if (
     !isOneOf(ROUTER_INTENTS, intent) ||
     confidence !== "high" ||
-    (topic !== null && topic !== undefined && !isOneOf(QUESTION_TOPICS, topic)) ||
-    (attribute !== null && attribute !== undefined && !isOneOf(ROUTER_ATTRIBUTES, attribute))
+    (isStrict && topic !== null && topic !== undefined && !isOneOf(QUESTION_TOPICS, topic)) ||
+    (isStrict && attribute !== null && attribute !== undefined && !isOneOf(ROUTER_ATTRIBUTES, attribute))
   ) {
     return OVERVIEW_DECISION;
   }
+  const count = typeof criteriaCount === "string" && criteriaCount.trim() !== "" ? Number(criteriaCount) : criteriaCount;
   const decision: RouterDecision = {
     intent,
     topic: isOneOf(QUESTION_TOPICS, topic) ? topic : null,
     attribute: isOneOf(ROUTER_ATTRIBUTES, attribute) ? attribute : null,
     filter: parseRosterFilter(filter),
-    criteriaCount: Number.isInteger(criteriaCount) && (criteriaCount as number) >= 0 ? (criteriaCount as number) : null,
+    criteriaCount: Number.isInteger(count) && (count as number) >= 0 ? (count as number) : null,
     exactValue: exactValue === true,
     intro: typeof intro === "string" ? intro.trim() : "",
   };
