@@ -4,7 +4,8 @@ Captured: 2026-10-13 (Data Room redesign: scoped questions, refs instead of name
 Updated: 2026-10-14 (eval fixes: no blank answers, no hidden-findings dumps, factual comparisons, out-of-scope reply, compact multi/All lines)
 Updated: 2026-10-15 (Phase 2: a router call labels each question and a code-side policy decides which facts are allowed)
 Updated: 2026-10-15 (Phase 3: extractive answers — the model only selects fact ids; code renders every answer from the stored text; overview and attribute questions need no model)
-Scope: `POST /api/student/data-room-chat`, its client `components/tempo/stages/ProspectingDataRoomChat.tsx`, and the pure helpers in `lib/data-room-chat-scope.ts`, `lib/data-room-chat-router.ts`, `lib/data-room-chat-policy.ts` and `lib/data-room-chat-render.ts`.
+Updated: 2026-10-16 (Phase 4: in All companies mode the model never sees company data — one validated filter over public attributes runs in code; everything else gets a fixed reply)
+Scope: `POST /api/student/data-room-chat`, its client `components/tempo/stages/ProspectingDataRoomChat.tsx`, and the pure helpers in `lib/data-room-chat-scope.ts`, `lib/data-room-chat-router.ts`, `lib/data-room-chat-filter.ts`, `lib/data-room-chat-policy.ts` and `lib/data-room-chat-render.ts`.
 
 **Previous state (2026-08-30):** the student attached companies with a picker; the model saw every attached company by name, with research findings for all of them, and replied in free text. That design let an answer about one company drift onto another, and let names come from the model.
 
@@ -16,6 +17,7 @@ The client works out a scope for every question; the server trusts only the comp
 
 ### 1.1 Priority on send (`resolveSendScope`)
 
+0. **Right after an All-companies list** (the previous question was about All companies and its answer listed companies; their ids come from the answer's items), a message with a **singular back-reference** ("it", "its", "this/that company", "this/that one", "the company"), no plural reference and no company name is about the listed companies — **even with All companies on**: one listed company → sent about it; two or more → "Which one did you mean?" with the listed companies (the first 10; the dropdown scrolls), and the pick is sent about that company. Sending it switches the All companies toggle off. Only while the student hasn't opened a different company since the list (product decisions 2026-10-16: 2–3 listed also ask, consistent with the 2–3-in-focus rule below; the rule applies with the toggle still on).
 1. **All companies** toggle on → `{ mode: "all" }`.
 2. **Companies picked from suggestions, plus companies named in the text** → `{ mode: "companies", companyIds }`.
    - A name is detected by its **full name** (any case, whole words) or by its **first word** when that word is non-generic, at least 4 letters, and belongs to exactly one company.
@@ -54,18 +56,16 @@ The model never writes answer text. Every answer is built by code from stored fa
 1. **Request checks**: auth; the attempt belongs to the student; scope is All companies or 1–3 distinct ids, every one in this simulation's active Data Room roster (400 otherwise).
 2. **Unselected company mentioned** (1–3 company scope) → fixed reply, no model call (4.1).
 3. **Question about company names** → answered from the roster, no model call (4.2).
-4. **Router call** (one gpt-4o call, no facts) labels the question: intent, topic, attribute (5.1). It runs in parallel with the contacts and research-findings queries. Unclear or failed → `overview`.
-5. **Policy** (pure code) decides which facts are allowed for each company (5.2). `off_topic` → fixed reply, done.
-6. **Facts** are built at read time from the stored values: one per public attribute, one per public signal, one per hidden finding, each with a stable id and a display sentence (6).
-7. **Answer path** (7):
-   - `overview` and `meta_or_bulk` → the overview, rendered by code, **no model call**;
-   - `attribute_lookup` → that attribute's sentence for each company, **no model call**;
-   - `specific_research` and `filter_list` → **one selection call** over every in-scope company's allowed facts;
-   - `compare` → **one selection call per company** (at most 8 at once), each seeing only that company's allowed facts.
-8. **Selection** (8): the call returns fact ids only; code keeps the ids that are in the allowed set it was given (anything else is dropped), keeps the model's order, and renders each fact's display sentence under the company name from the database.
-9. Nothing left for a company → exactly `Nothing about that is publicly findable for this company.`
+4. **Router call** (one gpt-4o call, no facts) labels the question: intent, topic, attribute, and for All companies a filter and a criteria count (5.1). Unclear or failed → `overview`.
+5. **All companies** → no other model call and no company data to any model (4.3): a `filter_list` question with one valid filter runs over the roster in code and lists the matches A–Z from the database; everything else gets the fixed one-thing-at-a-time reply. Done.
+6. **One to three companies** — the router runs in parallel with the contacts and research-findings queries; then:
+   1. **Policy** (pure code) decides which facts are allowed for each company (5.2). `off_topic` → fixed reply, done.
+   2. **Facts** are built at read time from the stored values: one per public attribute, one per public signal, one per hidden finding, each with a stable id and a display sentence (6).
+   3. **Answer path** (7): `overview` and `meta_or_bulk` → the overview, rendered by code, **no model call**; `attribute_lookup` → that attribute's sentence for each company, **no model call**; `specific_research` and `filter_list` → **one selection call** over every in-scope company's allowed facts; `compare` → **one selection call per company**, each seeing only that company's allowed facts.
+   4. **Selection** (8): the call returns fact ids only; code keeps the ids that are in the allowed set it was given (anything else is dropped), keeps the model's order, and renders each fact's display sentence under the company name from the database.
+   5. Nothing left for a company → exactly `Nothing about that is publicly findable for this company.`
 
-So: no lead-in sentences, no prose from the model, no company names from the model, and a hidden finding can only appear if the policy allowed it and the selection call chose its id.
+So: no lead-in sentences, no prose from the model, no company names from the model, a hidden finding can only appear if the policy allowed it and the selection call chose its id, and in All companies mode no model sees any company data.
 
 ---
 
@@ -78,7 +78,9 @@ All queries run in the `POST` handler.
 | `attempts` (ownership) | `id, simulation_id` | Request check |
 | `crm_prospect_directory` (whole in_data_room, active roster) | `id, company_name, industry, vertical, locations, metro, in_territory, size_note, online_booking, blurb, public_signals` | Scope check, generic words, out-of-scope check, name questions, and the public facts of **in-scope companies only**. Names are shown as headers (from here), never written by the model |
 | `crm_prospect_directory` (**only when exactly one company is in scope**) | `research_facts` | Hidden facts; only the findings the policy allows can be offered to a selection call. `parseResearchFindings` accepts `[{ text, topics }]` and the older `string[]` (untagged findings are never allowed) |
-| `crm_prospect_contacts` | `company_id, contact_name, contact_title, department` for in-scope companies | The contacts fact |
+| `crm_prospect_contacts` (1–3 company questions only) | `company_id, contact_name, contact_title, department` for in-scope companies | The contacts fact |
+
+All-companies questions load nothing beyond the roster: a filter reads `industry`, `metro`, `locations`, `in_territory` and `online_booking`, and the list shows `company_name`, `industry`, `locations` and `metro`.
 
 **Deliberately NOT selected:** answer-key columns `class`, `subtype`, `fit_rank`, `trigger_quality`, `keyed_trigger`, `best_contact`, `why`; contact columns `is_correct_contact`, `stronger_axis`, `weaker_axis`.
 
@@ -117,6 +119,34 @@ The answer comes from the database (no model call):
 - Items: up to **15** matches, A–Z, each `{ companyId, companyName, text: "{Industry} · {N} locations · {Metro}" }`.
 - More than 15: the intro becomes `Companies whose names start with "C" (the first 15, A–Z), and {n} more. Use the search box above the list to see them all.`
 - No match: `No company names start with "S".`
+- Name questions work the same with All companies on (they are answered before the router).
+
+### 4.3 All companies: one validated filter (`lib/data-room-chat-filter.ts`)
+
+With All companies on, no model ever sees company data. After the router call (5.1):
+
+- `filter_list` with **one valid filter** and `criteria_count` ≤ `MAX_FILTER_CRITERIA` (= 1, a config constant) → the filter runs over the whole roster in code. Matching companies are listed **A–Z only** (no other order, no ranking), at most **20**, each `{ companyId, companyName, text: "{Industry} · {N} locations · {Metro}" }` from the database (the same line as name answers; `industry` is the column the company list shows).
+  - More than 20: intro `…and {n} more. Use the search box above the list to narrow it down.`
+  - No match: intro `No companies match that.`
+  - Up to 20: no intro.
+- **Anything else** — any other intent (overview, attribute lookup, specific research, compare, meta or bulk, off topic), more than one criterion, a missing or invalid filter, or a failed router call — gets exactly:
+
+```
+In All companies mode I can filter by one thing at a time, such as industry, city or state, number of locations, territory, or online booking. Open a company to research it in depth.
+```
+
+The filter whitelist (`parseRosterFilter`; anything else → no filter):
+
+| field | op | value | matches |
+|-------|----|-------|---------|
+| `industry` | `eq`, `contains` | text (1–60 chars) | the `industry` column, any case |
+| `metro` | `eq`, `contains` | text (1–60 chars) | the `metro` column (city or area), any case |
+| `state` | `eq` | two-letter code (a full state name is converted) | the `, XX` suffix of `metro` |
+| `locations` | `eq`, `gt`, `gte`, `lt`, `lte` | number ≥ 0 | `locations` |
+| `territory` | `eq` | true / false | `in_territory` |
+| `online_booking` | `eq` | true / false | `online_booking` |
+
+A missing (unknown) value never matches. An attribute question with All companies on gets the fixed reply too (product decision 2026-10-16).
 
 ---
 
@@ -124,18 +154,19 @@ The answer comes from the database (no model call):
 
 ### 5.1 Router call (`lib/data-room-chat-router.ts`)
 
-`gpt-4o`, `temperature: 0`, `max_tokens: 100`, JSON mode. Its input is **only** the student's question (names redacted), their **last 3 questions** (any scope, redacted) and the scope kind (`one company` / `two or three companies` / `all companies`) — **no facts and no company data**. Reply: `{ "intent", "topic", "attribute", "confidence" }`.
+`gpt-4o`, `temperature: 0`, `max_tokens: 150`, JSON mode. Its input is **only** the student's question (names redacted), their **last 3 questions** (any scope, redacted) and the scope kind (`one company` / `two or three companies` / `all companies`) — **no facts and no company data**. Reply: `{ "intent", "topic", "attribute", "filter", "criteria_count", "confidence" }`.
 
 - intent: `overview` | `attribute_lookup` | `specific_research` | `compare` | `filter_list` | `meta_or_bulk` | `off_topic`; topic: a question topic from `lib/tempo-research-topics.ts` or null; attribute: `industry` | `locations` | `metro` | `territory` | `online_booking` | `size` | `contacts` | null.
-- **Fails closed in code** (`parseRouterReply`): invalid JSON, unknown values, low or missing confidence, or `specific_research` without a topic → `overview`. A failed router call also counts as `overview`.
+- filter (All companies `filter_list` only, otherwise null): `{ "field", "op", "value" }` from the whitelist (4.3); criteria_count: how many separate conditions the question filters by ("dental clinics in Denver" = 2).
+- **Fails closed in code** (`parseRouterReply`): invalid JSON, unknown values, low or missing confidence, or `specific_research` without a topic → `overview`. A filter outside the whitelist, or a criteria count that isn't a whole number ≥ 0, becomes null (an All-companies question then gets the fixed reply). A failed router call also counts as `overview`.
 - Follow-ups ("tell me more about that") are understood from the recent questions; no answering step sees history.
 
 ### 5.2 Policy (`lib/data-room-chat-policy.ts`, pure)
 
-`allowedFacts({ intent, topic, scope, companies })` → `{ public, hidden }` per company:
+`allowedFacts({ intent, topic, scope, companies })` → `{ public, hidden }` per company (1–3 company questions; All companies never reaches the policy):
 
-| Intent | One company | Two or three / All |
-|--------|-------------|--------------------|
+| Intent | One company | Two or three |
+|--------|-------------|--------------|
 | `specific_research` | public + **up to 4 findings, in stored order, whose topics intersect the question topic's fact topics** | public only |
 | `overview`, `attribute_lookup`, `compare`, `filter_list` | public only | public only |
 | `meta_or_bulk` | public only; answered as the overview (no model call) | same |
@@ -164,24 +195,24 @@ An attribute without a stored value has no fact. The overview's first line (the 
 
 ---
 
-## 7. Answer paths and rendering
+## 7. Answer paths and rendering (one to three companies)
 
 The response is always `{ intro, items: [{ companyId, companyName, text }] }`. Each item's `text` is one fact per line (the client shows line breaks); `companyName` comes from the database and is shown as the header. No lead-in sentences: the intro is empty except for the fixed replies.
 
 | Path | Router intent | Model calls after the router | Items |
 |------|---------------|------------------------------|-------|
-| Overview | `overview`, `meta_or_bulk`, `attribute_lookup` without an attribute | none | Every company in scope: headline, territory, online booking, blurb, public signals, in that order. **All companies: the headline only** (product decision 2026-10-15) |
+| Overview | `overview`, `meta_or_bulk`, `attribute_lookup` without an attribute | none | Every company in scope: headline, territory, online booking, blurb, public signals, in that order |
 | Attribute | `attribute_lookup` | none | Every company in scope: that attribute's sentence, or the nothing-findable reply when it has no value |
-| Select once | `specific_research`, `filter_list` | one | One company: the selected facts, or the nothing-findable reply. 2–3 / All: only companies with a selected fact; none at all → intro = the nothing-findable reply |
-| Select each | `compare` | one per company, at most 8 at once (product decision 2026-10-15) | Every company in scope: its selected facts, or the nothing-findable reply |
+| Select once | `specific_research`, `filter_list` | one | One company: the selected facts, or the nothing-findable reply. 2–3: only companies with a selected fact; none at all → intro = the nothing-findable reply |
+| Select each | `compare` | one per company | Every company in scope: its selected facts, or the nothing-findable reply |
 
-`filter_list` uses one selection call over every in-scope company's public facts (product decision 2026-10-15).
+`filter_list` about 2–3 companies uses one selection call over their public facts (product decision 2026-10-15). All companies: see 4.3.
 
 ---
 
 ## 8. The selection call
 
-`gpt-4o`, `temperature: 0`, `max_tokens: 2000` (room for every id with All companies), JSON mode. No history.
+`gpt-4o`, `temperature: 0`, `max_tokens: 500` (room for every fact id of up to three companies), JSON mode. No history.
 
 System prompt (`SELECTION_SYSTEM_PROMPT`):
 
@@ -218,7 +249,7 @@ C1:h:1: Finance memo cites a freeze on discretionary software spend.
 
 ## 9. Refs and redaction (model input only)
 
-- In-scope companies are labelled `[C1]`, `[C2]`, … in scope order (roster order for All companies). The ref → company mapping stays on the server.
+- In-scope companies are labelled `[C1]`, `[C2]`, … in scope order (roster order for All companies, where refs only redact names in the router's input). The ref → company mapping stays on the server.
 - The student's question and recent questions (router and selection calls): full names become their ref (in scope) or "another company" (out of scope); identifying first words likewise (left as typed when two in-scope companies share it).
 - Fact text in a selection call: the company's **own full name** and its own first word (as written) become "the company"; any **other company's full name** becomes "another company".
 - Answers shown to the student are rendered from the stored text (a blurb may contain the company's own name, exactly as on its card).
@@ -229,7 +260,8 @@ C1:h:1: Finance memo cites a freeze on discretionary software spend.
 
 - The client keeps one transcript for the whole Data Room (in memory, mirrored to `localStorage` key `tempo-data-room-chat-v2-{attemptId}`; works without storage). Every message stores its scope.
 - The transcript survives leaving the Data Room, moving between Prospecting steps, reloading and closing the tab. **Only Restart clears it** (`clearDataRoomChatFromStorage` in `RestartSimulationButton`). Before 2026-10-15 it lived in `sessionStorage`; an existing copy there is still read once and removed on Restart.
-- The client still sends the transcript (`{ role: "user", content, scope }` and `{ role: "assistant", intro, items, scope }`). The server reads **only the student's questions** (`parseHistoryQuestions`); the router uses the last 3, redacted. No selection call sees history, and assistant answers are never read.
+- The client still sends the transcript (`{ role: "user", content, scope }` and `{ role: "assistant", intro, items, scope }`). The server reads **only the student's questions** (`parseHistoryQuestions`); the router uses the last 3, redacted. No selection call sees history, and assistant answers are never read by the server.
+- The client reads the last answer's items itself for the list follow-up (1.1, step 0).
 
 ---
 
@@ -255,7 +287,7 @@ Response: `{ "intro": string, "items": [{ "companyId", "companyName", "text" }] 
 
 | Layer | Columns | Reaches a model? | Reaches the student? |
 |-------|---------|------------------|----------------------|
-| Visible | `vertical`/`industry`, `locations`, `metro`, `in_territory`, `size_note`, `online_booking`, `blurb`, `public_signals`, contacts | Only as allowed facts in a selection call (in-scope companies, names redacted); never to the router | Yes, rendered from the stored values |
+| Visible | `vertical`/`industry`, `locations`, `metro`, `in_territory`, `size_note`, `online_booking`, `blurb`, `public_signals`, contacts | Only as allowed facts in a selection call about 1–3 companies (names redacted); never to the router; **never in All companies mode** (filters run in code) | Yes, rendered from the stored values |
 | Visible (lookup only) | `company_name` | No | Yes, as the header (from the database) |
 | Hidden (allowed) | `research_facts` | Only the findings the policy allows (5.2): a specific research question about exactly one company, matching topics, at most 4 | Only when allowed **and** selected; rendered from the stored text |
 | Hidden (forbidden) | `class`, `subtype`, `fit_rank`, `trigger_quality`, `keyed_trigger`, `best_contact`, `why` | Never selected | Never |
@@ -267,18 +299,22 @@ Response: `{ "intro": string, "items": [{ "companyId", "companyName", "text" }] 
 - **2026-10-14:** compact multi/All lines; factual comparisons allowed (ranking refused); "never leave both empty" plus an empty-answer retry (blank answers came from format rules that let the model say nothing); Tempo product context and an "up to 4, most relevant first" findings line; hidden-findings requests answered like general questions.
 - **2026-10-15, Phase 2:** the router and the code-side policy replaced the prompt's withholding rules; one exact sentence for "nothing found".
 - **2026-10-15, Phase 3:** extractive answers. Removed: the free-text answering prompt (and its single / multi / All prompt modes and compact lines), the scan of model prose for company names, refs and the words "references"/"labels", the stricter retry and the empty-answer retry with their reminders, the fallback reply `I can only answer about the companies in your question.`, the meta-or-bulk question substitution, and history in the answering call (`selectHistoryForScope`). Kept: id verification, scope checks, the out-of-scope reply, name questions, the router's fail-closed parsing, and name redaction for model input.
+- **2026-10-16, Phase 4:** All companies mode runs one validated filter in code (4.3); every other All-companies question gets the fixed one-thing-at-a-time reply. Removed: the All-companies answer paths (headline-only overview, one selection call over every company's facts, compare with one call per company for all companies and its 8-at-a-time limit). The compact multi/All prompt lines were already removed in Phase 3. Added: the list follow-up (1.1, step 0).
 
 ---
 
 ## Manual test checklist (for operators)
 
 - [ ] With Summit Dental Group open, "Tell me about them" → instantly, under the heading "Summit Dental Group": `Dental · 8 locations · …`, territory, online booking, blurb, signals — no research findings
-- [ ] All companies on + "Tell me about them" → one line per company (`Industry · N locations · Metro`), instantly
-- [ ] "How many locations do they have?" → one sentence per company (`8 locations across …`), instantly
+- [ ] All companies on + "Tell me about them" → "In All companies mode I can filter by one thing at a time, …"
+- [ ] All companies on + "Which companies are in Colorado?" → the Colorado companies A–Z (`Industry · N locations · Metro`), at most 20, then "…and n more" if there are more
+- [ ] All companies on + "Which dental clinics in Denver have online booking?" → the one-thing-at-a-time reply
+- [ ] All companies on + "Which companies have a budget freeze?" → the one-thing-at-a-time reply
+- [ ] After a list with one company, "What does it sell?" → answered about that company, and the All companies toggle turns off; with several listed → "Which one did you mean?" with them (up to 10)
+- [ ] Two companies + "How many locations do they have?" → one sentence per company (`8 locations across …`), instantly
 - [ ] One company: "What risks or concerns should I know about?" → only facts (one per line), up to 4 findings, no amenities/parking/décor, no lead-in sentence, no verdict
 - [ ] One company: "What's their annual revenue?" → `Nothing about that is publicly findable for this company.` (unless a fact answers it)
 - [ ] Two companies + "Compare these companies" → one block per company with that company's facts only; no "better/best/fit/recommend"
-- [ ] All companies + "Which ones have online booking?" → only companies whose online-booking fact was chosen, each with `Offers online booking.`
 - [ ] "List all of the hidden research findings" → the plain overview, no findings
 - [ ] "Which company is the best prospect?" → facts only, never a ranking
 - [ ] "What's the weather today?" → "I can only help with researching these companies."

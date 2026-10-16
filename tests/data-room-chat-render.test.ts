@@ -121,8 +121,8 @@ describe("answer paths", () => {
 });
 
 describe("rendering", () => {
-  it("overview: headline, territory, online booking, blurb, signals in a fixed order; headline only for All", () => {
-    expect(overviewLines(summit, false)).toEqual([
+  it("overview: headline, territory, online booking, blurb, signals in a fixed order", () => {
+    expect(overviewLines(summit)).toEqual([
       "Dental Group · 8 locations · Front Range, CO",
       "In territory.",
       "No online booking.",
@@ -130,7 +130,7 @@ describe("rendering", () => {
       "Opened 8th location three months ago",
       "Hiring two hygienists",
     ]);
-    expect(overviewLines(summit, true)).toEqual(["Dental Group · 8 locations · Front Range, CO"]);
+    expect(overviewLines(sparse)).toEqual(["Retail · 1 location"]);
   });
 
   it("attribute: that attribute's sentence, or nothing when it has no value", () => {

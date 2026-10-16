@@ -5,19 +5,22 @@
  * scope (1–3 company ids, or all companies) and the question; facts are loaded
  * server-side. Flow: unselected-company mention or company-names question → server
  * reply; otherwise a router call (lib/data-room-chat-router.ts; sees only the
- * redacted question, recent questions and scope kind) labels the question and the
- * code-side policy (lib/data-room-chat-policy.ts) decides which facts are allowed.
- * Overview and attribute questions are rendered with no further model call; specific
- * research and filter questions make one selection call, compare questions one per
- * company, and each selection call returns fact ids only, checked against the
- * allowed set and rendered from the stored text (lib/data-room-chat-render.ts).
- * Company names in answers come from the database; the model sees companies only as
- * refs ([C1]…).
+ * redacted question, recent questions and scope kind) labels the question. All
+ * companies: the model never sees company data — one validated filter runs over the
+ * roster in code, and anything else gets a fixed reply (lib/data-room-chat-filter.ts).
+ * One to three companies: the code-side policy (lib/data-room-chat-policy.ts)
+ * decides which facts are allowed; overview and attribute questions are rendered
+ * with no further model call; specific research and filter questions make one
+ * selection call, compare questions one per company, and each selection call
+ * returns fact ids only, checked against the allowed set and rendered from the
+ * stored text (lib/data-room-chat-render.ts). Company names in answers come from
+ * the database; the model sees companies only as refs ([C1]…).
  */
 
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { requireStudentApi } from "@/lib/api-auth";
+import { answerAllCompanies, type FilterCompany } from "@/lib/data-room-chat-filter";
 import { allowedFacts } from "@/lib/data-room-chat-policy";
 import {
   allowedCompanyFacts,
@@ -88,12 +91,11 @@ const ROSTER_COLUMNS =
   "id, company_name, industry, vertical, locations, metro, in_territory, size_note, online_booking, blurb, public_signals";
 
 const ROUTER_TEMPERATURE = 0;
-const ROUTER_MAX_TOKENS = 100;
+/** Room for the decision plus an All-companies filter. */
+const ROUTER_MAX_TOKENS = 150;
 const SELECTION_TEMPERATURE = 0;
-/** Room for every id when the selection covers All companies. */
-const SELECTION_MAX_TOKENS = 2_000;
-/** Compare makes one selection call per company; at most this many run at once. */
-const COMPARE_CONCURRENCY = 8;
+/** Room for every fact id of up to three companies. */
+const SELECTION_MAX_TOKENS = 500;
 
 /**
  * Parses a jsonb string array defensively.
@@ -106,6 +108,19 @@ function parseStringArray(value: unknown): string[] {
     .filter((item): item is string => typeof item === "string")
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
+}
+
+/** The roster fields a list answer (name question or All-companies filter) reads. */
+function toListCompany(row: RosterCompany): FilterCompany {
+  return {
+    id: String(row.id),
+    name: String(row.company_name ?? ""),
+    industry: String(row.industry ?? ""),
+    locations: typeof row.locations === "number" ? row.locations : null,
+    metro: row.metro,
+    inTerritory: typeof row.in_territory === "boolean" ? row.in_territory : null,
+    onlineBooking: typeof row.online_booking === "boolean" ? row.online_booking : null,
+  };
 }
 
 /**
@@ -192,21 +207,6 @@ async function selectFacts(openai: OpenAI, question: string, facts: SelectableFa
     messages: buildSelectionMessages(question, facts),
   });
   return parseSelection(response.choices[0]?.message?.content, facts);
-}
-
-/** Runs fn over items with at most `limit` in flight; results keep the input order. */
-async function mapWithLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = new Array<R>(items.length);
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    while (next < items.length) {
-      const i = next;
-      next += 1;
-      results[i] = await fn(items[i] as T);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return results;
 }
 
 /**
@@ -316,17 +316,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         nameQuery,
         scopedIds.flatMap((id) => {
           const row = rosterById.get(id);
-          return row
-            ? [
-                {
-                  id: String(row.id),
-                  name: String(row.company_name ?? ""),
-                  industry: String(row.industry ?? ""),
-                  locations: typeof row.locations === "number" ? row.locations : null,
-                  metro: row.metro,
-                },
-              ]
-            : [];
+          return row ? [toListCompany(row)] : [];
         })
       );
       return NextResponse.json(reply);
@@ -338,7 +328,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const question = redactStudentText(newMessage.slice(0, 8_000), index, refLabels);
     const openai = new OpenAI({ apiKey });
 
-    // The router runs alongside the data loads; it never sees facts or company data.
+    // The router never sees facts or company data.
     const routerMessages = buildRouterMessages({
       question,
       recentQuestions: parseHistoryQuestions(body.history).map((text) =>
@@ -346,6 +336,15 @@ export async function POST(request: Request): Promise<NextResponse> {
       ),
       scopeKind: scopeKindOf(scope),
     });
+
+    // All companies: one validated filter runs over the roster in code (results from
+    // the database); anything else gets the fixed one-thing-at-a-time reply.
+    if (scope.mode === "all") {
+      const decision = await classifyQuestion(openai, routerMessages);
+      return NextResponse.json(answerAllCompanies(decision, roster.map(toListCompany)));
+    }
+
+    // One to three companies: the router runs alongside the data loads.
     const [decision, researchResult, contactsResult] = await Promise.all([
       classifyQuestion(openai, routerMessages),
       singleCompanyId
@@ -469,8 +468,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       }
       case "select_each": {
         // Each call sees only that company's allowed facts.
-        const selections = await mapWithLimit(companies, COMPARE_CONCURRENCY, (company) =>
-          selectFacts(openai, question, selectable(company))
+        const selections = await Promise.all(
+          companies.map((company) => selectFacts(openai, question, selectable(company)))
         );
         answer = renderAnswer(
           companies.map((company, i) => block(company, (selections[i] ?? []).map((entry) => entry.display))),
@@ -479,9 +478,9 @@ export async function POST(request: Request): Promise<NextResponse> {
         break;
       }
       default: {
-        // Overview (and meta or bulk requests): no model call; headlines only for All companies.
+        // Overview (and meta or bulk requests): no model call.
         answer = renderAnswer(
-          companies.map((company) => block(company, overviewLines(company.facts, scope.mode === "all"))),
+          companies.map((company) => block(company, overviewLines(company.facts))),
           true
         );
       }

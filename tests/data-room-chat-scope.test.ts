@@ -364,6 +364,57 @@ describe("scope on send (priority 1–5)", () => {
       });
     });
 
+    describe("after an All-companies list", () => {
+      const listed = (ids: string[]) => ({ scope: { mode: "all" as const }, openCompanyId: "maple", listedIds: ids });
+      const allOn = { ...base, allCompanies: true };
+
+      it("one listed company: a singular back-reference goes to it, even with All companies on", () => {
+        expect(resolveSendScope({ ...allOn, text: "What does it sell?", lastQuestion: listed(["falcon"]) })).toEqual({
+          kind: "send",
+          scope: { mode: "companies", companyIds: ["falcon"] },
+        });
+        expect(previewScope({ ...allOn, text: "What does it sell?", lastQuestion: listed(["falcon"]) })).toEqual({
+          kind: "companies",
+          companies: [ROSTER[6]],
+        });
+        expect(resolveSendScope({ ...base, text: "Tell me about that one", lastQuestion: listed(["falcon"]) })).toEqual({
+          kind: "send",
+          scope: { mode: "companies", companyIds: ["falcon"] },
+        });
+      });
+
+      it("two or more: asks which one with the listed companies (the first 10); a pick sends to it", () => {
+        expect(resolveSendScope({ ...allOn, text: "What does it sell?", lastQuestion: listed(["falcon", "evergreen"]) })).toEqual({
+          kind: "ask",
+          word: "it",
+          options: [ROSTER[6], ROSTER[11]],
+        });
+        const twelve = ROSTER.slice(0, 12).map((company) => company.id);
+        const asked = resolveSendScope({ ...allOn, text: "Is it hiring?", lastQuestion: listed(twelve) });
+        expect(asked.kind === "ask" ? asked.options.map((c) => c.id) : asked).toEqual(twelve.slice(0, 10));
+        expect(
+          resolveSendScope({ ...allOn, text: "Is it hiring?", pickedIds: ["evergreen"], lastQuestion: listed(["falcon", "evergreen"]) })
+        ).toEqual({ kind: "send", scope: { mode: "companies", companyIds: ["evergreen"] } });
+      });
+
+      it("doesn't apply to plural references, named companies, another open company, or lists from 1–3 company answers", () => {
+        const all = { kind: "send", scope: { mode: "all" } };
+        expect(resolveSendScope({ ...allOn, text: "Tell me about them", lastQuestion: listed(["falcon"]) })).toEqual(all);
+        expect(resolveSendScope({ ...allOn, text: "Is it like Bison?", lastQuestion: listed(["falcon"]) })).toEqual(all);
+        expect(
+          resolveSendScope({ ...allOn, text: "What does it sell?", openCompanyId: "cedar", lastQuestion: listed(["falcon"]) })
+        ).toEqual(all);
+        expect(
+          resolveSendScope({
+            ...allOn,
+            text: "What does it sell?",
+            lastQuestion: { scope: { mode: "companies", companyIds: ["falcon"] }, openCompanyId: "maple", listedIds: ["falcon"] },
+          })
+        ).toEqual(all);
+        expect(resolveSendScope({ ...allOn, text: "What does it sell?", lastQuestion: listed([]) })).toEqual(all);
+      });
+    });
+
     it("the live preview shows the same follow-up company", () => {
       expect(previewScope({ ...base, lastQuestion: askedAboutFalcon })).toEqual({
         kind: "companies",

@@ -3,7 +3,8 @@
  * Data Room AI Research Assistant: one transcript for the whole Data Room.
  * Each question is about a scope worked out live (lib/data-room-chat-scope.ts):
  * All companies, companies picked from suggestions or named in the text, the
- * previous question's companies (follow-ups, until a different company is opened),
+ * previous question's companies (follow-ups, until a different company is opened;
+ * after an All-companies list, "it" means a listed company and leaves All mode),
  * or the open company. Type-to-pick: after 3 letters, matching companies appear in a
  * dropdown above the input (Enter picks the highlighted one, then Enter sends); "Which one did you
  * mean?" uses the same dropdown. The server receives company ids only and returns
@@ -327,15 +328,22 @@ export function ProspectingDataRoomChat({
   // Follow-ups: the latest sent question's resolved scope and the company open when it
   // was sent. Every question saves both on its transcript entry, however its scope was
   // chosen (picked, full name, unique word, ambiguity choice, open company, follow-up),
-  // so this survives remounts and reloads. Older entries without it don't count.
+  // so this survives remounts and reloads. Older entries without it don't count. After
+  // an All-companies question, the companies its answer listed come along too.
   const lastQuestion = useMemo((): LastQuestion | null => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       const message = messages[i];
       if (message?.role === "user") {
         const { openCompanyId: openAtSend } = message;
-        return typeof openAtSend === "string" || openAtSend === null
-          ? { scope: message.scope, openCompanyId: openAtSend }
-          : null;
+        if (typeof openAtSend !== "string" && openAtSend !== null) {
+          return null;
+        }
+        const reply = messages[i + 1];
+        const listedIds =
+          message.scope.mode === "all" && reply?.role === "assistant" && !reply.isError
+            ? reply.items.map((item) => item.companyId)
+            : [];
+        return { scope: message.scope, openCompanyId: openAtSend, listedIds };
       }
     }
     return null;
@@ -359,6 +367,14 @@ export function ProspectingDataRoomChat({
   const isPanelOpen = panel !== null;
   const optionId = (companyId: string): string => `${listboxId}-option-${companyId}`;
   const activeOption = panel ? panel.rows[panel.highlighted] : undefined;
+  const activeOptionId = activeOption ? optionId(activeOption.id) : null;
+
+  // The list can scroll (up to 10 rows after an All-companies list): keep the highlighted row in view.
+  useEffect(() => {
+    if (activeOptionId) {
+      document.getElementById(activeOptionId)?.scrollIntoView({ block: "nearest" });
+    }
+  }, [activeOptionId]);
 
   // Close the dropdown on a click anywhere outside it and the input.
   useEffect(() => {
@@ -475,6 +491,10 @@ export function ProspectingDataRoomChat({
     }
 
     const scope = decision.scope;
+    // A follow-up about a listed company leaves All companies mode.
+    if (allCompanies && scope.mode === "companies") {
+      setAllCompanies(false);
+    }
     const history = messages
       .filter((message) => !(message.role === "assistant" && message.isError))
       .map(toHistoryEntry);
@@ -731,6 +751,7 @@ export function ProspectingDataRoomChat({
               role="listbox"
               aria-label={shownPanel?.mode === "ambiguity" ? undefined : "Suggested companies"}
               aria-labelledby={shownPanel?.mode === "ambiguity" ? `${listboxId}-heading` : undefined}
+              className="max-h-[min(20rem,45vh)] overflow-y-auto custom-scrollbar"
             >
               {(shownPanel?.rows ?? []).map((company, i) => {
                 const isHighlighted = i === shownPanel?.highlighted;
@@ -809,7 +830,7 @@ export function ProspectingDataRoomChat({
               aria-autocomplete="list"
               aria-expanded={isPanelOpen}
               aria-controls={listboxId}
-              aria-activedescendant={activeOption ? optionId(activeOption.id) : undefined}
+              aria-activedescendant={activeOptionId ?? undefined}
               onScroll={syncMirrorScroll}
               // Text is transparent (the mirror shows it); the caret and placeholder stay visible.
               className="relative w-full h-10 pl-3.5 pr-10 text-[13px] bg-transparent border border-outline-variant rounded-lg text-transparent caret-on-surface selection:bg-secondary/20 placeholder:text-on-surface-variant/70 focus:outline-none focus:border-secondary transition-all"

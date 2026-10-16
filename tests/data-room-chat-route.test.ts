@@ -1,16 +1,19 @@
 /**
  * data-room-chat-route.test.ts
  * POST /api/student/data-room-chat against a fake database and a mocked OpenAI
- * client (no network). Extractive answers: overview and attribute questions are
- * rendered with no answering call; specific research and filter questions make one
- * selection call, compare one per company (at most 8 at once); selected ids are
- * checked against the policy's allowed facts and rendered from the stored text with
- * names from the database. Also: the router call (sees no facts, fails closed), the
- * out-of-scope mention reply, company-name questions and request checks.
+ * client (no network). One to three companies, extractive answers: overview and
+ * attribute questions are rendered with no answering call; specific research and
+ * filter questions make one selection call, compare one per company; selected ids
+ * are checked against the policy's allowed facts and rendered from the stored text
+ * with names from the database. All companies: one validated filter run in code
+ * (only the classifier is called), anything else the fixed reply. Also: the router
+ * call (sees no facts, fails closed), the out-of-scope mention reply, company-name
+ * questions and request checks.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "@/app/api/student/data-room-chat/route";
+import { ALL_MODE_REPLY } from "@/lib/data-room-chat-filter";
 import { OFF_TOPIC_REPLY } from "@/lib/data-room-chat-policy";
 import { NOTHING_FINDABLE_REPLY, SELECTION_SYSTEM_PROMPT } from "@/lib/data-room-chat-render";
 import { ROUTER_SYSTEM_PROMPT } from "@/lib/data-room-chat-router";
@@ -280,21 +283,6 @@ describe("answers rendered with no answering call", () => {
     expect(state.create).not.toHaveBeenCalled();
   });
 
-  it("All companies overview: one headline per company", async () => {
-    const reply = (await ask({ scope: ALL, newMessage: "Tell me about them" })) as {
-      items: Array<{ companyName: string; text: string }>;
-    };
-    expect(reply.items.map((item) => [item.companyName, item.text])).toEqual([
-      ["Summit Dental Group", "Dental · 8 locations · Front Range, CO"],
-      ["Summit Outdoor Gear", "Retail · 2 locations · Boise, ID"],
-      ["Falcon Market", "Retail · 1 location · Denver, CO"],
-      ["Maple Family Dentistry", "Dental · 3 locations · Boulder, CO"],
-      ["Cedar Grove Family Dentistry", "Dental · 4 locations · Denver, CO"],
-      ["Harbor Family Dentistry", "Dental · 2 locations · Fort Collins, CO"],
-    ]);
-    expect(state.create).not.toHaveBeenCalled();
-  });
-
   it("attribute lookup: that attribute's sentence for each company; no value → nothing findable", async () => {
     state.classify.mockResolvedValueOnce(routerReply("attribute_lookup", null, "contacts"));
     expect(
@@ -420,20 +408,6 @@ describe("the selection call", () => {
     expect(state.queries.some((q) => q.columns === "research_facts")).toBe(false);
   });
 
-  it("filter list, All companies: one call over every company's public facts", async () => {
-    state.classify.mockResolvedValueOnce(routerReply("filter_list"));
-    state.create.mockResolvedValueOnce(selection(["C4:p:online_booking", "C2:p:online_booking"]));
-    expect(await ask({ scope: ALL, newMessage: "Which ones have online booking?" })).toEqual({
-      intro: "",
-      items: [
-        { companyId: "summit-outdoor", companyName: "Summit Outdoor Gear", text: "Offers online booking." },
-        { companyId: "maple", companyName: "Maple Family Dentistry", text: "Offers online booking." },
-      ],
-    });
-    expect(state.create).toHaveBeenCalledTimes(1);
-    expect(new Set(factLines().map((line) => line.split(":")[0]))).toEqual(new Set(["C1", "C2", "C3", "C4", "C5", "C6"]));
-  });
-
   it("compare: one call per company, each seeing only its own facts; every company is shown", async () => {
     state.classify.mockResolvedValueOnce(routerReply("compare"));
     state.create.mockImplementation(async (args: { messages: ModelMessage[] }) =>
@@ -453,42 +427,103 @@ describe("the selection call", () => {
     expect(factLines(1).every((line) => line.startsWith("C2:"))).toBe(true);
   });
 
-  it("compare with All companies: one call per company, at most 8 at once", async () => {
-    state.roster = Array.from({ length: 12 }, (_, i) => ({
-      ...ROSTER[3],
-      id: `clinic-${i}`,
-      company_name: `Clinic${String.fromCharCode(65 + i)} Health`,
-    }));
-    state.classify.mockResolvedValueOnce(routerReply("compare"));
-    let inFlight = 0;
-    let maxInFlight = 0;
-    state.create.mockImplementation(async () => {
-      inFlight += 1;
-      maxInFlight = Math.max(maxInFlight, inFlight);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      inFlight -= 1;
-      return selection([], true);
-    });
-    const reply = (await ask({ scope: ALL, newMessage: "Compare them" })) as { items: unknown[] };
-    expect(state.create).toHaveBeenCalledTimes(12);
-    expect(maxInFlight).toBe(8);
-    expect(reply.items).toHaveLength(12);
-  });
-
   it("no company name reaches a selection call; names in the question become refs", async () => {
     state.classify.mockResolvedValue(routerReply("specific_research", "risks"));
     state.create.mockResolvedValue(selection([]));
     await ask({ scope: TWO, newMessage: "What are Summit Dental Group's risks compared with Falcon Market?" });
-    await ask({ scope: ALL });
     await ask({ scope: ONE });
 
     expect(selectionMessages(0)[1]?.content.split("\n")[0]).toBe("Question: What are [C1]'s risks compared with [C2]?");
-    for (const call of [0, 1, 2]) {
+    for (const call of [0, 1]) {
       const sent = JSON.stringify(selectionMessages(call)).toLowerCase();
       for (const name of ALL_NAMES) {
         expect(sent, name).not.toContain(name.toLowerCase());
       }
     }
+  });
+});
+
+describe("All companies: one validated filter, run in code", () => {
+  function filterReply(filter: unknown, criteriaCount = 1): ReturnType<typeof modelReply> {
+    return modelReply({ intent: "filter_list", topic: null, attribute: null, filter, criteria_count: criteriaCount, confidence: "high" });
+  }
+
+  it("runs the filter over the roster: names from the database, A–Z, only the classifier is called", async () => {
+    state.classify.mockResolvedValueOnce(filterReply({ field: "online_booking", op: "eq", value: true }));
+    expect(await ask({ scope: ALL, newMessage: "Which ones have online booking?" })).toEqual({
+      intro: "",
+      items: [
+        { companyId: "maple", companyName: "Maple Family Dentistry", text: "Dental · 3 locations · Boulder, CO" },
+        { companyId: "summit-outdoor", companyName: "Summit Outdoor Gear", text: "Retail · 2 locations · Boise, ID" },
+      ],
+    });
+    expect(state.classify).toHaveBeenCalledTimes(1);
+    expect(state.create).not.toHaveBeenCalled();
+    expect(state.queries.some((q) => q.table === "crm_prospect_contacts" || q.columns === "research_facts")).toBe(false);
+    const routerInput = (state.classify.mock.calls[0]?.[0] as { messages: ModelMessage[] }).messages[1]?.content ?? "";
+    expect(routerInput.split("\n")[0]).toBe("Scope: all companies");
+  });
+
+  it("results match the roster for each field (a state name works too)", async () => {
+    const run = async (filter: unknown): Promise<string[]> => {
+      state.classify.mockResolvedValueOnce(filterReply(filter));
+      const reply = (await ask({ scope: ALL, newMessage: "Which ones?" })) as { items: Array<{ companyName: string }> };
+      return reply.items.map((item) => item.companyName);
+    };
+    expect(await run({ field: "state", op: "eq", value: "Colorado" })).toEqual([
+      "Cedar Grove Family Dentistry",
+      "Falcon Market",
+      "Harbor Family Dentistry",
+      "Maple Family Dentistry",
+      "Summit Dental Group",
+    ]);
+    expect(await run({ field: "industry", op: "eq", value: "retail" })).toEqual(["Falcon Market", "Summit Outdoor Gear"]);
+    expect(await run({ field: "metro", op: "contains", value: "Denver" })).toEqual(["Cedar Grove Family Dentistry", "Falcon Market"]);
+    expect(await run({ field: "locations", op: "gte", value: 4 })).toEqual(["Cedar Grove Family Dentistry", "Summit Dental Group"]);
+    expect(await run({ field: "territory", op: "eq", value: false })).toEqual(["Summit Outdoor Gear"]);
+  });
+
+  it("alphabetical, capped at 20, the rest counted; no matches", async () => {
+    state.roster = Array.from({ length: 23 }, (_, i) => ({
+      ...ROSTER[3],
+      id: `clinic-${i}`,
+      company_name: `Clinic ${String(22 - i).padStart(2, "0")} Health`,
+    }));
+    state.classify.mockResolvedValueOnce(filterReply({ field: "online_booking", op: "eq", value: true }));
+    const reply = (await ask({ scope: ALL, newMessage: "Which ones have online booking?" })) as {
+      intro: string;
+      items: Array<{ companyName: string }>;
+    };
+    expect(reply.items.map((item) => item.companyName)).toEqual(
+      Array.from({ length: 20 }, (_, i) => `Clinic ${String(i).padStart(2, "0")} Health`)
+    );
+    expect(reply.intro).toBe("…and 3 more. Use the search box above the list to narrow it down.");
+
+    state.classify.mockResolvedValueOnce(filterReply({ field: "industry", op: "eq", value: "Legal" }));
+    expect(await ask({ scope: ALL, newMessage: "Which are law firms?" })).toEqual({ intro: "No companies match that.", items: [] });
+  });
+
+  it("more than one criterion, a filter outside the whitelist, or any other kind of question → the fixed reply, no answering call", async () => {
+    const fixed = { intro: ALL_MODE_REPLY, items: [] };
+    state.classify
+      .mockResolvedValueOnce(filterReply({ field: "industry", op: "eq", value: "Dental" }, 2))
+      .mockResolvedValueOnce(filterReply({ field: "software", op: "eq", value: "Zentrix" }))
+      .mockResolvedValueOnce(filterReply(null, 0))
+      .mockResolvedValueOnce(routerReply("overview"))
+      .mockResolvedValueOnce(routerReply("specific_research", "risks"))
+      .mockResolvedValueOnce(routerReply("compare"))
+      .mockResolvedValueOnce(routerReply("meta_or_bulk"))
+      .mockResolvedValueOnce(routerReply("off_topic"))
+      .mockResolvedValueOnce(routerReply("attribute_lookup", null, "locations"))
+      .mockRejectedValueOnce(new Error("router down"));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    for (let i = 0; i < 10; i += 1) {
+      expect(await ask({ scope: ALL, newMessage: "Which dental clinics in Denver have online booking?" }), String(i)).toEqual(
+        fixed
+      );
+    }
+    errorSpy.mockRestore();
+    expect(state.create).not.toHaveBeenCalled();
   });
 });
 

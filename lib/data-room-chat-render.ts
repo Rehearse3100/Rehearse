@@ -1,6 +1,7 @@
 /**
  * data-room-chat-render.ts
- * Extractive answers for the Data Room assistant (pure; no DB, no network). Every
+ * Extractive answers for the Data Room assistant about one to three companies (pure;
+ * no DB, no network; All companies: lib/data-room-chat-filter.ts). Every
  * company fact gets a stable id and a display sentence, built at read time from the
  * stored values: one fact per public attribute, one per public signal, one per
  * hidden finding (display = the stored text). The model never writes an answer: it
@@ -224,16 +225,12 @@ export function answerPathFor(decision: RouterDecision): AnswerPath {
 
 /**
  * The overview in a fixed order: the headline (industry · locations · metro),
- * territory, online booking, blurb, public signals. Headline only for All companies.
+ * territory, online booking, blurb, public signals.
  */
-export function overviewLines(facts: CompanyFacts, isHeadlineOnly: boolean): string[] {
-  const headline = facts.headline ? [facts.headline] : [];
-  if (isHeadlineOnly) {
-    return headline;
-  }
+export function overviewLines(facts: CompanyFacts): string[] {
   const { territory, online_booking: onlineBooking, blurb } = facts.attributes;
   return [
-    ...headline,
+    ...(facts.headline ? [facts.headline] : []),
     ...[territory, onlineBooking, blurb, ...facts.signals].flatMap((entry) => (entry ? [entry.display] : [])),
   ];
 }

@@ -53,6 +53,9 @@ describe("classifier input", () => {
       "recent_changes (what changed recently)",
       "current_tools (software, systems, vendors, contracts, recent rollouts)",
       "industry, locations, metro, territory, online_booking, size, contacts",
+      "filter (set it only when the scope is all companies and the intent is filter_list; otherwise null)",
+      'field "state": op "eq", value the two-letter state code',
+      "criteria_count: how many separate conditions the question asks to filter by",
     ]) {
       expect(ROUTER_SYSTEM_PROMPT, text).toContain(text);
     }
@@ -69,10 +72,31 @@ describe("classifier reply", () => {
   it("accepts a valid, confident decision", () => {
     expect(
       parseRouterReply(reply({ intent: "specific_research", topic: "risks", attribute: null, confidence: "high" }))
-    ).toEqual({ intent: "specific_research", topic: "risks", attribute: null });
+    ).toEqual({ intent: "specific_research", topic: "risks", attribute: null, filter: null, criteriaCount: null });
     expect(
       parseRouterReply(reply({ intent: "attribute_lookup", topic: null, attribute: "locations", confidence: "high" }))
-    ).toEqual({ intent: "attribute_lookup", topic: null, attribute: "locations" });
+    ).toEqual({ intent: "attribute_lookup", topic: null, attribute: "locations", filter: null, criteriaCount: null });
+  });
+
+  it("reads one whitelisted filter and the criteria count; anything else becomes null, the decision stays", () => {
+    const filterReply = (filter: unknown, criteriaCount: unknown): unknown =>
+      parseRouterReply(
+        reply({ intent: "filter_list", topic: null, attribute: null, filter, criteria_count: criteriaCount, confidence: "high" })
+      );
+    expect(filterReply({ field: "online_booking", op: "eq", value: true }, 1)).toEqual({
+      intent: "filter_list",
+      topic: null,
+      attribute: null,
+      filter: { field: "online_booking", op: "eq", value: true },
+      criteriaCount: 1,
+    });
+    expect(filterReply({ field: "software", op: "eq", value: "Zentrix" }, 1)).toMatchObject({
+      intent: "filter_list",
+      filter: null,
+      criteriaCount: 1,
+    });
+    expect(filterReply({ field: "state", op: "eq", value: "CO" }, 1.5)).toMatchObject({ criteriaCount: null });
+    expect(filterReply(null, -1)).toMatchObject({ filter: null, criteriaCount: null });
   });
 
   it("fails closed to overview", () => {

@@ -3,12 +3,15 @@
  * Question router for the Data Room assistant (pure). Builds the classifier call's
  * messages: the student's question, their last 3 questions (both already
  * name-redacted) and the scope kind — never any facts or company data — and parses
- * its JSON reply, failing closed to "overview". POST /api/student/data-room-chat
+ * its JSON reply, failing closed to "overview". For All-companies filter questions
+ * the reply also carries one filter and how many conditions the question asks for
+ * (validated by lib/data-room-chat-filter.ts). POST /api/student/data-room-chat
  * makes the gpt-4o call; lib/data-room-chat-policy.ts turns the decision into the
  * allowed facts and lib/data-room-chat-render.ts into the answer path. Also used by
  * the local eval.
  */
 
+import { parseRosterFilter, type RosterFilter } from "@/lib/data-room-chat-filter";
 import {
   FACT_TOPIC_DESCRIPTIONS,
   QUESTION_TOPICS,
@@ -46,10 +49,20 @@ export type RouterDecision = {
   intent: RouterIntent;
   topic: QuestionTopic | null;
   attribute: RouterAttribute | null;
+  /** One whitelisted filter (All-companies filter questions only); null when missing or invalid. */
+  filter: RosterFilter | null;
+  /** How many conditions the question filters by; null when missing or invalid. */
+  criteriaCount: number | null;
 };
 
 /** What every unclear or invalid classification becomes: public facts only. */
-export const OVERVIEW_DECISION: RouterDecision = { intent: "overview", topic: null, attribute: null };
+export const OVERVIEW_DECISION: RouterDecision = {
+  intent: "overview",
+  topic: null,
+  attribute: null,
+  filter: null,
+  criteriaCount: null,
+};
 
 /** How many of the student's earlier questions the classifier sees. */
 export const ROUTER_RECENT_QUESTIONS = 3;
@@ -80,7 +93,7 @@ const TOPIC_LIST = QUESTION_TOPICS.map(
 /** The classifier's instructions (it never sees company data). */
 export const ROUTER_SYSTEM_PROMPT = [
   "You classify one question a student asks while researching companies in a sales-training Data Room. You never see any company information, only the question. Reply with a single JSON object and nothing else:",
-  '{"intent": string, "topic": string | null, "attribute": string | null, "confidence": "high" | "low"}',
+  '{"intent": string, "topic": string | null, "attribute": string | null, "filter": object | null, "criteria_count": number, "confidence": "high" | "low"}',
   "",
   "intent (pick one):",
   '- overview: a general or open-ended question about the company or companies ("tell me about them", "what should I know?", "tell me everything", "summarize").',
@@ -94,6 +107,15 @@ export const ROUTER_SYSTEM_PROMPT = [
   `topic (set it for specific_research; otherwise null): one of ${TOPIC_LIST}.`,
   "",
   `attribute (set it for attribute_lookup; otherwise null): one of ${ROUTER_ATTRIBUTES.join(", ")}.`,
+  "",
+  'filter (set it only when the scope is all companies and the intent is filter_list; otherwise null): {"field": string, "op": string, "value": string | number | boolean}, one of:',
+  '- field "industry" or "metro" (a city or area): op "eq" or "contains", value a word or phrase;',
+  '- field "state": op "eq", value the two-letter state code (for example "CO");',
+  '- field "locations" (number of locations): op "eq", "gt", "gte", "lt" or "lte", value a number;',
+  '- field "territory" (in the sales territory) or "online_booking": op "eq", value true or false.',
+  "If the question filters by anything else (for example software, budget, staffing, reviews, risks or fit), use null.",
+  "",
+  'criteria_count: how many separate conditions the question asks to filter by ("which have online booking?" is 1; "dental clinics in Denver" is 2; 0 when it filters by nothing).',
   "",
   "Rules:",
   '- specific_research needs a concrete angle. "Tell me everything", "what should I know?" and "anything else?" are overview.',
@@ -145,7 +167,9 @@ function isOneOf<T extends string>(values: readonly T[], value: unknown): value 
 /**
  * Parses the classifier's reply, failing closed to OVERVIEW_DECISION on invalid
  * JSON, unknown values, low or missing confidence, or specific_research without a
- * topic.
+ * topic. A filter outside the whitelist, or a criteria count that isn't a whole
+ * number of 0 or more, becomes null (an All-companies question then gets the fixed
+ * reply).
  */
 export function parseRouterReply(raw: string | null | undefined): RouterDecision {
   let parsed: unknown;
@@ -157,7 +181,10 @@ export function parseRouterReply(raw: string | null | undefined): RouterDecision
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     return OVERVIEW_DECISION;
   }
-  const { intent, topic, attribute, confidence } = parsed as Record<string, unknown>;
+  const { intent, topic, attribute, filter, criteria_count: criteriaCount, confidence } = parsed as Record<
+    string,
+    unknown
+  >;
   if (
     !isOneOf(ROUTER_INTENTS, intent) ||
     confidence !== "high" ||
@@ -170,6 +197,8 @@ export function parseRouterReply(raw: string | null | undefined): RouterDecision
     intent,
     topic: isOneOf(QUESTION_TOPICS, topic) ? topic : null,
     attribute: isOneOf(ROUTER_ATTRIBUTES, attribute) ? attribute : null,
+    filter: parseRosterFilter(filter),
+    criteriaCount: Number.isInteger(criteriaCount) && (criteriaCount as number) >= 0 ? (criteriaCount as number) : null,
   };
   return decision.intent === "specific_research" && decision.topic === null
     ? OVERVIEW_DECISION

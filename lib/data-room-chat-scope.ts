@@ -364,7 +364,12 @@ export function buildOutOfScopeMessage(mention: OutOfScopeMention): string {
 export type LastQuestion = {
   scope: ChatScope;
   openCompanyId: string | null;
+  /** The companies its answer listed (an All-companies list answer); empty or omitted otherwise. */
+  listedIds?: readonly string[];
 };
+
+/** Most listed companies "Which one did you mean?" offers after an All-companies list. */
+export const MAX_LIST_FOLLOW_UP_OPTIONS = 10;
 
 export type ScopeInput = {
   index: ScopeIndex;
@@ -418,13 +423,48 @@ function singularBackReference(text: string): string | null {
 }
 
 /**
- * Scope for sending, in priority order: (1) All companies; (2) picked companies
- * plus companies named in the text (an ambiguous first word asks instead, and
- * more than 3 is an error); (3) the previous question's companies, unless a
- * different company was opened since (with 2–3 of them, a singular back-reference
- * such as "it" asks which one instead); (4) the open company; (5) nothing → error.
+ * Right after an All-companies list, a singular back-reference ("it", "that one")
+ * that names no company is about the listed companies, even with All companies on:
+ * one listed (or one picked from "Which one did you mean?") → that company; more →
+ * ask which one, offering the first 10. Only while the student hasn't opened a
+ * different company since; null when it doesn't apply.
+ */
+function listFollowUp(input: ScopeInput): ScopeDecision | null {
+  const last = input.lastQuestion;
+  if (!last || last.scope.mode !== "all" || last.openCompanyId !== input.openCompanyId) {
+    return null;
+  }
+  const listed = (last.listedIds ?? []).filter((id) => input.index.byId.has(id));
+  const reference = singularBackReference(input.text);
+  const detection = detectCompanies(input.index, input.text);
+  if (listed.length === 0 || !reference || detection.companyIds.length > 0 || detection.ambiguous) {
+    return null;
+  }
+  const target = input.pickedIds.find((id) => listed.includes(id)) ?? (listed.length === 1 ? listed[0] : undefined);
+  if (target) {
+    return { kind: "send", scope: { mode: "companies", companyIds: [target] } };
+  }
+  const options = listed
+    .slice(0, MAX_LIST_FOLLOW_UP_OPTIONS)
+    .map((id) => input.index.byId.get(id))
+    .filter((company): company is ScopeCompany => Boolean(company));
+  return { kind: "ask", word: reference, options };
+}
+
+/**
+ * Scope for sending, in priority order: (0) a singular back-reference right after
+ * an All-companies list → the listed companies (see listFollowUp); (1) All
+ * companies; (2) picked companies plus companies named in the text (an ambiguous
+ * first word asks instead, and more than 3 is an error); (3) the previous
+ * question's companies, unless a different company was opened since (with 2–3 of
+ * them, a singular back-reference such as "it" asks which one instead); (4) the
+ * open company; (5) nothing → error.
  */
 export function resolveSendScope(input: ScopeInput): ScopeDecision {
+  const fromList = listFollowUp(input);
+  if (fromList) {
+    return fromList;
+  }
   if (input.allCompanies) {
     return { kind: "send", scope: { mode: "all" } };
   }
@@ -470,6 +510,13 @@ export type ScopePreview =
  * blocks the preview.
  */
 export function previewScope(input: ScopeInput): ScopePreview {
+  const fromList = listFollowUp(input);
+  if (fromList?.kind === "send" && fromList.scope.mode === "companies") {
+    const companies = fromList.scope.companyIds
+      .map((id) => input.index.byId.get(id))
+      .filter((company): company is ScopeCompany => Boolean(company));
+    return { kind: "companies", companies };
+  }
   if (input.allCompanies) {
     return { kind: "all" };
   }
@@ -702,6 +749,20 @@ export type NameQueryCompany = {
 };
 
 /**
+ * One company's line in a list answer (name questions, All-companies filters):
+ * "{Industry} · {N} locations · {Metro}", from the roster.
+ */
+export function formatRosterListLine(company: Omit<NameQueryCompany, "id" | "name">): string {
+  return [
+    company.industry.trim(),
+    company.locations !== null ? `${company.locations} ${company.locations === 1 ? "location" : "locations"}` : "",
+    company.metro?.trim() ?? "",
+  ]
+    .filter((part) => part.length > 0)
+    .join(" · ");
+}
+
+/**
  * The server's reply to a name question, built only from the roster (names never
  * come from the model): up to 15 matching companies in the question's scope, A–Z,
  * each with "{Industry} · {N} locations · {Metro}".
@@ -744,15 +805,7 @@ export function answerNameQuery(query: NameQuery, companies: readonly NameQueryC
     items: matches.slice(0, NAME_QUERY_MAX_RESULTS).map((company) => ({
       companyId: company.id,
       companyName: company.name,
-      text: [
-        company.industry.trim(),
-        company.locations !== null
-          ? `${company.locations} ${company.locations === 1 ? "location" : "locations"}`
-          : "",
-        company.metro?.trim() ?? "",
-      ]
-        .filter((part) => part.length > 0)
-        .join(" · "),
+      text: formatRosterListLine(company),
     })),
   };
 }
