@@ -1570,10 +1570,11 @@ function buildSecondaryStrongFit(
 function buildPassCompany(
   config: TempoDirectorySeedConfig,
   registry: CompanyNameRegistry,
-  forceName?: string
+  forced?: { name: string; vertical: string }
 ): DesignedCompany {
+  const forceName = forced?.name;
   for (let attempt = 0; attempt < GENERATION_RETRY_MAX; attempt += 1) {
-    const vertical = globalVerticalBalancer.pick(config.passVerticalPool);
+    const vertical = forced?.vertical ?? globalVerticalBalancer.pick(config.passVerticalPool);
     const companyName =
       forceName ?? buildUniquePassCompanyName(registry, config, vertical);
     if (!companyName) {
@@ -1909,7 +1910,9 @@ export function buildCompanyRoster(config: TempoDirectorySeedConfig): DesignedCo
 
   for (let index = 0; index < procedural.pass; index += 1) {
     if (index === 0) {
-      companies.push(buildPassCompany(config, registry, "Summit Outdoor Gear"));
+      // The name-collision distractor (shares "Summit" with the target): always retail,
+      // so it reads as an obvious outdoor-gear shop, never a random vertical.
+      companies.push(buildPassCompany(config, registry, { name: "Summit Outdoor Gear", vertical: "retail" }));
       continue;
     }
     companies.push(buildPassCompany(config, registry));

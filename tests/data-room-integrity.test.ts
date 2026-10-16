@@ -4,8 +4,8 @@
  * the research-finding rules: reproducible from the seed, topic-tagged, never
  * shared by two companies, never a repeat of the company's own public signals, and
  * every trap disqualifier shared by the real fact policy for "risks", "fit" and
- * each of its own topics. The live seed is secret (TEMPO_DIRECTORY_SEED); these
- * tests use their own fixed seeds.
+ * each of its own topics; the name-collision distractor is always retail. The live
+ * seed is secret (TEMPO_DIRECTORY_SEED); these tests use their own fixed seeds.
  */
 
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -93,6 +93,14 @@ async function assertDirectoryInvariants(
   expect((rankOne.rows[0] as { company_name: string }).company_name).toBe(
     "Summit Dental Group"
   );
+
+  // The name-collision distractor is always a retail company.
+  const distractor = await db.query(
+    `SELECT vertical, class FROM public.crm_prospect_directory
+     WHERE simulation_id = $1 AND company_name = 'Summit Outdoor Gear'`,
+    [simId]
+  );
+  expect(distractor.rows).toEqual([{ vertical: "retail", class: "pass" }]);
 
   const badPasses = await db.query(
     `SELECT company_name FROM public.crm_prospect_directory
