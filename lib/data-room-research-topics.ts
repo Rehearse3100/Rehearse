@@ -27,8 +27,8 @@ export type FactTopic = (typeof FACT_TOPICS)[number];
 export const FACT_TOPIC_DESCRIPTIONS: Record<FactTopic, string> = {
   current_tools: "software, systems, vendors, contracts, recent rollouts",
   budget: "spending, budget, cost pressure, freezes",
-  staffing: "hiring, cuts, turnover, team changes",
-  operations: "processes, hours, wait times, capacity, how work gets done",
+  staffing: "hiring, cuts, turnover, team changes, front-desk staffing",
+  operations: "processes, hours, scheduling, phones, wait times, capacity",
   growth: "new locations, expansion, acquisitions",
   ownership: "owner, franchise, corporate structure, who decides",
   customer_feedback: "reviews, complaints, sentiment",
