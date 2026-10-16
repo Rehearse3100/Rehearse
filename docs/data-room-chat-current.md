@@ -52,7 +52,7 @@ All queries run in the `POST` handler.
 |-------|---------|--------------------|
 | `attempts` (ownership) | `id, simulation_id` | No |
 | `crm_prospect_directory` (whole in_data_room, active roster) | `id, company_name, industry, vertical, locations, metro, in_territory, size_note, online_booking, blurb, public_signals` | Visible fields of **in-scope companies only**. `company_name` and `industry` are used for the scope check, the generic-word list, the out-of-scope check and the name guard; names never reach the prompt. `in_territory` reaches only the compact multi/All lines. |
-| `crm_prospect_directory` (**only when exactly one company is in scope**) | `research_facts` | Yes, as RESEARCH FINDINGS for that one company |
+| `crm_prospect_directory` (**only when exactly one company is in scope**) | `research_facts` | Yes, as RESEARCH FINDINGS for that one company (each finding's text only; `parseResearchFindings` accepts `[{ text, topics }]` and the older `string[]`; topics are not used yet) |
 | `crm_prospect_contacts` | `company_id, contact_name, contact_title, department` for in-scope companies | Yes, as the contacts line |
 
 **Deliberately NOT selected:** answer-key columns `class`, `subtype`, `fit_rank`, `trigger_quality`, `keyed_trigger`, `best_contact`, `why`; contact columns `is_correct_contact`, `stronger_axis`, `weaker_axis`.

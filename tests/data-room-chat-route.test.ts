@@ -23,6 +23,8 @@ type Query = {
 const state = vi.hoisted(() => ({
   create: vi.fn(),
   queries: [] as Query[],
+  /** research_facts as stored, when a test needs a shape other than the string[] fixture. */
+  storedResearchFacts: null as unknown,
 }));
 
 vi.mock("openai", () => ({
@@ -132,7 +134,7 @@ function respond(query: Query): { data: unknown; error: unknown } {
     return { data: { id: "attempt-1", simulation_id: "sim-1" }, error: null };
   }
   if (query.table === "crm_prospect_directory" && query.columns === "research_facts") {
-    return { data: { research_facts: RESEARCH_FACTS }, error: null };
+    return { data: { research_facts: state.storedResearchFacts ?? RESEARCH_FACTS }, error: null };
   }
   if (query.table === "crm_prospect_directory") {
     return { data: ROSTER, error: null };
@@ -211,6 +213,7 @@ const ALL_NAMES = ROSTER.map((row) => row.company_name);
 beforeEach(() => {
   state.create.mockReset();
   state.queries = [];
+  state.storedResearchFacts = null;
   vi.stubEnv("OPENAI_API_KEY", "test-key");
 });
 
@@ -227,6 +230,19 @@ describe("what the model is given", () => {
     for (const fact of RESEARCH_FACTS) {
       expect(prompt).toContain(fact);
     }
+  });
+
+  it("reads topic-tagged research findings ({ text, topics }) and uses only the text", async () => {
+    state.storedResearchFacts = RESEARCH_FACTS.map((text) => ({ text, topics: ["current_tools", "budget"] }));
+    state.create.mockResolvedValueOnce(modelReply(NOTED_REPLY));
+    await POST(chatRequest({ scope: { mode: "companies", companyIds: ["summit-dental"] } }));
+
+    const prompt = systemPrompt();
+    for (const fact of RESEARCH_FACTS) {
+      expect(prompt).toContain(`- ${fact}`);
+    }
+    expect(prompt).not.toContain('"topics"');
+    expect(prompt).not.toContain("current_tools");
   });
 
   it("two companies or All companies: no research findings at all", async () => {

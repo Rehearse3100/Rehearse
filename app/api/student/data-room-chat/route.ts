@@ -37,6 +37,7 @@ import {
   type ScopedAnswer,
 } from "@/lib/data-room-chat-scope";
 import { createServiceClient } from "@/lib/supabase/server";
+import { parseResearchFindings } from "@/lib/tempo-research-topics";
 
 type DataRoomChatBody = {
   attemptId?: unknown;
@@ -527,7 +528,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
 
     const refLabels = buildRefLabels(scopedIds);
-    const researchFacts = parseStringArray(researchResult?.data?.research_facts);
+    // Either stored shape ([{ text, topics }] or the older string[]); only the text is used for now.
+    const researchFacts = parseResearchFindings(researchResult?.data?.research_facts).map(
+      (finding) => finding.text
+    );
     const promptMode: PromptMode = singleCompanyId ? "single" : scope.mode === "all" ? "all" : "multi";
 
     const promptBlocks: DataRoomPromptBlock[] = scopedIds.flatMap((id) => {
