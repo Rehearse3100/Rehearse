@@ -4,7 +4,7 @@
  * Each question is about a scope worked out live (lib/data-room-chat-scope.ts):
  * All companies, companies picked from suggestions or named in the text, or the
  * open company. Type-to-pick: after 3 letters, matching companies appear in a
- * dropdown above the input (Tab picks, Enter always sends); "Which one did you
+ * dropdown above the input (Enter picks the highlighted one, then Enter sends); "Which one did you
  * mean?" uses the same dropdown. The server receives company ids only and returns
  * per-company blocks; names shown come from the server reply.
  */
@@ -124,6 +124,25 @@ function findSelectedNameRanges(
     }
   });
   return ranges.sort((a, b) => a.start - b.start);
+}
+
+type TextSegment = { text: string; isSelected: boolean };
+
+/** Splits text into plain and selected-name segments (ranges sorted, non-overlapping). */
+function splitIntoSegments(text: string, ranges: readonly TextRange[]): TextSegment[] {
+  const segments: TextSegment[] = [];
+  let start = 0;
+  for (const range of ranges) {
+    if (range.start > start) {
+      segments.push({ text: text.slice(start, range.start), isSelected: false });
+    }
+    segments.push({ text: text.slice(range.start, range.end), isSelected: true });
+    start = range.end;
+  }
+  if (start < text.length) {
+    segments.push({ text: text.slice(start), isSelected: false });
+  }
+  return segments;
 }
 
 /** Short unique id for transcript keys. */
@@ -344,23 +363,25 @@ export function ProspectingDataRoomChat({
         : "Open a company or type a company's name";
 
   // Selected companies (the same ones the "About:" chip shows) are coloured in the input.
-  const selectedNameRanges = findSelectedNameRanges(
+  const mirrorSegments = splitIntoSegments(
     input,
-    index,
-    preview.kind === "companies" ? preview.companies.map((company) => company.id) : []
+    findSelectedNameRanges(
+      input,
+      index,
+      preview.kind === "companies" ? preview.companies.map((company) => company.id) : []
+    )
   );
-  const mirrorSegments: Array<{ text: string; isSelected: boolean }> = [];
-  let segmentStart = 0;
-  for (const range of selectedNameRanges) {
-    if (range.start > segmentStart) {
-      mirrorSegments.push({ text: input.slice(segmentStart, range.start), isSelected: false });
-    }
-    mirrorSegments.push({ text: input.slice(range.start, range.end), isSelected: true });
-    segmentStart = range.end;
-  }
-  if (segmentStart < input.length) {
-    mirrorSegments.push({ text: input.slice(segmentStart), isSelected: false });
-  }
+
+  /** A sent question, with the names of the companies it was about coloured. */
+  const sentMessageSegments = (message: UserMessage): TextSegment[] =>
+    splitIntoSegments(
+      message.content,
+      findSelectedNameRanges(
+        message.content,
+        index,
+        message.scope.mode === "companies" ? message.scope.companyIds : []
+      )
+    );
 
   // Keep the mirror scrolled with the input when the text is wider than the box.
   const syncMirrorScroll = (): void => {
@@ -419,7 +440,7 @@ export function ProspectingDataRoomChat({
     if (decision.kind === "ask") {
       setAmbiguity({ word: decision.word, options: decision.options });
       setHighlight(0);
-      // Keep keyboard control (↑/↓, Tab, Escape) even when Send was clicked.
+      // Keep keyboard control (↑/↓, Enter, Escape) even when Send was clicked.
       inputRef.current?.focus();
       return;
     }
@@ -481,21 +502,20 @@ export function ProspectingDataRoomChat({
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>): void => {
     if (event.key === "Enter") {
-      // Enter always sends; it never picks a suggestion.
+      // Enter picks the highlighted row while the dropdown is open; otherwise it sends.
       event.preventDefault();
-      void sendMessage();
+      const company = panel?.rows[panel.highlighted];
+      if (company) {
+        chooseRow(company);
+      } else {
+        void sendMessage();
+      }
       return;
     }
     if (!panel) {
       return;
     }
-    if (event.key === "Tab" && !event.shiftKey) {
-      event.preventDefault();
-      const company = panel.rows[panel.highlighted];
-      if (company) {
-        chooseRow(company);
-      }
-    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       const step = event.key === "ArrowDown" ? 1 : -1;
       setHighlight((panel.highlighted + step + panel.rows.length) % panel.rows.length);
@@ -558,7 +578,16 @@ export function ProspectingDataRoomChat({
             message.role === "user" ? (
               <div key={message.id} className="flex justify-end">
                 <div className="max-w-[85%] bg-secondary-fixed text-on-surface rounded-xl rounded-br-none p-3.5 text-[14px] leading-relaxed shadow-sm whitespace-pre-wrap">
-                  {message.content}
+                  {/* The bubble is already light blue, so selected names are bold blue here. */}
+                  {sentMessageSegments(message).map((segment, i) =>
+                    segment.isSelected ? (
+                      <span key={i} className="font-semibold text-secondary">
+                        {segment.text}
+                      </span>
+                    ) : (
+                      <span key={i}>{segment.text}</span>
+                    )
+                  )}
                 </div>
               </div>
             ) : (
@@ -678,7 +707,7 @@ export function ProspectingDataRoomChat({
                     </span>
                     {isHighlighted ? (
                       <span className="shrink-0 px-1 rounded border border-secondary/30 text-[10px] leading-4 text-secondary">
-                        Tab
+                        Enter
                       </span>
                     ) : null}
                   </button>

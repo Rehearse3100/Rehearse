@@ -352,9 +352,9 @@ function joinNames(names: readonly string[], conjunction: "and" | "or"): string 
 export function buildOutOfScopeMessage(mention: OutOfScopeMention): string {
   const names = mention.companies.map((company) => company.name);
   if (names.length > 1 && !mention.isEitherOr) {
-    return `Your question mentions ${joinNames(names, "and")}, which aren't selected. Type their names and press Tab, or open them from the list, and I'll answer about them.`;
+    return `Your question mentions ${joinNames(names, "and")}, which aren't selected. Type their names and press Enter, or open them from the list, and I'll answer about them.`;
   }
-  return `Your question mentions ${joinNames(names, "or")}, which isn't selected. Type its name and press Tab, or open it from the list, and I'll answer about it.`;
+  return `Your question mentions ${joinNames(names, "or")}, which isn't selected. Type its name and press Enter, or open it from the list, and I'll answer about it.`;
 }
 
 // ── Scope on send ───

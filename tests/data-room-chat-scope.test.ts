@@ -311,7 +311,7 @@ describe("out-of-scope mentions", () => {
     const mention = findOutOfScopeMentions(index, "And juniper?", ["falcon"]);
     expect(mention?.isEitherOr).toBe(true);
     expect(buildOutOfScopeMessage(mention!)).toBe(
-      "Your question mentions Juniper Eye Care or Juniper Ridge Vision Group, which isn't selected. Type its name and press Tab, or open it from the list, and I'll answer about it."
+      "Your question mentions Juniper Eye Care or Juniper Ridge Vision Group, which isn't selected. Type its name and press Enter, or open it from the list, and I'll answer about it."
     );
   });
 
@@ -319,10 +319,10 @@ describe("out-of-scope mentions", () => {
     const falcon = ROSTER.find((c) => c.id === "falcon")!;
     const oasis = ROSTER.find((c) => c.id === "oasis")!;
     expect(buildOutOfScopeMessage({ companies: [falcon], isEitherOr: false })).toBe(
-      "Your question mentions Falcon Market, which isn't selected. Type its name and press Tab, or open it from the list, and I'll answer about it."
+      "Your question mentions Falcon Market, which isn't selected. Type its name and press Enter, or open it from the list, and I'll answer about it."
     );
     expect(buildOutOfScopeMessage({ companies: [falcon, oasis], isEitherOr: false })).toBe(
-      "Your question mentions Falcon Market and Oasis Supply Co., which aren't selected. Type their names and press Tab, or open them from the list, and I'll answer about them."
+      "Your question mentions Falcon Market and Oasis Supply Co., which aren't selected. Type their names and press Enter, or open them from the list, and I'll answer about them."
     );
   });
 });

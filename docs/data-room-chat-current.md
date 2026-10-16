@@ -28,15 +28,17 @@ The header chip shows the same scope live ("About: …", "About: All companies",
 
 `buildGenericWords(roster)` = words used in **3+ company names** + every word of every **industry label** + stop words (`a, an, and, at, by, co, company, corp, for, in, inc, llc, ltd, of, on, the, to`). Generic words never suggest, detect, or count as a company name.
 
-### 1.3 Type-to-pick (no `@`, no dropdown)
+### 1.3 Type-to-pick (no `@`)
 
-- The current word (letters/digits before the caret) needs **3+ letters**; it suggests companies with a **non-generic word starting with it** (any word of the name; first-word matches listed first), up to 5, in a row above the input.
-- **Tab** picks the highlighted one, **↑/↓** move the highlight, a click picks any, **Escape** hides the row. **Enter always sends** and never picks.
+- The current word (letters/digits before the caret) needs **3+ letters**; it suggests companies with a **non-generic word starting with it** (any word of the name; first-word matches listed first), up to 5, in a dropdown above the input (name, then "Industry · City").
+- While the dropdown is open, **Enter** picks the highlighted one, **↑/↓** move the highlight, a click picks any, **Escape** closes it. When it is closed, **Enter** sends. "Which one did you mean?" uses the same dropdown (Enter or a click sends with that company).
 - Picking replaces the typed fragment with the full name and adds the company to the scope (it stays picked while its full name is in the text).
+- Selected companies (the ones the "About:" chip shows) are coloured in the input, and in sent questions.
 
 ### 1.4 Decision log
 
 - Suggestions match the start of **any** non-generic name word (product decision, 2026-10-13).
+- **Enter** picks a suggestion while the dropdown is open (it replaced Tab; product decision, 2026-10-15). To send with the dropdown open, press Escape first or click Send.
 - Detection on send and the name guard use **full names and first words only**. Name endings like "Market", "Hospital", "Vision", "Center" are ordinary words, so "what market are they in?" stays on the open company and an answer containing "center" is not rejected. The generator keeps first words near-unique (max 2 per roster).
 
 ---
@@ -61,10 +63,10 @@ All queries run in the `POST` handler.
 Right after the scope check, for a 1–3 company scope, the server looks for companies the student's question mentions that are **not** in scope, with the same detection the redaction uses (`findOutOfScopeMentions` → `detectCompanies`): a **full name**, or an **identifying first word** (non-generic, 4+ letters). Generic words never count, and a first word shared with an in-scope company counts as in scope. If any is found, the model is **not called** and the reply is (names from the database):
 
 ```
-Your question mentions {Name}, which isn't selected. Type its name and press Tab, or open it from the list, and I'll answer about it.
+Your question mentions {Name}, which isn't selected. Type its name and press Enter, or open it from the list, and I'll answer about it.
 ```
 
-- Two or more unselected companies: "Your question mentions {A} and {B}, which aren't selected. Type their names and press Tab, or open them from the list, and I'll answer about them."
+- Two or more unselected companies: "Your question mentions {A} and {B}, which aren't selected. Type their names and press Enter, or open them from the list, and I'll answer about them."
 - A first word shared by two unselected companies (e.g. "Summit" with neither Summit selected): "Your question mentions {A} or {B}, which isn't selected. …" (the client normally asks "Which one did you mean?" before sending, so this is rare).
 - All companies: never applies (every company is in scope).
 
@@ -247,7 +249,7 @@ The client renders an optional intro paragraph, then one block per company: the 
 ## Manual test checklist (for operators)
 
 - [ ] With Summit Dental Group open, a question is answered under the heading "Summit Dental Group"
-- [ ] Typing "sum" suggests both Summit companies; Tab picks the highlighted one; Enter sends
+- [ ] Typing "sum" suggests both Summit companies; Enter picks the highlighted one; Enter again sends
 - [ ] Naming another company in the question answers about that company, not the open one
 - [ ] "Tell me about them" → no research findings; "what are their risks?" → findings (one company only)
 - [ ] All companies on → public facts only, each block correctly named

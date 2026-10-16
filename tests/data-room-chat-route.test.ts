@@ -514,7 +514,7 @@ describe("a question that mentions an unselected company", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       intro:
-        "Your question mentions Falcon Market, which isn't selected. Type its name and press Tab, or open it from the list, and I'll answer about it.",
+        "Your question mentions Falcon Market, which isn't selected. Type its name and press Enter, or open it from the list, and I'll answer about it.",
       items: [],
     });
     expect(state.create).not.toHaveBeenCalled();
