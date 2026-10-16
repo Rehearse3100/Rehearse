@@ -19,7 +19,6 @@ import {
   buildOutOfScopeMessage,
   buildRefLabels,
   buildScopeIndex,
-  filterHistoryForScope,
   finalizeModelAnswer,
   findOutOfScopeMentions,
   firstWordAsWritten,
@@ -28,6 +27,7 @@ import {
   parseHistory,
   parseModelAnswer,
   redactCompanyMentions,
+  selectHistoryForScope,
   type FirstWordReplacement,
   type HistoryEntry,
   type ScopeIndex,
@@ -530,7 +530,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
 
     const systemPrompt = buildDataRoomChatSystemPrompt(promptBlocks, promptMode);
-    const priorTurns = filterHistoryForScope(parseHistory(body.history), scope);
+    // Last 10 messages: same-scope questions and answers; other scopes' questions only
+    // (their answers are dropped). toModelHistory redacts names in every question.
+    const priorTurns = selectHistoryForScope(parseHistory(body.history), scope);
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       { role: "system", content: systemPrompt },
       ...toModelHistory(priorTurns, index, refLabels),

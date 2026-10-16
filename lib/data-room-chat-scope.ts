@@ -472,7 +472,7 @@ export function scopesEqual(a: ChatScope, b: ChatScope): boolean {
 
 // ── Server: request parsing ───
 
-/** Prior turns (messages) sent to the model, after the same-scope filter. */
+/** Most recent messages (any scope) considered as context for the model. */
 export const HISTORY_TURN_LIMIT = 10;
 const MAX_HISTORY_ENTRIES = 100;
 const MAX_TEXT_LENGTH = 8_000;
@@ -554,10 +554,16 @@ export function parseHistory(raw: unknown): HistoryEntry[] {
 }
 
 /**
- * Keeps only turns whose scope exactly matches the current scope (last 10).
+ * History for the model: the last 10 messages regardless of scope. Messages whose
+ * scope exactly matches the current scope are kept whole (questions and answers);
+ * from any other scope only the student's questions are kept and the answers are
+ * dropped, so no other company's facts reach this answer. The route redacts names
+ * in every kept question (companies outside the scope become "another company").
  */
-export function filterHistoryForScope(history: HistoryEntry[], scope: ChatScope): HistoryEntry[] {
-  return history.filter((entry) => scopesEqual(entry.scope, scope)).slice(-HISTORY_TURN_LIMIT);
+export function selectHistoryForScope(history: HistoryEntry[], scope: ChatScope): HistoryEntry[] {
+  return history
+    .slice(-HISTORY_TURN_LIMIT)
+    .filter((entry) => entry.role === "user" || scopesEqual(entry.scope, scope));
 }
 
 /**

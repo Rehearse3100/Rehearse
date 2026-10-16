@@ -23,7 +23,7 @@ The client works out a scope for every question; the server trusts only the comp
 4. **The open company** on the company page.
 5. Nothing → "Open a company or type a company's name first." (not sent).
 
-A plain text line next to the **All companies** toggle (above the input) shows the same scope live, follow-ups included, ("Current: …", "Current: All companies", or "Open a company or type a company's name"). The toggle is a pill: a dotted outline (grey round dots) when off, a solid soft-black outline on hover, and a solid soft-black outline filled soft black (white text) when selected (`on-surface-variant`, not blue, so it doesn't stand out). Nothing else changes on hover (no shadow, tint or bold).
+A plain text line next to the **All companies** toggle (above the input) shows the same scope live, follow-ups included ("Current: …", "Current: All companies", or "Open a company or type a company's name"). The toggle is a pill: a dotted outline (grey round dots) when off, a solid soft-black outline on hover, and a solid soft-black outline filled soft black (white text) when selected (`on-surface-variant`, not blue, so it doesn't stand out). Nothing else changes on hover (no shadow, tint or bold).
 
 ### 1.2 Generic words (computed from the roster itself)
 
@@ -190,7 +190,12 @@ Model call: `gpt-4o`, `temperature: 0.2` (single) or `0` (multi/All), `max_token
 - The client keeps one transcript for the whole Data Room (in memory, mirrored to `localStorage` key `tempo-data-room-chat-v2-{attemptId}`; works without storage). Every message stores its scope.
 - The transcript survives leaving the Data Room, moving between Prospecting steps, reloading and closing the tab. **Only Restart clears it** (`clearDataRoomChatFromStorage` in `RestartSimulationButton`). Before 2026-10-15 it lived in `sessionStorage`; an existing copy there is still read once and removed on Restart.
 - The client sends ids and text only: `{ role: "user", content, scope }` and `{ role: "assistant", intro, items: [{ companyId, text }], scope }`. Any name it might send is ignored.
-- The server keeps only turns whose scope **exactly** matches the current scope (same mode; same set of ids), the **last 10 messages**. Assistant turns go back to the model in the same JSON/ref form, with refs re-mapped for this request; texts pass through the same name redaction as the question.
+- The server takes the **last 10 messages, regardless of scope** (`selectHistoryForScope`), then:
+  - messages whose scope **exactly** matches the current scope (same mode; same set of ids): the student's questions **and** the assistant's answers are kept. Answers go back to the model in the same JSON/ref form, with refs re-mapped for this request;
+  - messages with **any other scope**: only the student's **questions** are kept; the assistant's answers are **dropped entirely**, so no other company's facts reach this answer.
+- Every kept question (and every kept answer text) passes through the same name redaction as the new question: companies in the current scope become their ref (`[C1]`…), every other company becomes "another company". Never a name, and never a ref for a company outside the scope.
+- Example (current scope: Summit only): an earlier Falcon-only question "What does Falcon Market sell?" is sent as "What does another company sell?"; the Falcon answer is not sent.
+- Changed 2026-10-15; before, only same-scope messages were sent (the last 10 of those).
 
 ---
 

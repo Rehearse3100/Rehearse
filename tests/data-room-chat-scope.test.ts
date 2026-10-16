@@ -13,7 +13,6 @@ import {
   buildRefLabels,
   buildScopeIndex,
   detectCompanies,
-  filterHistoryForScope,
   finalizeModelAnswer,
   findCompanyNameMentions,
   findOutOfScopeMentions,
@@ -27,9 +26,11 @@ import {
   scopesEqual,
   SCOPE_NONE_MESSAGE,
   SCOPE_TOO_MANY_MESSAGE,
+  selectHistoryForScope,
   suggestCompanies,
   textContainsCompanyName,
   wordFragmentBeforeCaret,
+  type ChatScope,
   type HistoryEntry,
   type ScopeCompany,
 } from "@/lib/data-room-chat-scope";
@@ -348,16 +349,51 @@ describe("server helpers", () => {
     expect(check({ intro: "", items: [{ ref: "C1", text: "It sells produce." }] })).toBe(false);
   });
 
-  it("keeps only same-scope history, last 10", () => {
+  describe("history across scopes (last 10)", () => {
     const one = { mode: "companies" as const, companyIds: ["falcon"] };
-    const history: HistoryEntry[] = Array.from({ length: 14 }, (_, i) => ({
-      role: "user" as const,
-      content: `q${i}`,
-      scope: i % 2 === 0 ? one : { mode: "all" as const },
-    }));
-    const kept = filterHistoryForScope([...history, ...history], one);
-    expect(kept).toHaveLength(10);
-    expect(kept.every((entry) => scopesEqual(entry.scope, one))).toBe(true);
+    const other = { mode: "companies" as const, companyIds: ["oasis"] };
+    const question = (content: string, scope: ChatScope): HistoryEntry => ({ role: "user", content, scope });
+    const answer = (text: string, scope: ChatScope, companyId: string): HistoryEntry => ({
+      role: "assistant",
+      intro: "",
+      items: [{ companyId, text }],
+      scope,
+    });
+
+    it("same-scope pairs are kept; another scope's answer is dropped and its question kept", () => {
+      const history = [
+        question("q-falcon", one),
+        answer("a-falcon", one, "falcon"),
+        question("q-oasis", other),
+        answer("a-oasis", other, "oasis"),
+        question("q-all", { mode: "all" }),
+        { role: "assistant" as const, intro: "a-all", items: [], scope: { mode: "all" as const } },
+      ];
+      expect(selectHistoryForScope(history, one)).toEqual([
+        question("q-falcon", one),
+        answer("a-falcon", one, "falcon"),
+        question("q-oasis", other),
+        question("q-all", { mode: "all" }),
+      ]);
+    });
+
+    it("looks at the last 10 messages only, whatever their scope", () => {
+      const history: HistoryEntry[] = Array.from({ length: 14 }, (_, i) =>
+        i % 2 === 0 ? question(`q${i}`, one) : answer(`a${i}`, other, "oasis")
+      );
+      const kept = selectHistoryForScope(history, one);
+      // Entries 4–13 are the last 10: five same-scope questions, five other-scope answers (dropped).
+      expect(kept.map((entry) => (entry.role === "user" ? entry.content : ""))).toEqual([
+        "q4",
+        "q6",
+        "q8",
+        "q10",
+        "q12",
+      ]);
+      expect(selectHistoryForScope(Array.from({ length: 14 }, (_, i) => question(`q${i}`, one)), one)).toHaveLength(
+        10
+      );
+    });
   });
 });
 

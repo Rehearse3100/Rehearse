@@ -3,7 +3,8 @@
  * POST /api/student/data-room-chat against a fake database and a mocked OpenAI
  * client (no network): research findings only for one-company questions, refs
  * instead of names in the prompt, out-of-scope refs dropped, the name guard's
- * retry and fallback, same-scope history, names taken from the database, the
+ * retry and fallback, history (last 10; other scopes' questions only, redacted),
+ * names taken from the database, the
  * empty-answer retry, the out-of-scope mention reply, and compact multi/All lines.
  */
 
@@ -450,9 +451,10 @@ describe("the reply", () => {
 });
 
 describe("history", () => {
-  it("sends only earlier turns with exactly the same scope, as refs (never names)", async () => {
+  it("keeps same-scope pairs; from other scopes keeps only the questions, redacted, and drops the answers", async () => {
     state.create.mockResolvedValueOnce(modelReply(NOTED_REPLY));
     const summitOnly = { mode: "companies", companyIds: ["summit-dental"] };
+    const falconOnly = { mode: "companies", companyIds: ["falcon"] };
     await POST(
       chatRequest({
         scope: summitOnly,
@@ -464,9 +466,20 @@ describe("history", () => {
             items: [{ companyId: "summit-dental", companyName: "FORGED NAME", text: "Unlike Falcon Market, it has 8 locations." }],
             scope: summitOnly,
           },
-          { role: "user", content: "And Falcon?", scope: { mode: "companies", companyIds: ["summit-dental", "falcon"] } },
+          { role: "user", content: "What does Falcon Market sell?", scope: falconOnly },
+          {
+            role: "assistant",
+            intro: "",
+            items: [{ companyId: "falcon", text: "It sells local produce." }],
+            scope: falconOnly,
+          },
+          {
+            role: "user",
+            content: "Compare Summit Dental Group and Falcon Market",
+            scope: { mode: "companies", companyIds: ["summit-dental", "falcon"] },
+          },
           { role: "assistant", intro: "All of them.", items: [], scope: { mode: "all" } },
-          { role: "user", content: "Who works there?", scope: { mode: "companies", companyIds: ["summit-dental"] } },
+          { role: "user", content: "Who works there?", scope: summitOnly },
         ],
       })
     );
@@ -481,10 +494,32 @@ describe("history", () => {
           items: [{ ref: "C1", text: "Unlike another company, it has 8 locations." }],
         }),
       },
+      { role: "user", content: "What does another company sell?" },
+      { role: "user", content: "Compare [C1] and another company" },
       { role: "user", content: "Who works there?" },
       { role: "user", content: "What are their risks?" },
     ]);
-    expect(JSON.stringify(messages)).not.toContain("FORGED NAME");
+    const sent = JSON.stringify(messages);
+    expect(sent).not.toContain("local produce");
+    expect(sent).not.toContain("All of them.");
+    expect(sent).not.toContain("Falcon");
+    expect(sent).not.toContain("FORGED NAME");
+  });
+
+  it("uses at most the last 10 messages", async () => {
+    state.create.mockResolvedValueOnce(modelReply(NOTED_REPLY));
+    const summitOnly = { mode: "companies", companyIds: ["summit-dental"] };
+    await POST(
+      chatRequest({
+        scope: summitOnly,
+        history: Array.from({ length: 12 }, (_, i) => ({ role: "user", content: `q${i}`, scope: summitOnly })),
+      })
+    );
+    const messages = sentMessages();
+    // System prompt + the last 10 history messages + the new question.
+    expect(messages).toHaveLength(12);
+    expect(messages[1]).toEqual({ role: "user", content: "q2" });
+    expect(messages[10]).toEqual({ role: "user", content: "q11" });
   });
 });
 
