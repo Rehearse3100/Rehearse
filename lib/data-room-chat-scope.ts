@@ -396,11 +396,32 @@ function followUpScopeIds(input: ScopeInput): string[] | null {
   return ids.length > 0 ? ids : null;
 }
 
+// "it" and "its" are matched as typed lowercase or capitalized, so all-caps "IT"
+// (information technology) is not a back-reference.
+const SINGULAR_BACK_REFERENCE =
+  /\b(?:[Ii]ts?|(?:this|that|the)\s+company|(?:this|that)\s+one)\b/;
+const PLURAL_BACK_REFERENCE =
+  /\b(?:they|them|their|theirs|these|those|both|each|all|either|companies|ones)\b/i;
+
+/**
+ * The singular back-reference in a follow-up ("it", "its", "this/that company",
+ * "this/that one", "the company"), lowercased, or null. A message that also refers
+ * to several companies ("they", "both", …) goes to all of them, so it returns null.
+ */
+function singularBackReference(text: string): string | null {
+  if (PLURAL_BACK_REFERENCE.test(text)) {
+    return null;
+  }
+  const match = text.match(SINGULAR_BACK_REFERENCE);
+  return match ? match[0].toLowerCase().replace(/\s+/g, " ") : null;
+}
+
 /**
  * Scope for sending, in priority order: (1) All companies; (2) picked companies
  * plus companies named in the text (an ambiguous first word asks instead, and
  * more than 3 is an error); (3) the previous question's companies, unless a
- * different company was opened since; (4) the open company; (5) nothing → error.
+ * different company was opened since (with 2–3 of them, a singular back-reference
+ * such as "it" asks which one instead); (4) the open company; (5) nothing → error.
  */
 export function resolveSendScope(input: ScopeInput): ScopeDecision {
   if (input.allCompanies) {
@@ -422,6 +443,13 @@ export function resolveSendScope(input: ScopeInput): ScopeDecision {
   }
   const followUp = followUpScopeIds(input);
   if (followUp) {
+    const reference = followUp.length > 1 ? singularBackReference(input.text) : null;
+    if (reference) {
+      const options = followUp
+        .map((id) => input.index.byId.get(id))
+        .filter((company): company is ScopeCompany => Boolean(company));
+      return { kind: "ask", word: reference, options };
+    }
     return { kind: "send", scope: { mode: "companies", companyIds: followUp } };
   }
   if (input.openCompanyId && input.index.byId.has(input.openCompanyId)) {

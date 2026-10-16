@@ -21,6 +21,7 @@ The client works out a scope for every question; the server trusts only the comp
    - A first word shared by 2+ companies (e.g. "Summit") is **ambiguous**: nothing is sent; the student sees "Which one did you mean?" with the options in the dropdown above the input, and picking one sends.
    - More than 3 companies → "Ask about up to 3 companies, or turn on All companies." (not sent).
 3. **Follow-ups: the previous question's companies** (one, or the same 2–3), when the message names no company, and the student hasn't opened a different company in the list since that question. Every sent question saves its **final resolved scope** and the **company open at send time** on its transcript entry (`{ role: "user", content, scope, openCompanyId }`), however the scope was chosen (picked, full name, unique first word, ambiguity choice, open company, or an earlier follow-up). The follow-up rule reads the latest question's entry and compares that open company with the one open now, so it also survives leaving the step, remounts and reloads. A previous All-companies question is not reused. Questions saved before 2026-10-15 have no `openCompanyId` and don't count. `openCompanyId` is never sent to the server.
+   - With **2–3 companies in focus**, a message with a **singular back-reference** ("it", "its", "this/that company", "this/that one", "the company") and no company name is not sent: the "Which one did you mean?" dropdown opens with those companies, and the pick is sent about that company only. A plural reference ("they", "them", "their", "these", "those", "both", "each", "all", "either", "companies", "ones") anywhere in the message sends it to all of them, as before. All-caps "IT" (information technology) is not a back-reference.
 4. **The open company** on the company page.
 5. Nothing → "Open a company or type a company's name first." (not sent).
 
@@ -295,5 +296,6 @@ The client renders an optional intro paragraph, then one block per company: the 
 - [ ] One company: "What risks or concerns should I know about?" → up to 4 findings, no parking/amenities/décor/events, no "good fit" verdict
 - [ ] "What's the weather today?" → "I can only help with researching these companies."
 - [ ] "What is names of companies startign with S" (All companies) → the S names from the list, instantly
+- [ ] Ask about two companies, then "What does it sell?" → "Which one did you mean?" with those two; picking one answers about that one only. "What are their risks?" instead → answers for both
 - [ ] "Do they use any existing vendors or software?" never shows an empty answer
 - [ ] Network response contains only `{ intro, items }` — no answer-key fields

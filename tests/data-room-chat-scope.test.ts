@@ -296,6 +296,81 @@ describe("scope on send (priority 1–5)", () => {
       });
     });
 
+    describe("singular back-references with 2–3 companies in focus", () => {
+      const twoCompanies = {
+        scope: { mode: "companies" as const, companyIds: ["falcon", "evergreen"] },
+        openCompanyId: "maple",
+      };
+      const threeCompanies = {
+        scope: { mode: "companies" as const, companyIds: ["falcon", "evergreen", "bison"] },
+        openCompanyId: "maple",
+      };
+
+      it("asks which one (those companies, in order) instead of sending", () => {
+        for (const [text, word] of [
+          ["What does it sell?", "it"],
+          ["Is it hiring?", "it"],
+          ["What are its risks?", "its"],
+          ["Tell me more about this company", "this company"],
+          ["Does that company take online bookings?", "that company"],
+          ["What about this one?", "this one"],
+          ["and that one?", "that one"],
+          ["Who runs the company?", "the company"],
+          ["It's hiring?", "it"],
+        ] as const) {
+          expect(resolveSendScope({ ...base, text, lastQuestion: twoCompanies }), text).toEqual({
+            kind: "ask",
+            word,
+            options: [ROSTER[6], ROSTER[11]],
+          });
+        }
+        expect(resolveSendScope({ ...base, text: "What does it sell?", lastQuestion: threeCompanies })).toEqual({
+          kind: "ask",
+          word: "it",
+          options: [ROSTER[6], ROSTER[11], ROSTER[12]],
+        });
+      });
+
+      it("picking a company from 'Which one did you mean?' sends about that company", () => {
+        expect(
+          resolveSendScope({ ...base, text: "What does it sell?", pickedIds: ["evergreen"], lastQuestion: twoCompanies })
+        ).toEqual({ kind: "send", scope: { mode: "companies", companyIds: ["evergreen"] } });
+      });
+
+      it("plural references still go to all of them", () => {
+        for (const text of [
+          "What are their risks?",
+          "Tell me about them",
+          "Do they take online bookings?",
+          "Compare these companies",
+          "Do both have contacts?",
+          "Does either of those have a website?",
+          "Is it true that they both have online booking?",
+          "Which one has more locations?",
+        ]) {
+          expect(resolveSendScope({ ...base, text, lastQuestion: twoCompanies }), text).toEqual({
+            kind: "send",
+            scope: { mode: "companies", companyIds: ["falcon", "evergreen"] },
+          });
+        }
+      });
+
+      it("one company in focus, a named company, or all-caps IT (information technology) never asks", () => {
+        expect(resolveSendScope({ ...base, text: "What does it sell?", lastQuestion: askedAboutFalcon })).toEqual({
+          kind: "send",
+          scope: { mode: "companies", companyIds: ["falcon"] },
+        });
+        expect(resolveSendScope({ ...base, text: "What does Falcon sell? Is it big?", lastQuestion: twoCompanies })).toEqual({
+          kind: "send",
+          scope: { mode: "companies", companyIds: ["falcon"] },
+        });
+        expect(resolveSendScope({ ...base, text: "Any IT staff listed?", lastQuestion: twoCompanies })).toEqual({
+          kind: "send",
+          scope: { mode: "companies", companyIds: ["falcon", "evergreen"] },
+        });
+      });
+    });
+
     it("the live preview shows the same follow-up company", () => {
       expect(previewScope({ ...base, lastQuestion: askedAboutFalcon })).toEqual({
         kind: "companies",
