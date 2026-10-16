@@ -621,7 +621,9 @@ export function ProspectingDataRoomChat({
       {/* Footer */}
       <div className="p-4 border-t border-outline-variant shrink-0 space-y-2">
         <div className="flex items-center gap-2.5 min-w-0">
-          {/* Off: dashed outline. Hover: solid blue outline and tint. On: filled blue with a check. */}
+          {/* Dotted pill (design pattern "Pill, Tag & Ghost"): dotted in every state.
+              Off: grey dots on white, hollow dot. Hover: blue dots, light tint, soft blue
+              glow, bold blue text. On: blue dots, light blue fill, filled blue dot. */}
           <button
             type="button"
             onClick={() => {
@@ -630,37 +632,45 @@ export function ProspectingDataRoomChat({
               setAmbiguity(null);
             }}
             aria-pressed={allCompanies}
-            className={`group/all relative shrink-0 h-6 px-2.5 rounded-full border text-[11px] font-medium flex items-center gap-1 cursor-pointer active:scale-95 transition-all duration-150 motion-reduce:transition-none ${
+            className={`group/all relative shrink-0 h-7 px-3 rounded-full text-[12px] flex items-center gap-1.5 cursor-pointer active:scale-95 transition-[background-color,color,box-shadow,transform] duration-150 motion-reduce:transition-none hover:shadow-[0_4px_14px_-2px_rgba(0,91,191,0.18)] ${
               allCompanies
-                ? "border-secondary bg-secondary text-white shadow-sm hover:bg-secondary/90"
-                : "border-transparent bg-transparent text-on-surface-variant hover:border-secondary hover:bg-secondary-fixed hover:text-secondary"
+                ? "bg-secondary-fixed/40 text-secondary hover:bg-secondary-fixed/60"
+                : "bg-white text-on-surface-variant hover:bg-surface-container-low hover:text-secondary"
             }`}
           >
-            {!allCompanies ? (
-              // Dashed outline drawn as SVG ("- - - -"): a 1px CSS dotted/dashed border reads
-              // as solid on a pill this small. It sits over the transparent border (24px tall,
-              // so rx 12 matches rounded-full); the 2px stroke is clipped to 1px inside.
-              <svg
-                aria-hidden="true"
-                className="pointer-events-none absolute -inset-px h-[calc(100%_+_2px)] w-[calc(100%_+_2px)] text-on-surface-variant transition-opacity duration-150 group-hover/all:opacity-0 motion-reduce:transition-none"
+            {/* Round dots: 1.5px stroke, "2 4" dash, round caps, centred on the pill's edge
+                (overflow visible, so no dot is clipped). 28px tall, so rx 14 = rounded-full. */}
+            <svg
+              aria-hidden="true"
+              className={`pointer-events-none absolute inset-0 h-full w-full overflow-visible transition-colors duration-150 motion-reduce:transition-none ${
+                allCompanies ? "text-secondary" : "text-outline group-hover/all:text-secondary"
+              }`}
+            >
+              <rect
+                width="100%"
+                height="100%"
+                rx="14"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeDasharray="2 4"
+                strokeLinecap="round"
+              />
+            </svg>
+            <span
+              className={`w-2 h-2 rounded-full shrink-0 ${allCompanies ? "bg-current" : "border border-current"}`}
+            />
+            {/* The bold width is reserved, so going bold on hover doesn't nudge the line beside it. */}
+            <span className="grid justify-items-center">
+              <span className="invisible col-start-1 row-start-1 font-semibold">All companies</span>
+              <span
+                className={`col-start-1 row-start-1 ${
+                  allCompanies ? "font-semibold" : "font-medium group-hover/all:font-semibold"
+                }`}
               >
-                <rect
-                  width="100%"
-                  height="100%"
-                  rx="12"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeDasharray="4 3"
-                />
-              </svg>
-            ) : null}
-            {allCompanies ? (
-              <MaterialIcon name="check" className="text-[13px]" />
-            ) : (
-              <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60" />
-            )}
-            All companies
+                All companies
+              </span>
+            </span>
           </button>
           {/* What the next question is about: plain text, not a control. */}
           <p
