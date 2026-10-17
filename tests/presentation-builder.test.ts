@@ -121,6 +121,10 @@ describe("the builder", () => {
       expect(html, `slide ${number}`).toMatch(new RegExp(`>${number}</p><div class="relative rounded-md`));
     }
     expect(html).not.toMatch(/<span class="font-semibold">\d<\/span>/);
+    // The rail sits at the right end on desktop (a strip above the slide on mobile).
+    const railClasses = html.match(/<nav aria-label="Slides" class="([^"]*)"/)?.[1]?.split(" ") ?? [];
+    expect(railClasses).toContain("lg:order-last");
+    expect(railClasses).toContain("lg:border-l");
   });
 
   it("the old slide layouts and their data are gone", () => {

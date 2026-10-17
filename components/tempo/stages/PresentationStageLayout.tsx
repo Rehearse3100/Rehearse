@@ -3,9 +3,10 @@
  * Presentational shell for Tempo Stage 3 Presentation — the stage's navy mission
  * sidebar on the left (as on every stage), and a simple slide-deck builder in the
  * center column: the Submit bar (save status left; slides counter and Submit
- * right) on top, then a rail of six slide thumbnails (a horizontal strip on
- * mobile) and the active slide on a grey canvas, with the section name as a large
- * heading and its direction above it, and Previous / Next below. The slides are
+ * right) on top, then the active slide on a grey canvas, with the section name as
+ * a large heading and its direction above it and Previous / Next below, and a rail
+ * of six slide thumbnails at the right end (a horizontal strip above the slide on
+ * mobile). The slides are
  * the reusable PitchSlide (components/presentation/PitchSlide.tsx) with Tempo's
  * deck and configs (TEMPO_PITCH_DECK, TEMPO_PITCH_SLIDES in lib/tempo-presentation.ts);
  * thumbnails are read-only. Slide N binds section N's PresentationForm field through the
@@ -205,10 +206,10 @@ export function PresentationStageLayout({
         </div>
 
         <div className="flex flex-1 min-h-0 flex-col lg:flex-row">
-          {/* ── Slide rail (a horizontal strip on mobile) ─── */}
+          {/* ── Slide rail: at the right end on desktop (order-last), a horizontal strip above the slide on mobile ─── */}
           <nav
             aria-label="Slides"
-            className="shrink-0 bg-white border-b lg:border-b-0 lg:border-r border-outline-variant lg:w-[190px] overflow-x-auto lg:overflow-x-hidden lg:overflow-y-auto custom-scrollbar"
+            className="shrink-0 bg-white border-b lg:border-b-0 lg:border-l lg:order-last border-outline-variant lg:w-[190px] overflow-x-auto lg:overflow-x-hidden lg:overflow-y-auto custom-scrollbar"
           >
             <ol className="flex lg:flex-col gap-3 p-3">
               {TEMPO_PITCH_SLIDES.map((item, index) => (
