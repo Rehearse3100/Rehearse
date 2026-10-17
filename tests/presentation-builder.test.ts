@@ -89,9 +89,12 @@ describe("the builder", () => {
     expect(html.match(/check_circle/g)).toHaveLength(1);
   });
 
-  it("the old sidebar, hint and form are gone", () => {
+  it("keeps the stage's navy mission sidebar; the old hint, heading and form are gone", () => {
     const html = render(EMPTY_PRESENTATION_FORM);
-    for (const removed of ["Need a starting point?", "Your Mission", "Your Audience", "Present to Dana and Dr. Kim", "Type your answer"]) {
+    for (const kept of ["Current Phase", "Stage 3: Presentation", "Your Mission", "Your Audience"]) {
+      expect(html, kept).toContain(kept);
+    }
+    for (const removed of ["Need a starting point?", "Present to Dana and Dr. Kim", "Type your answer"]) {
       expect(html, removed).not.toContain(removed);
     }
     expect(html).toContain("← Previous");

@@ -1,10 +1,11 @@
 /**
  * PresentationStageLayout.tsx
- * Presentational shell for Tempo Stage 3 Presentation — a simple slide-deck
- * builder. The Submit bar (save status left; slides counter and Submit right)
- * sits under the app top bar. Below it: a rail of six slide thumbnails (a
- * horizontal strip on mobile) and the active slide on a grey canvas, with one
- * line of direction above it and Previous / Next below. The slides are the
+ * Presentational shell for Tempo Stage 3 Presentation — the stage's navy mission
+ * sidebar on the left (as on every stage), and a simple slide-deck builder in the
+ * center column: the Submit bar (save status left; slides counter and Submit
+ * right) on top, then a rail of six slide thumbnails (a horizontal strip on
+ * mobile) and the active slide on a grey canvas, with one line of direction above
+ * it and Previous / Next below. The slides are the
  * reusable PitchSlide (components/presentation/PitchSlide.tsx) with Tempo's
  * theme and configs (TEMPO_PITCH_SLIDES in lib/tempo-presentation.ts); thumbnails
  * are read-only. Slide N binds section N's PresentationForm field through the
@@ -116,8 +117,8 @@ function SlideThumbnail({
 }
 
 /**
- * Renders the Presentation stage: the Submit bar, the slide rail and the active slide.
- * Starts on the first incomplete slide.
+ * Renders the Presentation stage: the mission sidebar, then the Submit bar, the
+ * slide rail and the active slide. Starts on the first incomplete slide.
  */
 export function PresentationStageLayout({
   form,
@@ -139,8 +140,51 @@ export function PresentationStageLayout({
         testBypass ? "pt-28" : "pt-16"
       }`}
     >
-      <main className="flex flex-1 flex-col min-h-0 overflow-hidden">
-        {/* ── Submit bar ─── */}
+      <main className="flex flex-1 min-h-0 overflow-hidden">
+        {/* ── Left column: mission ─── */}
+        <aside className="w-[280px] bg-[#1a1a2e] text-white flex flex-col p-6 overflow-y-auto border-r border-outline-variant shrink-0 hidden lg:flex">
+          <div className="mb-8">
+            <span className="text-[11px] font-mono-label text-blue-300 uppercase tracking-[0.2em]">
+              Current Phase
+            </span>
+            <h2 className="font-title-lg text-white mt-1">Stage 3: Presentation</h2>
+          </div>
+
+          <div className="space-y-8">
+            <div>
+              <h3 className="font-mono-label text-[12px] text-blue-300 uppercase tracking-wider flex items-center gap-2 mb-3">
+                <MaterialIcon name="target" className="text-[16px]" />
+                Your Mission
+              </h3>
+              <p className="text-body-md text-slate-300 leading-relaxed">
+                Present the value of Tempo to{" "}
+                <span className="text-white font-semibold">Dana Reyes</span> and{" "}
+                <span className="text-white font-semibold">Dr. Saul Kim</span>. Your goal is to
+                secure a pilot agreement.
+              </p>
+            </div>
+
+            <div>
+              <h3 className="font-mono-label text-[12px] text-blue-300 uppercase tracking-wider flex items-center gap-2 mb-3">
+                <MaterialIcon name="groups" className="text-[16px]" />
+                Your Audience
+              </h3>
+              <div className="space-y-3">
+                <div className="bg-white/5 p-3 rounded-lg border border-white/10">
+                  <p className="text-sm font-bold text-white">Dana Reyes</p>
+                  <p className="text-[12px] text-slate-400">Operations / Clinic Staff</p>
+                </div>
+                <div className="bg-white/5 p-3 rounded-lg border border-white/10">
+                  <p className="text-sm font-bold text-white">Dr. Saul Kim</p>
+                  <p className="text-[12px] text-slate-400">Owner / Revenue & ROI</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        {/* ── Center column: Submit bar, then the slide rail and the active slide ─── */}
+        <section className="flex-1 flex flex-col min-w-0 min-h-0">
         <div className="h-12 bg-surface-container-low border-b border-outline-variant shrink-0 flex items-center justify-between px-4 lg:px-xl gap-4">
           <div className="flex items-center gap-sm text-on-surface-variant min-w-0 shrink-0">
             <MaterialIcon name="cloud_done" className="text-green-500" />
@@ -218,6 +262,7 @@ export function PresentationStageLayout({
             </div>
           </section>
         </div>
+        </section>
       </main>
     </div>
   );
