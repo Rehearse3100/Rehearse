@@ -4,8 +4,8 @@
  * the title, the student's text and the footer from config; a visible text box
  * that writes the slide's own field while editing, and plain text (no box) when
  * read-only (thumbnails); the footer is only the product line and the slide
- * number; the background design (left bar, arcs, soft circle, accent line) in the
- * theme's colours, behind the content and identical on every slide; every colour
+ * number; a different background design per slide number in the theme's colours,
+ * behind the content, with the accent line under the title; every colour
  * from the deck's theme (no colour values in the component); no Tempo strings in
  * the shared files. Plus Tempo's deck config. Rendered to static HTML; no network.
  */
@@ -90,7 +90,7 @@ describe("the slide", () => {
 
   it("the footer is only the product line and the slide number", () => {
     expect(render(SLIDE)).toMatch(
-      /<div class="flex items-center justify-between shrink-0"[^>]*><p class="min-w-0">Acme · Prepared for Globex<\/p><span class="shrink-0">03<\/span><\/div>/
+      /<div class="flex items-center justify-between shrink-0"[^>]*><p class="min-w-0">Acme · Prepared for Globex<\/p><span class="shrink-0 font-bold"[^>]*>03<\/span><\/div>/
     );
   });
 
@@ -110,36 +110,78 @@ describe("background design", () => {
   const decorationOf = (html: string): string =>
     html.match(/<div[^>]*data-pitch-decoration[^>]*>(?:<div[^>]*><\/div>)+<\/div>/)?.[0] ?? "";
 
-  it("draws the left bar, three thin arcs, the soft circle and the accent line in the theme's colours", () => {
-    const html = render(SLIDE, "Words.", vi.fn(), THEMED_DECK);
-    const decoration = decorationOf(html);
-    expect(decoration).not.toBe("");
-    expect(decoration).toContain("background:#0f3d3e");
-    expect(decoration.split("solid color-mix(in srgb, #e07a5f 20%, transparent)")).toHaveLength(4);
-    expect(decoration).toContain("background:color-mix(in srgb, #0f3d3e 5%, transparent)");
-    expect(decoration.match(/border-radius:50%/g)).toHaveLength(4);
-    // The accent line sits directly under the title.
-    expect(html).toMatch(/<\/h3><div aria-hidden="true"[^>]*style="width:5.8cqw;height:0.36cqw;background:#e07a5f;/);
+  const renderNumber = (slideNumber: number, slide: PitchSlideConfig = SLIDE, onChange?: (field: string, value: string) => void): string =>
+    renderToStaticMarkup(
+      React.createElement(PitchSlide<string>, { deck: THEMED_DECK, slide, slideNumber, value: "Words.", onChange })
+    );
+
+  const NUMBERS = [1, 2, 3, 4, 5, 6];
+
+  it("each of the six slide numbers has its own design; slide 7 starts over", () => {
+    const designs = NUMBERS.map((number) => decorationOf(renderNumber(number)));
+    for (const design of designs) {
+      expect(design).not.toBe("");
+    }
+    expect(new Set(designs).size).toBe(6);
+    expect(decorationOf(renderNumber(7))).toBe(designs[0]);
+  });
+
+  it("every design uses the theme's primary and accent at full strength", () => {
+    for (const number of NUMBERS) {
+      const design = decorationOf(renderNumber(number));
+      expect(design, `slide ${number}`).toMatch(/(background:|solid )#0f3d3e/);
+      expect(design, `slide ${number}`).toMatch(/(background:|solid )#e07a5f/);
+    }
+  });
+
+  it("the design depends only on the slide number, not its content, and is the same editing or read-only (thumbnails)", () => {
+    const other: PitchSlideConfig = { id: "s2", field: "otherField", title: "Another title", direction: "Other." };
+    for (const number of NUMBERS) {
+      const design = decorationOf(renderNumber(number, SLIDE, vi.fn()));
+      expect(decorationOf(renderNumber(number, other)), `slide ${number}`).toBe(design);
+    }
+    TEMPO_PITCH_SLIDES.forEach((slide: PitchSlideConfig, index) => {
+      const tempoSlide = (onChange?: (field: string, value: string) => void): string =>
+        renderToStaticMarkup(
+          React.createElement(PitchSlide<string>, { deck: TEMPO_PITCH_DECK, slide, slideNumber: index + 1, value: "x", onChange })
+        );
+      const editing = decorationOf(tempoSlide(vi.fn()));
+      expect(editing, slide.id).toContain("#1a1a2e");
+      expect(editing, slide.id).toContain("#c9a84c");
+      expect(decorationOf(tempoSlide()), slide.id).toBe(editing);
+    });
+  });
+
+  it("title and footer turn light where a design puts them on the primary colour", () => {
+    const titleColor = (html: string): string | undefined => html.match(/<h3[^>]*style="[^"]*color:([^;"]+)/)?.[1];
+    expect(titleColor(renderNumber(1))).toBe("#fffdf8");
+    for (const number of [2, 3, 4, 5, 6]) {
+      expect(titleColor(renderNumber(number)), `slide ${number}`).toBe("#0f3d3e");
+    }
+    // Slide 4: the footer sits on the bottom band.
+    expect(renderNumber(4)).toContain("color:color-mix(in srgb, #fffdf8 80%, #0f3d3e)");
+    expect(renderNumber(4)).toMatch(/<span class="shrink-0 font-bold" style="color:#e07a5f">04<\/span>/);
+    expect(renderNumber(2)).toMatch(/<span class="shrink-0 font-bold" style="color:#0f3d3e">02<\/span>/);
+  });
+
+  it("the accent line sits directly under the title", () => {
+    for (const number of NUMBERS) {
+      expect(renderNumber(number), `slide ${number}`).toMatch(
+        /<\/h3><div aria-hidden="true"[^>]*style="width:5.8cqw;height:0.36cqw;background:#e07a5f;/
+      );
+    }
   });
 
   it("sits behind the content, takes no clicks and holds no text; the text box keeps its own solid background", () => {
-    const html = render(SLIDE, "Words.", vi.fn(), THEMED_DECK);
-    const decoration = decorationOf(html);
-    expect(decoration).toContain('aria-hidden="true"');
-    expect(decoration).toContain("pointer-events-none");
-    expect(decoration.replace(/<[^>]*>/g, "")).toBe("");
-    expect(html.indexOf(decoration)).toBeLessThan(html.indexOf("<h3"));
-    expect(html).toContain("--pitch-box-bg:color-mix(in srgb, #777788 5%, #fffdf8)");
-  });
-
-  it("is identical on all six slides, editing or read-only (thumbnails)", () => {
-    const designs = TEMPO_PITCH_SLIDES.flatMap((slide) => [
-      decorationOf(render(slide, "Some words.", vi.fn(), TEMPO_PITCH_DECK)),
-      decorationOf(render(slide, "", undefined, TEMPO_PITCH_DECK)),
-    ]);
-    expect(designs[0]).toContain("#1a1a2e");
-    expect(designs[0]).toContain("#c9a84c");
-    expect(new Set(designs).size).toBe(1);
+    for (const number of NUMBERS) {
+      const html = renderNumber(number, SLIDE, vi.fn());
+      const decoration = decorationOf(html);
+      expect(decoration).toContain('aria-hidden="true"');
+      expect(decoration).toContain("pointer-events-none");
+      expect(decoration.replace(/<[^>]*>/g, "")).toBe("");
+      expect(html.indexOf(decoration)).toBeLessThan(html.indexOf("<h3"));
+      expect(html).toContain("--pitch-box-bg:color-mix(in srgb, #e07a5f 4%, #fffdf8)");
+    }
   });
 });
 
