@@ -3,16 +3,19 @@
  * The one Reference Library body every Tempo stage renders inside
  * ReferenceLibraryDrawer. Collapsible stage sections (the current stage's opens
  * first): Prospecting (the student's ICP and the reading list), the Discovery and
- * Objection Handling calls (meta row and the full transcript with search; a locked
- * "Upcoming" row until the call is saved) and, from the Negotiation stage on,
- * Negotiation (tradeable levers and pricing). Data comes from the server page as
- * ReferenceLibraryData (lib/tempo-reference-library.ts); no fetches here.
+ * Objection Handling calls (meta row, AI call notes and the full transcript with
+ * search; a locked "Upcoming" row until the call is saved) and, from the
+ * Negotiation stage on, Negotiation (tradeable levers and pricing). Data comes from
+ * the server page as ReferenceLibraryData (lib/tempo-reference-library.ts); the
+ * only fetch is the Call notes card (POST /api/student/call-notes), once per call
+ * when its section first opens. The transcript never depends on the notes.
  */
 
 "use client";
 
-import { useId, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
+import { parseCallNotes, type CallNotes } from "@/lib/tempo-call-notes";
 import { NEGOTIATION_DEAL_MATH, NEGOTIATION_DEAL_MATH_NOTE, TRADEABLE_LEVERS } from "@/lib/tempo-negotiation";
 import { PROSPECTING_READING_LIST } from "@/lib/tempo-prospecting";
 import {
@@ -22,6 +25,7 @@ import {
   highlightParts,
   visibleReferenceSections,
   type ReferenceCall,
+  type ReferenceCallStage,
   type ReferenceIcpRow,
   type ReferenceLibraryData,
   type ReferenceSectionId,
@@ -29,6 +33,7 @@ import {
 } from "@/lib/tempo-reference-library";
 
 type TempoReferenceLibraryProps = {
+  attemptId: string;
   data: ReferenceLibraryData;
 };
 
@@ -272,8 +277,140 @@ function TranscriptPanel({ messages }: { messages: readonly ReferenceTranscriptM
   );
 }
 
-/** A saved call: who and how long, then its transcript. */
-function CallDetails({ call }: { call: ReferenceCall }): React.ReactElement {
+// ── Call notes ───
+
+/** Notes fetched this session, and requests in flight, so each call is fetched once (also across reopens). */
+const callNotesCache = new Map<string, CallNotes>();
+const callNotesRequests = new Map<string, Promise<CallNotes>>();
+
+/** POST /api/student/call-notes, shared by every card for the same call; rejects on any failure. */
+function requestCallNotes(attemptId: string, stage: ReferenceCallStage): Promise<CallNotes> {
+  const key = `${attemptId}:${stage}`;
+  const cached = callNotesCache.get(key);
+  if (cached) {
+    return Promise.resolve(cached);
+  }
+  const pending = callNotesRequests.get(key);
+  if (pending) {
+    return pending;
+  }
+  const request = fetch("/api/student/call-notes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ attemptId, stage }),
+  })
+    .then(async (res) => {
+      const body: unknown = await res.json().catch(() => null);
+      const notes = res.ok && body && typeof body === "object" ? parseCallNotes((body as { notes?: unknown }).notes) : null;
+      if (!notes) {
+        throw new Error("call notes unavailable");
+      }
+      callNotesCache.set(key, notes);
+      return notes;
+    })
+    .finally(() => {
+      callNotesRequests.delete(key);
+    });
+  callNotesRequests.set(key, request);
+  return request;
+}
+
+const NOTE_GROUPS = [
+  { key: "told_you", label: "What they told you", labelClass: "text-on-surface-variant", dotClass: "bg-on-surface-variant" },
+  { key: "concerns", label: "Concerns raised", labelClass: "text-error", dotClass: "bg-error" },
+  { key: "committed", label: "What you committed to", labelClass: "text-secondary", dotClass: "bg-secondary" },
+] as const;
+
+/** The AI call notes for a saved call: fetched when its section first opens. */
+function CallNotesCard({ attemptId, stage }: { attemptId: string; stage: ReferenceCallStage }): React.ReactElement {
+  const [notes, setNotes] = useState<CallNotes | null>(() => callNotesCache.get(`${attemptId}:${stage}`) ?? null);
+  const [hasError, setHasError] = useState(false);
+
+  const load = useCallback((): (() => void) => {
+    let isActive = true;
+    setHasError(false);
+    requestCallNotes(attemptId, stage)
+      .then((result) => {
+        if (isActive) {
+          setNotes(result);
+        }
+      })
+      .catch(() => {
+        if (isActive) {
+          setHasError(true);
+        }
+      });
+    return () => {
+      isActive = false;
+    };
+  }, [attemptId, stage]);
+
+  // Fetch when the card first shows (its section opened); "Try again" calls load() itself.
+  useEffect(() => {
+    if (notes) {
+      return undefined;
+    }
+    return load();
+  }, [load, notes]);
+
+  return (
+    <div className="p-4 rounded-xl bg-[#f8fafc] space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <MaterialIcon name="auto_awesome" className="text-primary-container text-[18px]" />
+          <span className="text-[15px] font-semibold text-primary-container">Call notes</span>
+        </div>
+        <span className="bg-secondary/10 text-secondary font-label-sm text-label-sm px-2.5 py-0.5 rounded-full font-semibold">
+          AI notes
+        </span>
+      </div>
+
+      {notes ? (
+        <>
+          <p className="p-3 bg-white rounded-lg font-body-md text-body-md text-on-surface leading-relaxed shadow-sm">
+            {notes.summary}
+          </p>
+          {NOTE_GROUPS.filter((group) => notes[group.key].length > 0).map((group) => (
+            <div key={group.key} className="space-y-1.5">
+              <span className={`block font-label-sm text-label-sm uppercase tracking-wider font-semibold ${group.labelClass}`}>
+                {group.label}
+              </span>
+              <ul className="space-y-1.5">
+                {notes[group.key].map((item) => (
+                  <li key={item} className="flex items-start gap-2 font-body-md text-body-md text-on-surface">
+                    <span className={`w-1.5 h-1.5 rounded-full mt-2 shrink-0 ${group.dotClass}`} aria-hidden />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </>
+      ) : hasError ? (
+        <div className="flex items-center justify-between gap-3">
+          <p className="font-body-md text-body-md text-on-surface-variant">Couldn&apos;t write call notes right now.</p>
+          <button
+            type="button"
+            onClick={() => load()}
+            className="shrink-0 h-8 px-3 rounded-lg border border-outline-variant bg-white font-label-md text-label-md text-on-surface hover:bg-surface-container-low transition-colors"
+          >
+            Try again
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-2" role="status">
+          <div className="h-3 rounded bg-surface-container-high animate-pulse" />
+          <div className="h-3 w-5/6 rounded bg-surface-container-high animate-pulse" />
+          <div className="h-3 w-2/3 rounded bg-surface-container-high animate-pulse" />
+          <p className="pt-1 font-label-sm text-label-sm text-on-surface-variant">Writing your call notes…</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A saved call: who and how long, the AI call notes (when there is a transcript), then the transcript. */
+function CallDetails({ attemptId, call }: { attemptId: string; call: ReferenceCall }): React.ReactElement {
   return (
     <>
       <div className="flex flex-wrap items-center gap-2 font-label-sm text-label-sm text-on-surface-variant">
@@ -291,6 +428,7 @@ function CallDetails({ call }: { call: ReferenceCall }): React.ReactElement {
           </>
         ) : null}
       </div>
+      {call.messages.length > 0 ? <CallNotesCard attemptId={attemptId} stage={call.stage} /> : null}
       <TranscriptPanel messages={call.messages} />
     </>
   );
@@ -355,7 +493,7 @@ function NegotiationReference(): React.ReactElement {
  * The Reference Library sections for the student's current stage. Each header
  * toggles its section; the current stage's section starts open.
  */
-export function TempoReferenceLibrary({ data }: TempoReferenceLibraryProps): React.ReactElement {
+export function TempoReferenceLibrary({ attemptId, data }: TempoReferenceLibraryProps): React.ReactElement {
   const [openSections, setOpenSections] = useState<ReadonlySet<ReferenceSectionId>>(
     () => new Set([defaultOpenReferenceSection(data.currentStage)])
   );
@@ -384,7 +522,7 @@ export function TempoReferenceLibrary({ data }: TempoReferenceLibraryProps): Rea
         isOpen={openSections.has(id)}
         onToggle={() => toggle(id)}
       >
-        {call ? <CallDetails call={call} /> : <UpcomingCall />}
+        {call ? <CallDetails attemptId={attemptId} call={call} /> : <UpcomingCall />}
       </LibrarySection>
     );
   };

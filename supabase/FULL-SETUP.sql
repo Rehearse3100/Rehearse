@@ -152,6 +152,11 @@ ALTER TABLE public.stage_scores
 ALTER TABLE public.stage_scores
   ADD COLUMN IF NOT EXISTS badges_claim_id uuid;
 
+-- AI call notes for a finished Tempo call (POST /api/student/call-notes), written
+-- once and shown in the Reference Library. Shape validated in app code.
+ALTER TABLE public.stage_scores
+  ADD COLUMN IF NOT EXISTS call_notes jsonb;
+
 -- ── CRM: opportunity logs ────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.crm_log_entries (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -70,7 +70,8 @@ function library(currentStage: ReferenceLibraryStage, overrides: Partial<Referen
   };
 }
 
-const render = (data: ReferenceLibraryData): string => renderToStaticMarkup(React.createElement(TempoReferenceLibrary, { data }));
+const render = (data: ReferenceLibraryData): string =>
+  renderToStaticMarkup(React.createElement(TempoReferenceLibrary, { attemptId: "attempt-1", data }));
 
 describe("Your ICP rows", () => {
   it("label/value rows for the filled fields only; the size range and disqualifiers combine", () => {
@@ -244,14 +245,24 @@ describe("the rendered library", () => {
     expect(html).not.toContain("Your ICP");
   });
 
-  it("a finished call: pill, meta row, and a collapsed transcript row (no messages until opened)", () => {
+  it("a finished call: pill, meta row, the Call notes card (loading first), and a collapsed transcript row", () => {
     const html = render(library("discovery"));
     expect(html).toContain("Call · 14 min");
     expect(html).toContain("Dana Reyes");
     expect(html).toContain("Director of Operations");
+    expect(html).toContain("Call notes");
+    expect(html).toContain("AI notes");
+    expect(html).toContain("Writing your call notes…");
     expect(html).toContain("View full transcript");
     expect(html).not.toContain("Mostly by phone");
     expect(html).not.toContain("Search transcript");
+  });
+
+  it("a saved call with no transcript gets no Call notes card; the transcript row still shows", () => {
+    const skipped = parseReferenceCall("discovery", JSON.stringify({ callDurationSeconds: 0, transcriptEntries: [] }));
+    const html = render(library("discovery", { discovery: skipped }));
+    expect(html).not.toContain("Call notes");
+    expect(html).toContain("View full transcript");
   });
 
   it("Negotiation: the extra section, open, with the levers and pricing; removed sections are gone", () => {

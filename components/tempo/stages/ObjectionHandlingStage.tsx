@@ -239,7 +239,7 @@ export function ObjectionHandlingStage({
         onClose={() => setReferenceLibraryOpen(false)}
         testBypass={testBypass}
       >
-        <TempoReferenceLibrary data={referenceLibrary} />
+        <TempoReferenceLibrary attemptId={attemptId} data={referenceLibrary} />
       </ReferenceLibraryDrawer>
     </>
   );

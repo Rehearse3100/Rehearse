@@ -372,7 +372,10 @@ export function ProspectingWizard({
         testBypass={testBypass}
       >
         {/* Live ICP: the student may still be editing it in this stage. */}
-        <TempoReferenceLibrary data={{ ...referenceLibrary, icpRows: buildIcpRows(state) }} />
+        <TempoReferenceLibrary
+          attemptId={attemptId}
+          data={{ ...referenceLibrary, icpRows: buildIcpRows(state) }}
+        />
       </ReferenceLibraryDrawer>
 
       {showProspectingHandoff && (
