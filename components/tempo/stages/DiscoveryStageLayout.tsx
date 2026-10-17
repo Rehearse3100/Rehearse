@@ -5,10 +5,12 @@
  * The top app bar lives in DiscoveryStage; OPC prep gates before the lobby
  * (DiscoveryPreCallPrep → DiscoveryLobby) via a Next bar inside the middle
  * column that matches ProspectingWizard's. The active call center is injected
- * via callSlot so the mic session only mounts after Join Call.
+ * via callSlot so the mic session only mounts after Join Call. Below lg the docked
+ * transcript is hidden: during the call a Transcript button above the call opens
+ * it as a slide-over; after the call it stacks under the post-call content.
  */
 
-import { CallTranscriptPanel } from "@/components/tempo/CallTranscriptPanel";
+import { CallTranscriptPanel, CallTranscriptSlideOver } from "@/components/tempo/CallTranscriptPanel";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import { PostCallCompletePanel } from "@/components/tempo/PostCallCompletePanel";
 import { TempoStageForwardNav } from "@/components/tempo/TempoStageForwardNav";
@@ -197,7 +199,10 @@ export function DiscoveryStageLayout({
 
         {isCallPhase && (
           <div className="flex flex-1 min-w-0 min-h-0">
-            <div className="flex-1 min-w-0 min-h-0 flex flex-col">{callSlot}</div>
+            <div className="flex-1 min-w-0 min-h-0 flex flex-col">
+              <CallTranscriptSlideOver entries={panelEntries} />
+              {callSlot}
+            </div>
             <CallTranscriptPanel entries={panelEntries} variant="live" />
           </div>
         )}
@@ -211,7 +216,8 @@ export function DiscoveryStageLayout({
                 onForward={onContinueAfterCall}
               />
             </DiscoveryForwardBar>
-            <div className="flex flex-1 min-w-0 min-h-0">
+            {/* Below lg: post-call content, then the stacked transcript, scrolling together. */}
+            <div className="flex flex-col lg:flex-row flex-1 min-w-0 min-h-0 overflow-y-auto lg:overflow-visible">
               <PostCallCompletePanel
                 callLengthLabel={durationLabel}
                 nextStageName={nextStageName}
@@ -221,6 +227,12 @@ export function DiscoveryStageLayout({
                 entries={panelEntries}
                 variant="ended"
                 durationLabel={durationLabel}
+              />
+              <CallTranscriptPanel
+                entries={panelEntries}
+                variant="ended"
+                durationLabel={durationLabel}
+                placement="stacked"
               />
             </div>
           </section>

@@ -65,7 +65,8 @@ function ManagerNoteCard({ paragraphs }: { paragraphs: readonly string[] }): Rea
 
 /**
  * The pre-call lobby: "Ready to join the call?", then the manager note beside the
- * device setup and Join Call (two equal columns on desktop, stacked on mobile).
+ * device setup and Join Call (two equal columns on desktop; stacked below lg, note
+ * first). Centred when it fits; on short or narrow windows it scrolls from the top.
  * Join Call needs the mic; the camera is optional.
  */
 export function TempoCallLobby({
@@ -149,8 +150,11 @@ export function TempoCallLobby({
   }, [onJoin]);
 
   return (
-    <section className="flex-1 bg-surface p-4 lg:p-xl flex flex-col items-center justify-center relative overflow-y-auto min-w-0">
-      <div className="max-w-5xl w-full flex flex-col gap-6">
+    // Safe centring: my-auto centres the content when it fits and collapses to 0 when
+    // it is taller than the window, so the scroll starts at the top (justify-center
+    // would push the manager note above the scroll area, out of reach).
+    <section className="flex-1 bg-surface p-4 lg:p-xl flex flex-col items-center relative overflow-y-auto min-w-0">
+      <div className="max-w-5xl w-full flex flex-col gap-6 my-auto">
         <div className="text-center">
           <h2 className="font-display text-display text-primary">Ready to join the call?</h2>
         </div>
