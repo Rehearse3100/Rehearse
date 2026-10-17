@@ -3,16 +3,18 @@
  * Data and pure helpers for the Tempo Reference Library — one shared drawer
  * (components/tempo/TempoReferenceLibrary.tsx) that every Tempo stage renders.
  * The server page (app/student/simulation/[id]/page.tsx) builds a
- * ReferenceLibraryData from the attempt's stage_data (the ICP) and stage_scores
- * (each finished stage's saved row) and passes it to the stage. One section per
- * stage, always all five: Prospecting (the ICP once submitted, and the reading
- * list), the Discovery and Objection Handling calls (transcript; "Upcoming" until
- * the call is saved), Presentation (a placeholder for now) and Negotiation (levers
- * and pricing on the Negotiation stage). No answer-key data is read here.
+ * ReferenceLibraryData from the attempt's stage_data (the ICP and the pitch) and
+ * stage_scores (each finished stage's saved row) and passes it to the stage. One
+ * section per stage, always all five: Prospecting (the ICP once submitted, and the
+ * reading list), the Discovery and Objection Handling calls (transcript; "Upcoming"
+ * until the call is saved), Presentation (the student's submitted slides) and
+ * Negotiation (levers and pricing on the Negotiation stage). No answer-key data is
+ * read here.
  */
 
 import { DISCOVERY_PERSONA, parseDiscoveryTranscript } from "@/lib/tempo-discovery";
 import { OBJECTION_PERSONA, parseObjectionTranscript } from "@/lib/tempo-objections";
+import { normalizePresentationForm, type PresentationForm } from "@/lib/tempo-presentation";
 import {
   normalizeProspectingWizardState,
   prospectingStepIndex,
@@ -65,8 +67,11 @@ export type ReferenceLibraryData = {
   /** null until the call is saved to stage_scores ("Upcoming"). */
   discovery: ReferenceCall | null;
   objections: ReferenceCall | null;
-  /** True once the Presentation stage is saved to stage_scores. */
-  isPresentationSubmitted: boolean;
+  /**
+   * The student's pitch (stage_data.presentation, one field per slide) once the
+   * Presentation stage is saved to stage_scores; null until then ("Upcoming").
+   */
+  presentation: PresentationForm | null;
 };
 
 type IcpFields = Pick<
@@ -196,7 +201,8 @@ type StageScoreRow = { stage: string; transcript: string | null };
 /**
  * Builds the library for the server page: the ICP from stage_data (once
  * submitted), each call from its stage_scores row (null — "Upcoming" — when there
- * is none yet), and whether Presentation is saved.
+ * is none yet), and the submitted pitch from stage_data.presentation once the
+ * Presentation stage is saved (missing fields read as empty).
  */
 export function buildReferenceLibrary(input: {
   currentStage: ReferenceLibraryStage;
@@ -209,12 +215,19 @@ export function buildReferenceLibrary(input: {
     return row ? parseReferenceCall(stage, row.transcript) : null;
   };
   const wizard = normalizeProspectingWizardState(input.stageData as Partial<ProspectingWizardState>);
+  const savedPitch = input.stageData.presentation;
   return {
     currentStage: input.currentStage,
     icpRows: isIcpSubmitted(wizard.currentStepId, Boolean(rowFor("prospecting"))) ? buildIcpRows(wizard) : null,
     discovery: callFor("discovery"),
     objections: callFor("objections"),
-    isPresentationSubmitted: Boolean(rowFor("presentation")),
+    presentation: rowFor("presentation")
+      ? normalizePresentationForm(
+          savedPitch && typeof savedPitch === "object" && !Array.isArray(savedPitch)
+            ? (savedPitch as Record<string, unknown>)
+            : {}
+        )
+      : null,
   };
 }
 

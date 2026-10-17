@@ -2,15 +2,17 @@
  * tempo-reference-library.test.ts
  * The shared Tempo Reference Library: the data the server page builds (ICP rows
  * only once the ICP is submitted, each call from its saved stage_scores payload in
- * both stages' formats, Presentation saved or not), all five sections with the
- * current stage's open, the locked "Upcoming" states, the call pill, transcript
- * search and highlighting, and the rendered drawer body.
+ * both stages' formats, the submitted pitch once Presentation is saved), all five
+ * sections with the current stage's open, the locked "Upcoming" states, the call
+ * pill, transcript search and highlighting, the submitted slides, and the
+ * rendered drawer body.
  */
 
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { TempoReferenceLibrary } from "@/components/tempo/TempoReferenceLibrary";
+import { EMPTY_PRESENTATION_FORM, type PresentationForm } from "@/lib/tempo-presentation";
 import {
   buildIcpRows,
   buildReferenceLibrary,
@@ -60,6 +62,16 @@ const OBJECTIONS_PAYLOAD = JSON.stringify({
   objectionTracker: { price: true },
 });
 
+/** A submitted pitch, one line per slide. */
+const PITCH: PresentationForm = {
+  businessCase: "Patients slip away before they ever book.",
+  underlyingPainPoints: "One in six appointments is a no-show.",
+  solution: "Automated reminders and online booking.",
+  proofPoint: "Recover a third of the no-show revenue.",
+  powerStakeholder: "Dana runs it; Dr. Kim signs.",
+  nextStep: "Pilot in two offices next month.",
+};
+
 /** Library data for a stage, with the ICP submitted and every earlier stage finished unless overridden. */
 function library(currentStage: ReferenceLibraryStage, overrides: Partial<ReferenceLibraryData> = {}): ReferenceLibraryData {
   return {
@@ -67,7 +79,7 @@ function library(currentStage: ReferenceLibraryStage, overrides: Partial<Referen
     icpRows: [{ label: "Target industry", value: "Multi-location dental groups" }],
     discovery: parseReferenceCall("discovery", DISCOVERY_PAYLOAD),
     objections: parseReferenceCall("objections", OBJECTIONS_PAYLOAD),
-    isPresentationSubmitted: true,
+    presentation: PITCH,
     ...overrides,
   };
 }
@@ -175,7 +187,7 @@ describe("sections per stage progress", () => {
       icpRows: null,
       discovery: null,
       objections: null,
-      isPresentationSubmitted: false,
+      presentation: null,
     });
     expect(
       buildReferenceLibrary({ currentStage: "prospecting", stageData: { ...stageData, currentStepId: "research" }, scores: [] })
@@ -189,10 +201,11 @@ describe("sections per stage progress", () => {
     ).toHaveLength(2);
   });
 
-  it("each call is null (Upcoming) until its stage_scores row exists; Presentation likewise", () => {
+  it("each call is null (Upcoming) until its stage_scores row exists; the pitch likewise", () => {
     const afterDiscovery = buildReferenceLibrary({
       currentStage: "presentation",
-      stageData,
+      // A draft in progress is not shown until the stage is submitted.
+      stageData: { ...stageData, presentation: PITCH },
       scores: [
         { stage: "prospecting", transcript: null },
         { stage: "discovery", transcript: DISCOVERY_PAYLOAD },
@@ -200,10 +213,10 @@ describe("sections per stage progress", () => {
     });
     expect(afterDiscovery.discovery?.durationMinutes).toBe(14);
     expect(afterDiscovery.objections).toBeNull();
-    expect(afterDiscovery.isPresentationSubmitted).toBe(false);
+    expect(afterDiscovery.presentation).toBeNull();
     const afterObjections = buildReferenceLibrary({
       currentStage: "negotiation",
-      stageData: {},
+      stageData: { presentation: PITCH },
       scores: [
         { stage: "discovery", transcript: DISCOVERY_PAYLOAD },
         { stage: "presentation", transcript: "{}" },
@@ -211,7 +224,20 @@ describe("sections per stage progress", () => {
       ],
     });
     expect(afterObjections.objections?.personaName).toBe("Dr. Saul Kim");
-    expect(afterObjections.isPresentationSubmitted).toBe(true);
+    expect(afterObjections.presentation).toEqual(PITCH);
+  });
+
+  it("the submitted pitch reads like the stage does: old field names mapped, missing ones empty", () => {
+    const build = (stageData: Record<string, unknown>): PresentationForm | null =>
+      buildReferenceLibrary({ currentStage: "objections", stageData, scores: [{ stage: "presentation", transcript: null }] })
+        .presentation;
+    expect(build({})).toEqual(EMPTY_PRESENTATION_FORM);
+    expect(build({ presentation: "not an object" })).toEqual(EMPTY_PRESENTATION_FORM);
+    expect(build({ presentation: { businessIssue: "Old key text", nextStep: "Pilot" } })).toEqual({
+      ...EMPTY_PRESENTATION_FORM,
+      businessCase: "Old key text",
+      nextStep: "Pilot",
+    });
   });
 
   it("all five stages, in order, on every stage", () => {
@@ -246,7 +272,7 @@ describe("transcript search", () => {
 describe("the rendered library", () => {
   it("Prospecting: all five sections; the open one shows the ICP and reading list; later stages are Upcoming", () => {
     const html = render(
-      library("prospecting", { discovery: null, objections: null, isPresentationSubmitted: false })
+      library("prospecting", { discovery: null, objections: null, presentation: null })
     );
     for (const title of ["Prospecting", "Discovery Call", "Presentation", "Objection Handling Call", "Negotiation"]) {
       expect(html, title).toContain(title);
@@ -268,14 +294,31 @@ describe("the rendered library", () => {
     expect(html).toContain("Tempo Sell Sheet");
   });
 
-  it("Presentation: its own section opens there — locked before submitting, a placeholder after", () => {
-    expect(render(library("presentation", { isPresentationSubmitted: false }))).toContain(
-      "Available after you submit your presentation."
-    );
+  it("Presentation: locked before submitting; after, the six submitted slides, read-only, each enlargeable", () => {
+    const locked = render(library("presentation", { presentation: null }));
+    expect(locked).toContain("Available after you submit your presentation.");
+    expect(locked).not.toContain("Your slides");
+
     const submitted = render(library("presentation"));
-    expect(submitted).toContain("Submitted");
-    expect(submitted).toContain("A recap of your presentation will appear here soon.");
+    expect(submitted).toContain("6 slides");
+    expect(submitted).toContain("Your slides");
+    expect(submitted).toContain("Click a slide to enlarge");
+    for (const text of Object.values(PITCH)) {
+      expect(submitted, text).toContain(text);
+    }
+    ["Business Issue", "Problem", "Solution", "Value", "Power", "Plan"].forEach((title, index) => {
+      expect(submitted, title).toContain(`aria-label="Slide ${index + 1}: ${title}. Enlarge"`);
+    });
+    expect(submitted.match(/Tempo · Prepared for Summit Dental Group/g)).toHaveLength(6);
+    expect(submitted).not.toContain("<textarea");
+    expect(submitted).not.toContain('role="dialog"');
     expect(submitted).not.toContain("Your ICP");
+  });
+
+  it("on later stages the Presentation section starts closed, its pill showing the slides", () => {
+    // Closed by default on Objection Handling: no slide markup until it is opened.
+    expect(render(library("objections"))).not.toContain("Your slides");
+    expect(render(library("objections"))).toContain("6 slides");
   });
 
   it("Objection Handling before the call: its open section is locked, nothing else inside", () => {

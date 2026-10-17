@@ -5,19 +5,23 @@
  * current stage's opens first): Prospecting (the student's ICP once submitted, and
  * the reading list), the Discovery and Objection Handling calls (meta row, AI call
  * notes and the full transcript with search; a locked "Upcoming" row until the call
- * is saved), Presentation (a placeholder for now) and Negotiation (tradeable levers
- * and pricing on the Negotiation stage; locked before it). Data comes from
- * the server page as ReferenceLibraryData (lib/tempo-reference-library.ts); the
- * only fetch is the Call notes card (POST /api/student/call-notes), once per call
- * when its section first opens. The transcript never depends on the notes.
+ * is saved), Presentation (the student's submitted slides, read-only, each one
+ * opening full size in a viewer; locked before submitting) and Negotiation
+ * (tradeable levers and pricing on the Negotiation stage; locked before it). Data
+ * comes from the server page as ReferenceLibraryData (lib/tempo-reference-library.ts);
+ * the only fetch is the Call notes card (POST /api/student/call-notes), once per
+ * call when its section first opens. The transcript never depends on the notes.
  */
 
 "use client";
 
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { PitchSlide } from "@/components/presentation/PitchSlide";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import { parseCallNotes, type CallNotes } from "@/lib/tempo-call-notes";
 import { NEGOTIATION_DEAL_MATH, NEGOTIATION_DEAL_MATH_NOTE, TRADEABLE_LEVERS } from "@/lib/tempo-negotiation";
+import { TEMPO_PITCH_DECK, TEMPO_PITCH_SLIDES, type PresentationForm } from "@/lib/tempo-presentation";
 import { PROSPECTING_READING_LIST } from "@/lib/tempo-prospecting";
 import {
   callPillLabel,
@@ -449,15 +453,134 @@ function CallDetails({ attemptId, call }: { attemptId: string; call: ReferenceCa
 
 // ── Presentation ───
 
-/** Placeholder for now: the submitted pitch gets a recap here later. */
-function PresentationPlaceholder(): React.ReactElement {
-  return (
-    <div className="flex items-start gap-3 p-4 rounded-xl bg-[#f8fafc]">
-      <MaterialIcon name="present_to_all" className="text-primary-container text-[20px] shrink-0" />
-      <div className="space-y-1">
-        <p className="font-label-md text-label-md font-semibold text-on-surface">Pitch submitted</p>
-        <p className="font-body-md text-body-md text-on-surface-variant">A recap of your presentation will appear here soon.</p>
+const SLIDE_BUTTON_CLASS =
+  "h-10 px-4 rounded-lg text-label-md font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
+
+/**
+ * One slide full size over the whole page, with Previous / Next and a close
+ * button; the backdrop, Escape and the arrow keys work too. Rendered into
+ * document.body because the drawer's slide-in transform would otherwise trap a
+ * fixed overlay inside its 480px.
+ */
+function SlideViewer({
+  form,
+  index,
+  onSelect,
+  onClose,
+}: {
+  form: PresentationForm;
+  index: number;
+  onSelect: (index: number) => void;
+  onClose: () => void;
+}): React.ReactElement | null {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const count = TEMPO_PITCH_SLIDES.length;
+
+  // Focus the close button on open; give focus back to the slide that opened it on close.
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeRef.current?.focus();
+    return () => opener?.focus();
+  }, []);
+
+  useEffect(() => {
+    // Capture phase, and Escape stops there, so it closes the viewer but not the drawer underneath.
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        onClose();
+      } else if (event.key === "ArrowLeft" && index > 0) {
+        onSelect(index - 1);
+      } else if (event.key === "ArrowRight" && index < count - 1) {
+        onSelect(index + 1);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [index, count, onSelect, onClose]);
+
+  const slide = TEMPO_PITCH_SLIDES[index];
+  if (!slide) {
+    return null;
+  }
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[80] flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Slide ${index + 1} of ${count}: ${slide.title}`}
+    >
+      <div aria-hidden className="absolute inset-0 bg-black/70" onClick={onClose} />
+      {/* As wide as fits: 16:9 within the window height, leaving room for the two button rows. */}
+      <div className="relative space-y-3" style={{ width: "min(100%, 64rem, calc((100vh - 9rem) * 16 / 9))" }}>
+        <div className="flex items-center justify-between text-white">
+          <span className="font-label-md text-label-md">
+            Slide {index + 1} of {count}
+          </span>
+          <button
+            ref={closeRef}
+            type="button"
+            onClick={onClose}
+            aria-label="Close slide"
+            className="w-9 h-9 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
+          >
+            <MaterialIcon name="close" className="text-[20px]" />
+          </button>
+        </div>
+        <PitchSlide deck={TEMPO_PITCH_DECK} slide={slide} slideNumber={index + 1} value={form[slide.field]} />
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => onSelect(index - 1)}
+            disabled={index === 0}
+            className={`${SLIDE_BUTTON_CLASS} bg-white/10 text-white hover:bg-white/20`}
+          >
+            ← Previous
+          </button>
+          <button
+            type="button"
+            onClick={() => onSelect(index + 1)}
+            disabled={index === count - 1}
+            className={`${SLIDE_BUTTON_CLASS} bg-white text-primary-container hover:bg-white/90`}
+          >
+            Next slide →
+          </button>
+        </div>
       </div>
+    </div>,
+    document.body
+  );
+}
+
+/** The student's submitted slides, read-only, in order; each opens full size in the viewer. */
+function PresentationSlides({ form }: { form: PresentationForm }): React.ReactElement {
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+  const closeViewer = useCallback((): void => setViewerIndex(null), []);
+  return (
+    <div className="space-y-2.5">
+      <div className="flex items-center justify-between gap-3">
+        <GroupLabel>Your slides</GroupLabel>
+        <span className="font-label-sm text-label-sm text-on-surface-variant">Click a slide to enlarge</span>
+      </div>
+      <ol className="space-y-3">
+        {TEMPO_PITCH_SLIDES.map((slide, index) => (
+          <li key={slide.id}>
+            <button
+              type="button"
+              onClick={() => setViewerIndex(index)}
+              aria-label={`Slide ${index + 1}: ${slide.title}. Enlarge`}
+              className="block w-full rounded-lg border border-[#e2e8f0] overflow-hidden hover:border-primary-container transition-colors"
+            >
+              <div className="pointer-events-none" aria-hidden>
+                <PitchSlide deck={TEMPO_PITCH_DECK} slide={slide} slideNumber={index + 1} value={form[slide.field]} bare />
+              </div>
+            </button>
+          </li>
+        ))}
+      </ol>
+      {viewerIndex !== null ? (
+        <SlideViewer form={form} index={viewerIndex} onSelect={setViewerIndex} onClose={closeViewer} />
+      ) : null}
     </div>
   );
 }
@@ -572,14 +695,14 @@ export function TempoReferenceLibrary({ attemptId, data }: TempoReferenceLibrary
               <LibrarySection
                 key={id}
                 title="Presentation"
-                pill={data.isPresentationSubmitted ? "Submitted" : "Upcoming"}
-                dotClass={data.isPresentationSubmitted ? "bg-violet-600" : "bg-outline-variant"}
-                isMuted={!data.isPresentationSubmitted}
+                pill={data.presentation ? `${TEMPO_PITCH_SLIDES.length} slides` : "Upcoming"}
+                dotClass={data.presentation ? "bg-violet-600" : "bg-outline-variant"}
+                isMuted={!data.presentation}
                 isOpen={openSections.has(id)}
                 onToggle={() => toggle(id)}
               >
-                {data.isPresentationSubmitted ? (
-                  <PresentationPlaceholder />
+                {data.presentation ? (
+                  <PresentationSlides form={data.presentation} />
                 ) : (
                   <LockedNote text="Available after you submit your presentation." />
                 )}
