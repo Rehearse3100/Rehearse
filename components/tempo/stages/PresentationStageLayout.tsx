@@ -1,28 +1,29 @@
 /**
  * PresentationStageLayout.tsx
- * Presentational shell for Tempo Stage 3 Presentation — mission panel and pitch form.
- * The Submit bar (save status left, Submit right) sits at the top of the center
- * column, matching ProspectingWizard. Each field shows an ICP-style "Min n" nudge
- * (FieldCounter) while it is too short.
+ * Presentational shell for Tempo Stage 3 Presentation — a simple slide-deck
+ * builder. The Submit bar (save status left; slides counter and Submit right)
+ * sits under the app top bar. Below it: a rail of six slide thumbnails (a
+ * horizontal strip on mobile) and the active slide on a grey canvas, with one
+ * line of direction above it and Previous / Next below. Each slide's text area
+ * is bound to one PresentationForm field (PRESENTATION_SLIDES in
+ * lib/tempo-presentation.ts) through the same onUpdateField handler, so autosave,
+ * the "Auto-saved" status, Submit and grading are unchanged.
  * The discovery reference lives in the Reference Library drawer (PresentationStage).
  */
 
-import { FieldCounter } from "@/components/tempo/FieldCounter";
+"use client";
+
+import { useState } from "react";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import { TempoStageForwardNav } from "@/components/tempo/TempoStageForwardNav";
 import {
+  countCompletedPresentationSections,
   isPresentationSectionComplete,
-  MIN_FIELD_LENGTH,
-  PRESENTATION_PAYOFF_REFERENCE,
+  PRESENTATION_SECTIONS,
+  PRESENTATION_SLIDES,
   type PresentationForm,
+  type PresentationSlide,
 } from "@/lib/tempo-presentation";
-
-/** Shared styling for student-editable fields — explicit border width so outlines render. */
-const FORM_TEXTAREA =
-  "w-full rounded-md border border-outline-variant bg-white text-body-md font-body-md text-on-surface placeholder:text-outline focus:border-secondary focus:ring-2 focus:ring-secondary/30 focus:ring-offset-0 focus:outline-none transition-shadow resize-y py-sm px-md";
-
-const FORM_INPUT =
-  "w-full h-10 rounded-md border border-outline-variant bg-white text-body-md font-body-md text-on-surface placeholder:text-outline focus:border-secondary focus:ring-2 focus:ring-secondary/30 focus:ring-offset-0 focus:outline-none transition-shadow px-md";
 
 type PresentationStageLayoutProps = {
   form: PresentationForm;
@@ -35,8 +36,121 @@ type PresentationStageLayoutProps = {
   testBypass?: boolean;
 };
 
+/** The first slide that isn't complete yet, or the first slide. */
+function firstIncompleteSlideIndex(form: PresentationForm): number {
+  const index = PRESENTATION_SLIDES.findIndex((slide) => !isPresentationSectionComplete(slide.number, form));
+  return index === -1 ? 0 : index;
+}
+
+/** "N / 6 slides completed" with a thin progress bar underneath. */
+function SlidesCounter({ completed }: { completed: number }): React.ReactElement {
+  const total = PRESENTATION_SECTIONS.length;
+  return (
+    <div className="flex flex-col items-end gap-1" aria-live="polite">
+      <span className="text-label-sm text-on-surface-variant whitespace-nowrap">
+        {completed} / {total} slides completed
+      </span>
+      <div className="w-28 h-1 rounded-full bg-surface-container-high overflow-hidden" aria-hidden>
+        <div
+          className="h-full rounded-full bg-[#1a1a2e] transition-[width] duration-300"
+          style={{ width: `${(completed / total) * 100}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** One rail thumbnail: a tiny preview, a check when complete, the number and title underneath. */
+function SlideThumbnail({
+  slide,
+  value,
+  isActive,
+  isComplete,
+  onSelect,
+}: {
+  slide: PresentationSlide;
+  value: string;
+  isActive: boolean;
+  isComplete: boolean;
+  onSelect: () => void;
+}): React.ReactElement {
+  const hasText = value.trim().length > 0;
+  const frameClass = isActive
+    ? "border-2 border-[#1a1a2e]"
+    : hasText
+      ? "border border-outline-variant"
+      : "border border-dashed border-outline-variant";
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-current={isActive ? "step" : undefined}
+      aria-label={`Slide ${slide.number}: ${slide.title}${isComplete ? " (complete)" : ""}`}
+      className="w-full text-left"
+    >
+      <div className={`relative aspect-video rounded-md bg-white overflow-hidden ${frameClass}`}>
+        <div className="p-2 space-y-1.5">
+          <div className="h-1.5 w-1/2 rounded-full bg-[#1a1a2e]/70" />
+          {hasText ? (
+            <>
+              <div className="h-1 w-5/6 rounded-full bg-outline-variant/70" />
+              <div className="h-1 w-2/3 rounded-full bg-outline-variant/50" />
+            </>
+          ) : null}
+        </div>
+        {isComplete ? (
+          <MaterialIcon name="check_circle" filled className="absolute top-1 right-1 text-[14px] text-green-600" />
+        ) : null}
+      </div>
+      <p className={`mt-1 text-[11px] leading-tight ${isActive ? "text-on-surface font-semibold" : "text-on-surface-variant"}`}>
+        <span className="font-semibold">{slide.number}</span> {slide.title}
+      </p>
+    </button>
+  );
+}
+
+/** The active slide: navy band, eyebrow, title, the student's text area and the slide number. */
+function SlideCanvas({
+  slide,
+  value,
+  onChange,
+}: {
+  slide: PresentationSlide;
+  value: string;
+  onChange: (value: string) => void;
+}): React.ReactElement {
+  return (
+    <div className="aspect-video w-full bg-white rounded-xl border border-outline-variant shadow-md overflow-hidden flex flex-col">
+      <div className="h-8 shrink-0 bg-[#1a1a2e] px-6 flex items-center justify-between">
+        <span className="text-white text-[11px] font-bold uppercase tracking-[0.2em]">Tempo</span>
+        <span className="text-white/60 text-[11px] font-medium">
+          Section {String(slide.number).padStart(2, "0")}
+        </span>
+      </div>
+      <div className="flex-1 min-h-0 flex flex-col px-6 sm:px-10 pt-5 sm:pt-7 pb-3">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="w-2 h-2 rounded-full bg-[#c9a84c] shrink-0" aria-hidden />
+          <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#94762b]">{slide.label}</span>
+        </div>
+        <h2 className="text-[24px] font-bold text-[#1a1a2e] leading-tight mb-3">{slide.title}</h2>
+        <textarea
+          aria-label={slide.title}
+          className="flex-1 min-h-0 w-full resize-none border-0 bg-transparent p-0 text-[16px] leading-relaxed text-on-surface placeholder:text-outline focus:outline-none focus:ring-0"
+          placeholder="Type here…"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+        <div className="mt-2 pt-2 border-t border-outline-variant/60 flex justify-end text-[11px] text-on-surface-variant">
+          {slide.number}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /**
- * Renders the Presentation stage: mission column, and the pitch form under the Submit bar.
+ * Renders the Presentation stage: the Submit bar, the slide rail and the active slide.
+ * Starts on the first incomplete slide.
  */
 export function PresentationStageLayout({
   form,
@@ -47,7 +161,10 @@ export function PresentationStageLayout({
   onSubmit,
   testBypass = false,
 }: PresentationStageLayoutProps): React.ReactElement {
-  const readyToSubmit = canSubmit;
+  const [activeIndex, setActiveIndex] = useState(() => firstIncompleteSlideIndex(form));
+  const slide = PRESENTATION_SLIDES[activeIndex] ?? PRESENTATION_SLIDES[0];
+  const isFirst = activeIndex === 0;
+  const isLast = activeIndex === PRESENTATION_SLIDES.length - 1;
 
   return (
     <div
@@ -55,278 +172,82 @@ export function PresentationStageLayout({
         testBypass ? "pt-28" : "pt-16"
       }`}
     >
-      <main className="flex flex-1 min-h-0 overflow-hidden">
-        {/* ── Left column: mission ─── */}
-        <aside className="w-[280px] bg-[#1a1a2e] text-white flex flex-col p-6 overflow-y-auto border-r border-outline-variant shrink-0 hidden lg:flex">
-          <div className="mb-8">
-            <span className="text-[11px] font-mono-label text-blue-300 uppercase tracking-[0.2em]">
-              Current Phase
-            </span>
-            <h2 className="font-title-lg text-white mt-1">Stage 3: Presentation</h2>
+      <main className="flex flex-1 flex-col min-h-0 overflow-hidden">
+        {/* ── Submit bar ─── */}
+        <div className="h-12 bg-surface-container-low border-b border-outline-variant shrink-0 flex items-center justify-between px-4 lg:px-xl gap-4">
+          <div className="flex items-center gap-sm text-on-surface-variant min-w-0 shrink-0">
+            <MaterialIcon name="cloud_done" className="text-green-500" />
+            <span className="text-label-sm">{isSaving ? "Saving..." : "Auto-saved"}</span>
           </div>
 
-          <div className="space-y-8">
-            <div>
-              <h3 className="font-mono-label text-[12px] text-blue-300 uppercase tracking-wider flex items-center gap-2 mb-3">
-                <MaterialIcon name="target" className="text-[16px]" />
-                Your Mission
-              </h3>
-              <p className="text-body-md text-slate-300 leading-relaxed">
-                Present the value of Tempo to{" "}
-                <span className="text-white font-semibold">Dana Reyes</span> and{" "}
-                <span className="text-white font-semibold">Dr. Saul Kim</span>. Your goal is to
-                secure a pilot agreement.
-              </p>
-            </div>
+          <TempoStageForwardNav
+            forwardLabel="Submit"
+            forwardDisabled={!canSubmit || isSubmitting}
+            isForwardLoading={isSubmitting}
+            onForward={onSubmit}
+            forwardHint={canSubmit ? null : "Finish all sections to submit."}
+            actions={<SlidesCounter completed={countCompletedPresentationSections(form)} />}
+          />
+        </div>
 
-            <div>
-              <h3 className="font-mono-label text-[12px] text-blue-300 uppercase tracking-wider flex items-center gap-2 mb-3">
-                <MaterialIcon name="groups" className="text-[16px]" />
-                Your Audience
-              </h3>
-              <div className="space-y-3">
-                <div className="bg-white/5 p-3 rounded-lg border border-white/10">
-                  <p className="text-sm font-bold text-white">Dana Reyes</p>
-                  <p className="text-[12px] text-slate-400">Operations / Clinic Staff</p>
-                </div>
-                <div className="bg-white/5 p-3 rounded-lg border border-white/10">
-                  <p className="text-sm font-bold text-white">Dr. Saul Kim</p>
-                  <p className="text-[12px] text-slate-400">Owner / Revenue & ROI</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </aside>
-
-        {/* ── Center column: Submit bar + form ─── */}
-        <section className="flex-1 bg-white flex flex-col min-w-0 min-h-0">
-          <div className="h-12 bg-surface-container-low border-b border-outline-variant shrink-0 flex items-center justify-between px-4 lg:px-xl gap-4">
-            <div className="flex items-center gap-sm text-on-surface-variant min-w-0 shrink-0">
-              <MaterialIcon name="cloud_done" className="text-green-500" />
-              <span className="text-label-sm">{isSaving ? "Saving..." : "Auto-saved"}</span>
-            </div>
-
-            <TempoStageForwardNav
-              forwardLabel="Submit"
-              forwardDisabled={!canSubmit || isSubmitting}
-              isForwardLoading={isSubmitting}
-              onForward={onSubmit}
-              forwardHint={
-                readyToSubmit ? null : "Finish all sections to submit."
-              }
-            />
-          </div>
-
-          <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0">
-            <div className="max-w-4xl mx-auto py-8 lg:py-12 px-4 lg:px-12">
-            <header className="flex flex-col gap-sm mb-base">
-              <h1 className="text-display font-display text-primary">Present to Dana and Dr. Kim</h1>
-              <p className="text-body-lg font-body-lg text-on-surface-variant">
-                Construct your formal pitch narrative based on the discoveries made during previous
-                stages.
-              </p>
-            </header>
-
-            <div className="bg-surface-container-low border border-outline-variant rounded-lg p-md flex items-start gap-md shadow-sm mb-lg">
-              <MaterialIcon name="lightbulb" className="text-secondary" filled />
-              <p className="text-body-md font-body-md text-on-surface-variant flex-1">
-                <span className="font-bold text-on-surface">Need a starting point?</span> Review the
-                Discovery Summary, then construct your pitch narrative below.
-              </p>
-            </div>
-
-            <form
-              className="bg-surface-container-lowest border border-outline-variant rounded-lg shadow-sm flex flex-col p-lg gap-lg"
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (canSubmit && !isSubmitting) {
-                  onSubmit();
-                }
-              }}
-            >
-              {/* Field 1: Business Issue */}
-              <div className="flex flex-col gap-sm">
-                <div className="flex justify-between items-center">
-                  <label
-                    className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
-                    htmlFor="business-case"
-                  >
-                    <MaterialIcon name="trending_down" className="text-on-surface-variant text-[18px]" />
-                    Business Issue
-                    {isPresentationSectionComplete(1, form) ? (
-                      <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
-                    ) : null}
-                  </label>
-                  <FieldCounter value={form.businessCase} minChars={MIN_FIELD_LENGTH} />
-                </div>
-                <textarea
-                  id="business-case"
-                  name="business-case"
-                  rows={3}
-                  className={FORM_TEXTAREA}
-                  placeholder="Type your answer"
-                  value={form.businessCase}
-                  onChange={(e) => onUpdateField("businessCase", e.target.value)}
-                />
-              </div>
-
-              <hr className="border-t border-outline-variant/30" />
-
-              {/* Field 2: Problem */}
-              <div className="flex flex-col gap-sm">
-                <div className="flex justify-between items-center">
-                  <label
-                    className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
-                    htmlFor="pain-points"
-                  >
-                    <MaterialIcon name="report_problem" className="text-on-surface-variant text-[18px]" />
-                    Problem
-                    {isPresentationSectionComplete(2, form) ? (
-                      <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
-                    ) : null}
-                  </label>
-                  <FieldCounter value={form.underlyingPainPoints} minChars={MIN_FIELD_LENGTH} />
-                </div>
-                <textarea
-                  id="pain-points"
-                  name="pain-points"
-                  rows={3}
-                  className={FORM_TEXTAREA}
-                  placeholder="Type your answer"
-                  value={form.underlyingPainPoints}
-                  onChange={(e) => onUpdateField("underlyingPainPoints", e.target.value)}
-                />
-              </div>
-
-              <hr className="border-t border-outline-variant/30" />
-
-              {/* Field 3: Solution */}
-              <div className="flex flex-col gap-sm">
-                <div className="flex justify-between items-center">
-                  <label
-                    className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
-                    htmlFor="solution"
-                  >
-                    <MaterialIcon name="build" className="text-on-surface-variant text-[18px]" />
-                    Solution
-                    {isPresentationSectionComplete(3, form) ? (
-                      <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
-                    ) : null}
-                  </label>
-                  <FieldCounter value={form.solution} minChars={MIN_FIELD_LENGTH} />
-                </div>
-                <textarea
-                  id="solution"
-                  name="solution"
-                  rows={4}
-                  className={FORM_TEXTAREA}
-                  placeholder="Type your answer"
-                  value={form.solution}
-                  onChange={(e) => onUpdateField("solution", e.target.value)}
-                />
-              </div>
-
-              <hr className="border-t border-outline-variant/30" />
-
-              {/* Field 4: Value */}
-              <div className="flex flex-col gap-md">
-                <div className="flex justify-between items-center">
-                  <label
-                    className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
-                    htmlFor="proof-point"
-                  >
-                    <MaterialIcon
-                      name="monetization_on"
-                      className="text-on-surface-variant text-[18px]"
-                    />
-                    Value
-                    {isPresentationSectionComplete(4, form) ? (
-                      <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
-                    ) : null}
-                  </label>
-                  <FieldCounter value={form.proofPoint} minChars={MIN_FIELD_LENGTH} />
-                </div>
-                <div className="bg-surface-container-low rounded-md border border-dashed border-outline-variant p-md flex items-center gap-md">
-                  <MaterialIcon name="calculate" className="text-secondary shrink-0" />
-                  <span className="font-code-md text-code-md text-on-surface-variant">
-                    {PRESENTATION_PAYOFF_REFERENCE}
-                  </span>
-                </div>
-                <div className="flex flex-col gap-sm mt-xs">
-                  <span className="text-label-sm font-label-sm text-on-surface-variant">
-                    Supporting Proof Point
-                  </span>
-                  <input
-                    id="proof-point"
-                    name="proof-point"
-                    type="text"
-                    className={FORM_INPUT}
-                    placeholder="Type your answer"
-                    value={form.proofPoint}
-                    onChange={(e) => onUpdateField("proofPoint", e.target.value)}
+        <div className="flex flex-1 min-h-0 flex-col lg:flex-row">
+          {/* ── Slide rail (a horizontal strip on mobile) ─── */}
+          <nav
+            aria-label="Slides"
+            className="shrink-0 bg-white border-b lg:border-b-0 lg:border-r border-outline-variant lg:w-[190px] overflow-x-auto lg:overflow-x-hidden lg:overflow-y-auto custom-scrollbar"
+          >
+            <ol className="flex lg:flex-col gap-3 p-3">
+              {PRESENTATION_SLIDES.map((item, index) => (
+                <li key={item.field} className="w-28 lg:w-auto shrink-0">
+                  <SlideThumbnail
+                    slide={item}
+                    value={form[item.field]}
+                    isActive={index === activeIndex}
+                    isComplete={isPresentationSectionComplete(item.number, form)}
+                    onSelect={() => setActiveIndex(index)}
                   />
-                </div>
+                </li>
+              ))}
+            </ol>
+          </nav>
+
+          {/* ── Canvas: direction, the slide, Previous / Next ─── */}
+          <section className="flex-1 min-w-0 min-h-0 overflow-y-auto bg-surface-container-low custom-scrollbar">
+            <div className="max-w-4xl mx-auto px-4 lg:px-xl py-6 lg:py-8 space-y-4">
+              <div>
+                <p className="text-body-md text-on-surface-variant">{slide.direction}</p>
+                {slide.directionNote ? (
+                  <p className="mt-1 font-code-md text-[12px] text-on-surface-variant/80">{slide.directionNote}</p>
+                ) : null}
               </div>
 
-              <hr className="border-t border-outline-variant/30" />
+              <SlideCanvas
+                slide={slide}
+                value={form[slide.field]}
+                onChange={(value) => onUpdateField(slide.field, value)}
+              />
 
-              {/* Field 5: Power */}
-              <div className="flex flex-col gap-sm">
-                <div className="flex justify-between items-center">
-                  <label
-                    className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
-                    htmlFor="power-stakeholder"
-                  >
-                    <MaterialIcon name="group" className="text-on-surface-variant text-[18px]" />
-                    Power
-                    {isPresentationSectionComplete(5, form) ? (
-                      <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
-                    ) : null}
-                  </label>
-                  <FieldCounter value={form.powerStakeholder} minChars={MIN_FIELD_LENGTH} />
-                </div>
-                <textarea
-                  id="power-stakeholder"
-                  name="power-stakeholder"
-                  rows={4}
-                  className={FORM_TEXTAREA}
-                  placeholder="Type your answer"
-                  value={form.powerStakeholder}
-                  onChange={(e) => onUpdateField("powerStakeholder", e.target.value)}
-                />
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setActiveIndex((index) => Math.max(0, index - 1))}
+                  disabled={isFirst}
+                  className="h-10 px-4 rounded-lg border border-outline-variant bg-white text-label-md font-semibold text-on-surface hover:bg-surface-container disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  ← Previous
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveIndex((index) => Math.min(PRESENTATION_SLIDES.length - 1, index + 1))}
+                  disabled={isLast}
+                  className="h-10 px-4 rounded-lg bg-[#1a1a2e] text-white text-label-md font-semibold hover:bg-[#252545] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  Next slide →
+                </button>
               </div>
-
-              <hr className="border-t border-outline-variant/30" />
-
-              {/* Field 6: Plan */}
-              <div className="flex flex-col gap-sm">
-                <div className="flex justify-between items-center">
-                  <label
-                    className="text-label-md font-label-md text-on-surface font-semibold flex items-center gap-2"
-                    htmlFor="next-step"
-                  >
-                    <MaterialIcon name="flag" className="text-on-surface-variant text-[18px]" />
-                    Plan
-                    {isPresentationSectionComplete(6, form) ? (
-                      <MaterialIcon name="check_circle" className="text-green-600 text-[16px]" filled />
-                    ) : null}
-                  </label>
-                  <FieldCounter value={form.nextStep} minChars={MIN_FIELD_LENGTH} />
-                </div>
-                <input
-                  id="next-step"
-                  name="next-step"
-                  type="text"
-                  className={FORM_INPUT}
-                  placeholder="Type your answer"
-                  value={form.nextStep}
-                  onChange={(e) => onUpdateField("nextStep", e.target.value)}
-                />
-              </div>
-            </form>
             </div>
-          </div>
-        </section>
+          </section>
+        </div>
       </main>
     </div>
   );

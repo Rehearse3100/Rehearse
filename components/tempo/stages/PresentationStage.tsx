@@ -1,8 +1,8 @@
 /**
  * PresentationStage.tsx
  * Stage 3 of the Tempo simulation — structured written pitch submission.
- * Student writes a tailored pitch outline using Discovery findings.
- * Six ValuePrompter-style fields in a 3-column layout.
+ * Student writes a tailored pitch using Discovery findings, as a six-slide deck
+ * (PresentationStageLayout); each slide holds one ValueSelling field.
  * Only used in the Tempo/Default simulation (Rehearse Essentials class).
  */
 
@@ -36,7 +36,7 @@ type PresentationStageProps = {
 };
 
 /**
- * Tempo Presentation — structured pitch form with the shared Reference Library.
+ * Tempo Presentation — the slide-deck builder with the shared Reference Library.
  */
 export function PresentationStage({
   attemptId,

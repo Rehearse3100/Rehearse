@@ -40,6 +40,57 @@ export const PRESENTATION_SECTIONS = [
   { number: 6, title: "Plan", field: "nextStep" as const },
 ] as const;
 
+// ── Slide-deck builder copy (display only; each slide binds one field above) ───
+
+export type PresentationSlide = {
+  number: number;
+  field: keyof PresentationForm;
+  /** The ValueSelling label, shown as the slide's eyebrow. */
+  label: string;
+  title: string;
+  /** One line of direction above the slide. */
+  direction: string;
+  /** A second, smaller direction line (slide 4: the ROI reference). */
+  directionNote?: string;
+};
+
+/** Title and direction per section number. */
+const SLIDE_COPY: Record<number, Pick<PresentationSlide, "title" | "direction" | "directionNote">> = {
+  1: {
+    title: "What we heard",
+    direction: "Recap the business issue in their words. What did they say matters most? 2–3 short lines.",
+  },
+  2: {
+    title: "The cost of the problem",
+    direction: "Show the problem behind it and what it costs them today. 2–3 short lines.",
+  },
+  3: {
+    title: "How Tempo fixes it",
+    direction: "Connect Tempo to the problems they named. Only what they need. 2–3 short lines.",
+  },
+  4: {
+    title: "The impact",
+    direction: "Put a number on what fixing this is worth to them.",
+    directionNote: PRESENTATION_PAYOFF_REFERENCE,
+  },
+  5: {
+    title: "Who's involved",
+    direction: "Who decides, who signs off, and what each of them cares about. 2–3 short lines.",
+  },
+  6: {
+    title: "Next steps",
+    direction: "Propose the next step with an owner and a date. 1–2 short lines.",
+  },
+};
+
+/** The six slides, in order: one per section, bound to that section's field. */
+export const PRESENTATION_SLIDES: readonly PresentationSlide[] = PRESENTATION_SECTIONS.map((section) => ({
+  number: section.number,
+  field: section.field,
+  label: section.title,
+  ...SLIDE_COPY[section.number],
+}));
+
 const STORAGE_PREFIX = "tempo-presentation-v2-";
 export const MIN_FIELD_LENGTH = 6;
 
