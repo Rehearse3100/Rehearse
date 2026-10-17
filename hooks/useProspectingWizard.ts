@@ -59,7 +59,6 @@ type UseProspectingWizardResult = {
   canSubmit: boolean;
   wordCount: number;
   testBypass: boolean;
-  handleSaveDraft: () => Promise<void>;
   handleStepAdvance: (nextStepId: ProspectingStepId) => Promise<void>;
   /** Marks a CRM lead as selected and advances to Opening Message. */
   completeLeadSelection: (leadId: string) => Promise<void>;
@@ -295,10 +294,6 @@ export function useProspectingWizard({
     [persistState]
   );
 
-  const handleSaveDraft = useCallback(async (): Promise<void> => {
-    await persistState(state);
-  }, [persistState, state]);
-
   const handleStepAdvance = useCallback(
     async (nextStepId: ProspectingStepId): Promise<void> => {
       // Leaving Welcome Briefing counts as onboarding complete (video end OR Next
@@ -438,6 +433,7 @@ export function useProspectingWizard({
         chatMessages: state.chatMessages,
         openingMessage: state.openingMessage,
         selfCheck: state.selfCheck,
+        agentDesign: state.agentDesign,
       });
 
       await completeStage(
@@ -487,7 +483,6 @@ export function useProspectingWizard({
     canSubmit,
     wordCount,
     testBypass,
-    handleSaveDraft,
     handleStepAdvance,
     completeLeadSelection,
     handleSendMessage,

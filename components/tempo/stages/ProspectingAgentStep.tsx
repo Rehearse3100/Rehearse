@@ -1,22 +1,36 @@
 /**
  * ProspectingAgentStep.tsx
- * Final Prospecting wizard step — Build Your Agent, with manager note.
- * Stage Submit lives in wizard chrome; this step is non-blocking for Next.
+ * Final Prospecting wizard step — Build Your Agent, with manager note. Until the
+ * agent builder exists, the student explains in one text box (styled like the ICP
+ * form) how they would build the agent; it is saved as agentDesign on the wizard
+ * draft, and stage Submit (in wizard chrome) needs AGENT_DESIGN_MIN_CHARS of it.
  */
 
 "use client";
 
+import { FieldCounter } from "@/components/tempo/FieldCounter";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
+import { AGENT_DESIGN_MIN_CHARS, type ProspectingWizardState } from "@/lib/tempo-prospecting";
+
+/** Longest agent explanation (a few paragraphs). */
+const AGENT_DESIGN_MAX_LENGTH = 2000;
 
 type ProspectingAgentStepProps = {
   attemptId: string;
+  state: ProspectingWizardState;
+  onFieldChange: <K extends keyof ProspectingWizardState>(
+    key: K,
+    value: ProspectingWizardState[K]
+  ) => void;
 };
 
 /**
- * Manager note + placeholder until the agent builder is implemented.
+ * Manager note + the agent explanation box (stand-in until the agent builder is implemented).
  */
 export function ProspectingAgentStep({
   attemptId: _attemptId,
+  state,
+  onFieldChange,
 }: ProspectingAgentStepProps): React.ReactElement {
   return (
     <div className="bg-surface text-on-surface font-body-md min-h-full flex items-center justify-center p-gutter">
@@ -44,12 +58,30 @@ export function ProspectingAgentStep({
             </p>
           </header>
 
-          <section className="p-gutter flex-1">
-            <p className="font-body-md text-body-md text-on-surface-variant">
-              This step is coming soon. Use{" "}
-              <span className="font-medium text-on-surface">Submit</span> when you are ready to
-              finish Prospecting.
+          <section className="p-gutter flex-1 space-y-sm">
+            <div className="flex justify-between items-center gap-md">
+              <label className="font-bold text-label-md text-on-surface" htmlFor="agent-design">
+                How would you build your prospecting agent?
+              </label>
+              <FieldCounter
+                value={state.agentDesign}
+                maxLength={AGENT_DESIGN_MAX_LENGTH}
+                minChars={AGENT_DESIGN_MIN_CHARS}
+              />
+            </div>
+            <p className="font-label-sm text-on-surface-variant">
+              Explain what your agent would do, what it would look for, and how you would check
+              its work.
             </p>
+            <textarea
+              id="agent-design"
+              rows={8}
+              maxLength={AGENT_DESIGN_MAX_LENGTH}
+              className="w-full p-md bg-surface-container-lowest border border-outline-variant rounded-lg focus:ring-2 focus:ring-secondary-container focus:border-secondary focus:outline-none font-body-md resize-y"
+              placeholder="Type your answer"
+              value={state.agentDesign}
+              onChange={(e) => onFieldChange("agentDesign", e.target.value)}
+            />
           </section>
         </article>
       </main>

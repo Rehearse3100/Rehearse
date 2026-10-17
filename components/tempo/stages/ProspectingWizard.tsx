@@ -308,7 +308,9 @@ export function ProspectingWizard({
                     : "Watch the briefing to unlock Next"
                   : currentStepId === "select_lead" && !selectLeadCanProceed
                     ? "Pick a lead to continue"
-                    : null
+                    : currentStepId === "agent" && !wizard.canProceed
+                      ? "Explain your agent to submit"
+                      : null
               }
               onBack={
                 previousStepId
@@ -323,17 +325,6 @@ export function ProspectingWizard({
                       "previous step"
                     }`
                   : "Back"
-              }
-              actions={
-                currentStepId === "opening" ? (
-                  <button
-                    type="button"
-                    onClick={() => void wizard.handleSaveDraft()}
-                    className="hidden sm:inline px-md py-sm rounded-lg text-on-surface-variant font-bold text-label-md hover:text-primary transition-colors"
-                  >
-                    Save Draft
-                  </button>
-                ) : null
               }
             />
           </div>

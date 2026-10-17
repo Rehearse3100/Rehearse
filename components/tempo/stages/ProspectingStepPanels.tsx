@@ -87,7 +87,7 @@ export function ProspectingStepPanels({
   }
 
   if (currentStepId === "agent") {
-    return <ProspectingAgentStep attemptId={attemptId} />;
+    return <ProspectingAgentStep attemptId={attemptId} state={state} onFieldChange={onFieldChange} />;
   }
 
   if (currentStepId === "select_lead") {
@@ -104,7 +104,8 @@ export function ProspectingStepPanels({
 
   return (
     <div className="max-w-5xl mx-auto">
-      <div className="flex flex-wrap gap-md mb-lg">
+      {/* Context for the draft: plain label/value text (not chips), so it doesn't read as buttons. */}
+      <dl className="grid grid-cols-1 sm:grid-cols-3 gap-md mb-lg">
         {[
           {
             icon: "person",
@@ -124,17 +125,21 @@ export function ProspectingStepPanels({
             value: "Summit Dental Group",
             color: "text-on-surface-variant",
           },
-        ].map((pill) => (
+        ].map((item, index) => (
           <div
-            key={pill.label}
-            className="flex items-center gap-sm bg-surface-container-high px-md py-sm rounded-full border border-outline-variant"
+            key={item.label}
+            className={`flex items-start gap-sm min-w-0 ${index > 0 ? "sm:border-l sm:border-outline-variant sm:pl-md" : ""}`}
           >
-            <MaterialIcon name={pill.icon} className={`text-base ${pill.color}`} />
-            <span className="text-label-md font-bold text-on-surface">{pill.label}:</span>
-            <span className="text-label-md text-on-surface-variant">{pill.value}</span>
+            <MaterialIcon name={item.icon} className={`text-[18px] mt-0.5 shrink-0 ${item.color}`} />
+            <div className="min-w-0">
+              <dt className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant">
+                {item.label}
+              </dt>
+              <dd className="text-label-md font-medium text-on-surface">{item.value}</dd>
+            </div>
           </div>
         ))}
-      </div>
+      </dl>
 
       <div className="bg-white rounded-xl border border-outline-variant shadow-sm overflow-hidden mb-lg">
         <div className="p-lg border-b border-outline-variant flex justify-between items-center bg-surface-container-low">

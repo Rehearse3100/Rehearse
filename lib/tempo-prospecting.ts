@@ -579,6 +579,9 @@ export const ICP_MIN_DECISION_MAKER_ROLE_CHARS = 10;
 export const ICP_MIN_OPERATIONAL_SIGNALS_CHARS = 20;
 export const ICP_MIN_DISQUALIFIER_CHARS = 3;
 
+/** Build Your Agent: shortest explanation of how the student would build the agent. */
+export const AGENT_DESIGN_MIN_CHARS = 50;
+
 /**
  * Returns whether the ICP form (step 1) meets advance requirements.
  */
@@ -655,15 +658,15 @@ export function canAdvanceProspectingStep(
     case "opening":
       return isOpeningMessageComplete(state);
     case "agent":
-      return true;
+      return state.agentDesign.trim().length >= AGENT_DESIGN_MIN_CHARS;
     default:
       return false;
   }
 }
 
 /**
- * Returns whether stage Submit is enabled on the final agent step.
- * Re-checks every earlier step gate so the stage cannot complete with gaps.
+ * Returns whether stage Submit is enabled on the final agent step: every step's
+ * gate, the agent explanation included, so the stage cannot complete with gaps.
  * testBypass short-circuits only. Never reads process.env.
  */
 export function canSubmitProspectingBrief(
@@ -673,13 +676,5 @@ export function canSubmitProspectingBrief(
   if (testBypass) {
     return true;
   }
-  for (const step of PROSPECTING_STEPS) {
-    if (step.id === "agent") {
-      continue;
-    }
-    if (!canAdvanceProspectingStep(step.id, state, false)) {
-      return false;
-    }
-  }
-  return true;
+  return PROSPECTING_STEPS.every((step) => canAdvanceProspectingStep(step.id, state, false));
 }

@@ -1,11 +1,13 @@
 /**
  * gates.test.ts
  * Locks canAdvanceProspectingStep conditions — including test-bypass short-circuit.
- * Signature is id-keyed; each gate's condition is unchanged from the index era.
+ * Signature is id-keyed; each gate's condition is unchanged from the index era,
+ * except the agent step, which now needs the student's agent explanation.
  */
 
 import { describe, expect, it } from "vitest";
 import {
+  AGENT_DESIGN_MIN_CHARS,
   canAdvanceProspectingStep,
   canSubmitProspectingBrief,
   DEFAULT_PROSPECTING_WIZARD_STATE,
@@ -105,23 +107,28 @@ describe("canAdvanceProspectingStep", () => {
     ).toBe(true);
   });
 
-  it("agent: always passes for step advance", () => {
-    expect(canAdvanceProspectingStep("agent", withState({}))).toBe(true);
+  it("agent: needs an explanation of at least AGENT_DESIGN_MIN_CHARS (trimmed)", () => {
+    expect(AGENT_DESIGN_MIN_CHARS).toBe(50);
+    expect(canAdvanceProspectingStep("agent", withState({}))).toBe(false);
+    expect(canAdvanceProspectingStep("agent", withState({ agentDesign: `  ${"a".repeat(49)}  ` }))).toBe(false);
+    expect(canAdvanceProspectingStep("agent", withState({ agentDesign: "a".repeat(50) }))).toBe(true);
   });
 
   it("PROSPECTING_STEPS ends with agent after opening", () => {
     expect(PROSPECTING_STEPS.map((s) => s.id)).toEqual(ALL_STEPS);
   });
 
-  it("canSubmitProspectingBrief re-checks every earlier gate", () => {
+  it("canSubmitProspectingBrief re-checks every gate, the agent explanation included", () => {
     const ready = withState({
       ...COMPLETE_ICP,
       onboardingComplete: true,
       shortlistedCompanyIds: ["a", "b", "c"],
       selectedLeadId: "lead-1",
       openingMessage: OPENING_OK,
+      agentDesign: "My agent would scan the directory for multi-location dental groups and flag signals.",
     });
     expect(canSubmitProspectingBrief(ready)).toBe(true);
+    expect(canSubmitProspectingBrief(withState({ ...ready, agentDesign: "Too short." }))).toBe(false);
     expect(canSubmitProspectingBrief(withState({ ...ready, openingMessage: "short" }))).toBe(
       false
     );
