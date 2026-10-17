@@ -14,7 +14,6 @@ import {
   useState,
 } from "react";
 import { ConvertFailureModal } from "@/components/crm/ConvertFailureModal";
-import { useTempoCrmGate } from "@/components/crm/CrmOverlay";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import type { CrmLead } from "@/types";
 
@@ -34,7 +33,7 @@ type ProspectingLeadSelectionStepProps = {
 };
 
 /**
- * Selectable Lead list with CRM deep-link when none exist yet.
+ * Selectable Lead list with a Refresh button.
  */
 export const ProspectingLeadSelectionStep = forwardRef<
   ProspectingLeadSelectionHandle,
@@ -43,7 +42,6 @@ export const ProspectingLeadSelectionStep = forwardRef<
   { attemptId, selectedLeadId, onPickedChange, onSelected },
   ref
 ): React.ReactElement {
-  const { openCrmLeads } = useTempoCrmGate();
   const [leads, setLeads] = useState<CrmLead[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [pickedId, setPickedId] = useState<string | null>(selectedLeadId);
@@ -149,14 +147,6 @@ export const ProspectingLeadSelectionStep = forwardRef<
 
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={() => openCrmLeads()}
-            className="inline-flex items-center gap-2 px-lg py-sm rounded-lg bg-[#0f4c4c] text-white font-bold text-label-md hover:bg-[#0f4c4c]/90 shadow-md transition-colors"
-          >
-            <MaterialIcon name="hub" className="text-[18px]" />
-            Open CRM: Leads
-          </button>
           <button
             type="button"
             onClick={() => void loadLeads()}
