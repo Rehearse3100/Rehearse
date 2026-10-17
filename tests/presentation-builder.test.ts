@@ -116,6 +116,8 @@ describe("the builder", () => {
     // Thumbnails show the slide's text without a box; only the active slide has one.
     expect(html.match(/--pitch-box-border:/g)).toHaveLength(1);
     expect(html).toContain("They lose patients to phone tag.");
+    // No "1 Business Issue" caption under the thumbnails (each slide shows its own title and number).
+    expect(html).not.toMatch(/<span class="font-semibold">\d<\/span>/);
   });
 
   it("the old slide layouts and their data are gone", () => {

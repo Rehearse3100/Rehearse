@@ -71,7 +71,6 @@ export const TEMPO_PITCH_SLIDES: readonly PitchSlideConfig<keyof PresentationFor
     field: "businessCase",
     title: "Business Issue",
     direction: "Recap the business issue in their words. What did they say matters most? 2–3 short lines.",
-    footerNote: "Summit Dental Group · discovery call",
   },
   {
     id: "problem",

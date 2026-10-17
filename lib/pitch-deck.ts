@@ -3,8 +3,8 @@
  * Simulation-neutral types and pure helpers for the reusable pitch-slide template
  * (components/presentation/PitchSlide.tsx). A simulation passes one deck object
  * (product and customer for the footer, and its colour theme) and one config per
- * slide: the saved field the slide's text box binds to, its title, the direction
- * shown above it and an optional footer note. Every slide uses the same layout.
+ * slide: the saved field the slide's text box binds to, its title and the
+ * direction shown above it. Every slide uses the same layout.
  * Nothing here names a simulation, product, customer or person; each simulation
  * keeps its content in its own config.
  */
@@ -53,8 +53,6 @@ export type PitchSlideConfig<F extends string = string> = {
   direction: string;
   /** A second direction line. */
   directionNote?: string;
-  /** A small line above the footer text (e.g. where the words came from). */
-  footerNote?: string;
 };
 
 /** The slide number as shown in the footer ("01"). */

@@ -40,8 +40,6 @@ const THEMED_DECK: PitchDeck = {
 
 const SLIDE: PitchSlideConfig = { id: "s1", field: "pitchField", title: "A neutral title", direction: "Write something." };
 
-const NOTED: PitchSlideConfig = { ...SLIDE, footerNote: "Globex · first call" };
-
 const render = (
   slide: PitchSlideConfig,
   value = "Student words.",
@@ -88,15 +86,8 @@ describe("the slide", () => {
     expect(html.match(/<h3/g)).toHaveLength(1);
   });
 
-  it("shows the config's footer note as a line above the product line, only when set", () => {
-    const html = render(NOTED);
-    expect(html).toContain("Globex · first call");
-    expect(html.indexOf("Globex · first call")).toBeLessThan(html.indexOf("Acme · Prepared for Globex"));
-    expect(render(SLIDE)).not.toContain("first call");
-  });
-
   it("has no icons, emoji or decoration", () => {
-    const html = render(NOTED, "Student words.", vi.fn());
+    const html = render(SLIDE, "Student words.", vi.fn());
     expect(html).not.toContain("<svg");
     expect(html).not.toContain("material-symbols");
     expect(html).not.toContain("“");
@@ -179,7 +170,7 @@ describe("simulation-neutral", () => {
     for (const file of ["components/presentation/PitchSlide.tsx", "lib/pitch-deck.ts"]) {
       expect(readSource(file).match(TEMPO_WORDS), file).toBeNull();
     }
-    expect(render(NOTED, "Student words.", vi.fn()).match(TEMPO_WORDS)).toBeNull();
+    expect(render(SLIDE, "Student words.", vi.fn()).match(TEMPO_WORDS)).toBeNull();
   });
 });
 
@@ -196,15 +187,14 @@ describe("Tempo's deck config", () => {
     expect(html).toContain("#c9a84c");
   });
 
-  it("slides carry only the one layout's config; slide 1 has the footer note, the Value slide the ROI reference", () => {
-    const allowed = ["id", "field", "title", "direction", "directionNote", "footerNote"];
+  it("slides carry only the one layout's config, no footer note; the Value slide has the ROI reference", () => {
+    const allowed = ["id", "field", "title", "direction", "directionNote"];
     for (const slide of TEMPO_PITCH_SLIDES) {
       for (const key of Object.keys(slide)) {
         expect(allowed, `${slide.id}: ${key}`).toContain(key);
       }
+      expect(render(slide, "Words.", vi.fn(), TEMPO_PITCH_DECK), slide.id).not.toContain("discovery call");
     }
-    expect(TEMPO_PITCH_SLIDES[0]?.footerNote).toBe("Summit Dental Group · discovery call");
-    expect(TEMPO_PITCH_SLIDES.filter((slide) => slide.footerNote)).toHaveLength(1);
     expect(PRESENTATION_PAYOFF_REFERENCE).toBe("Reference: 6,400 appts × 18% no-shows × $120 = $138,240/month lost");
     expect(TEMPO_PITCH_SLIDES[3]?.directionNote).toBe(PRESENTATION_PAYOFF_REFERENCE);
   });

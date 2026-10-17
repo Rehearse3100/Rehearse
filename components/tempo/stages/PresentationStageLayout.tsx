@@ -71,9 +71,9 @@ function SlidesCounter({ completed }: { completed: number }): React.ReactElement
 }
 
 /**
- * One rail thumbnail: the read-only slide itself (same template, scaled down), a
- * check when complete, the number and title underneath. Active: 2px navy frame;
- * empty and not active: dashed.
+ * One rail thumbnail: the read-only slide itself (same template, scaled down; it
+ * shows its own title and number) and a check when complete. Active: 2px navy
+ * frame; empty and not active: dashed.
  */
 function SlideThumbnail({
   slide,
@@ -112,9 +112,6 @@ function SlideThumbnail({
           <MaterialIcon name="check_circle" filled className="absolute top-1 right-1 text-[14px] text-green-600" />
         ) : null}
       </div>
-      <p className={`mt-1 text-[11px] leading-tight ${isActive ? "text-on-surface font-semibold" : "text-on-surface-variant"}`}>
-        <span className="font-semibold">{slideNumber}</span> {slide.title}
-      </p>
     </button>
   );
 }

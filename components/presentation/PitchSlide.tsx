@@ -2,8 +2,8 @@
  * PitchSlide.tsx
  * Reusable, simulation-neutral 16:9 pitch slide with one layout for every slide:
  * the title (the section name), the student's text, and a footer over a hairline
- * (an optional note, then "{product} · Prepared for {customer}", and the slide
- * number). The student's text is ONE area bound to the slide's field: a clearly
+ * ("{product} · Prepared for {customer}" and the slide number). The student's
+ * text is ONE area bound to the slide's field: a clearly
  * visible text box when onChange is given, plain text otherwise (thumbnails,
  * read-only). Sizes are in container units of the slide's width, so a thumbnail
  * looks exactly like the big slide. Every colour comes from the deck's theme
@@ -92,18 +92,16 @@ function StudentText<F extends string>({
 
 function SlideFooter({
   deck,
-  note,
   slideNumber,
   theme,
 }: {
   deck: PitchDeck;
-  note?: string;
   slideNumber: number;
   theme: PitchDeckTheme;
 }): React.ReactElement {
   return (
     <div
-      className="flex items-end justify-between shrink-0"
+      className="flex items-center justify-between shrink-0"
       style={{
         borderTop: `max(1px, ${cq(0.08)}) solid ${mix(theme.muted, 25, theme.background)}`,
         paddingTop: cq(1.4),
@@ -114,12 +112,9 @@ function SlideFooter({
         color: theme.muted,
       }}
     >
-      <div className="min-w-0">
-        {note ? <p style={{ marginBottom: cq(0.3) }}>{note}</p> : null}
-        <p>
-          {deck.productName} · Prepared for {deck.customerName}
-        </p>
-      </div>
+      <p className="min-w-0">
+        {deck.productName} · Prepared for {deck.customerName}
+      </p>
       <span className="shrink-0">{formatPitchSlideNumber(slideNumber)}</span>
     </div>
   );
@@ -171,7 +166,7 @@ export function PitchSlide<F extends string>({
             theme={theme}
           />
         </div>
-        <SlideFooter deck={deck} note={slide.footerNote} slideNumber={slideNumber} theme={theme} />
+        <SlideFooter deck={deck} slideNumber={slideNumber} theme={theme} />
       </div>
     </div>
   );
