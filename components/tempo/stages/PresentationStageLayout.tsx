@@ -71,8 +71,8 @@ function SlidesCounter({ completed }: { completed: number }): React.ReactElement
 }
 
 /**
- * One rail thumbnail: the read-only slide itself (same template, scaled down; it
- * shows its own title and number) and a check when complete. Active: 2px navy
+ * One rail thumbnail: the slide number on top, then the read-only slide itself
+ * (same template, scaled down) with a check when complete. Active: 2px navy
  * frame; empty and not active: dashed.
  */
 function SlideThumbnail({
@@ -104,6 +104,9 @@ function SlideThumbnail({
       aria-label={`Slide ${slideNumber}: ${slide.title}${isComplete ? " (complete)" : ""}`}
       className="w-full text-left"
     >
+      <p className={`mb-1 text-[11px] font-semibold leading-tight ${isActive ? "text-on-surface" : "text-on-surface-variant"}`}>
+        {slideNumber}
+      </p>
       <div className={`relative rounded-md bg-white overflow-hidden ${frameClass}`}>
         <div className="pointer-events-none" aria-hidden>
           <PitchSlide deck={TEMPO_PITCH_DECK} slide={slide} slideNumber={slideNumber} value={value} bare />

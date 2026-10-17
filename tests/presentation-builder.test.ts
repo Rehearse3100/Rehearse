@@ -116,7 +116,10 @@ describe("the builder", () => {
     // Thumbnails show the slide's text without a box; only the active slide has one.
     expect(html.match(/--pitch-box-border:/g)).toHaveLength(1);
     expect(html).toContain("They lose patients to phone tag.");
-    // No "1 Business Issue" caption under the thumbnails (each slide shows its own title and number).
+    // Each thumbnail's number sits on top of it; no "1 Business Issue" caption underneath.
+    for (const number of [1, 2, 3, 4, 5, 6]) {
+      expect(html, `slide ${number}`).toMatch(new RegExp(`>${number}</p><div class="relative rounded-md`));
+    }
     expect(html).not.toMatch(/<span class="font-semibold">\d<\/span>/);
   });
 
