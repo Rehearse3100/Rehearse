@@ -4,24 +4,38 @@
  * (components/tempo/TempoReferenceLibrary.tsx) that every Tempo stage renders.
  * The server page (app/student/simulation/[id]/page.tsx) builds a
  * ReferenceLibraryData from the attempt's stage_data (the ICP) and stage_scores
- * (each finished call's saved transcript payload) and passes it to the stage.
- * Sections: Prospecting (ICP + reading list), the Discovery and Objection
- * Handling calls (transcript; "Upcoming" until the call is saved) and, from the
- * Negotiation stage on, Negotiation. No answer-key data is read here.
+ * (each finished stage's saved row) and passes it to the stage. One section per
+ * stage, always all five: Prospecting (the ICP once submitted, and the reading
+ * list), the Discovery and Objection Handling calls (transcript; "Upcoming" until
+ * the call is saved), Presentation (a placeholder for now) and Negotiation (levers
+ * and pricing on the Negotiation stage). No answer-key data is read here.
  */
 
 import { DISCOVERY_PERSONA, parseDiscoveryTranscript } from "@/lib/tempo-discovery";
 import { OBJECTION_PERSONA, parseObjectionTranscript } from "@/lib/tempo-objections";
-import { readIcpFormFields, type ProspectingWizardState } from "@/lib/tempo-prospecting";
+import {
+  normalizeProspectingWizardState,
+  prospectingStepIndex,
+  type ProspectingWizardState,
+} from "@/lib/tempo-prospecting";
 
 // ── Shape ───
 
-/** The stage the student is on (decides which sections show and which starts open). */
+/** The stage the student is on; its section starts open. */
 export type ReferenceLibraryStage = "prospecting" | "discovery" | "presentation" | "objections" | "negotiation";
 
 export type ReferenceCallStage = "discovery" | "objections";
 
-export type ReferenceSectionId = "prospecting" | ReferenceCallStage | "negotiation";
+/** One section per stage, in stage order. */
+export type ReferenceSectionId = ReferenceLibraryStage;
+
+export const REFERENCE_SECTIONS: readonly ReferenceSectionId[] = [
+  "prospecting",
+  "discovery",
+  "presentation",
+  "objections",
+  "negotiation",
+];
 
 /** One "Your ICP" row; empty fields get no row. */
 export type ReferenceIcpRow = { label: string; value: string };
@@ -46,10 +60,13 @@ export type ReferenceCall = {
 
 export type ReferenceLibraryData = {
   currentStage: ReferenceLibraryStage;
-  icpRows: ReferenceIcpRow[];
+  /** null until the student has submitted the ICP (see isIcpSubmitted). */
+  icpRows: ReferenceIcpRow[] | null;
   /** null until the call is saved to stage_scores ("Upcoming"). */
   discovery: ReferenceCall | null;
   objections: ReferenceCall | null;
+  /** True once the Presentation stage is saved to stage_scores. */
+  isPresentationSubmitted: boolean;
 };
 
 type IcpFields = Pick<
@@ -67,6 +84,15 @@ type IcpFields = Pick<
 const SECONDS_PER_MINUTE = 60;
 
 // ── Prospecting ───
+
+/**
+ * True once the ICP is submitted: Prospecting is finished, or the student has
+ * moved past the ICP step (Next on the ICP step). Fields filled in earlier — e.g.
+ * by the test-mode autofill on the Welcome step — don't count.
+ */
+export function isIcpSubmitted(currentStepId: string, isProspectingComplete: boolean): boolean {
+  return isProspectingComplete || prospectingStepIndex(currentStepId) > prospectingStepIndex("icp");
+}
 
 /**
  * The student's ICP as label/value rows (target industry, decision-maker role,
@@ -168,38 +194,28 @@ export function callPillLabel(call: ReferenceCall | null): string {
 type StageScoreRow = { stage: string; transcript: string | null };
 
 /**
- * Builds the library for the server page: the ICP from stage_data, and each
- * call from its stage_scores row (null — "Upcoming" — when there is none yet).
+ * Builds the library for the server page: the ICP from stage_data (once
+ * submitted), each call from its stage_scores row (null — "Upcoming" — when there
+ * is none yet), and whether Presentation is saved.
  */
 export function buildReferenceLibrary(input: {
   currentStage: ReferenceLibraryStage;
   stageData: Record<string, unknown>;
   scores: readonly StageScoreRow[];
 }): ReferenceLibraryData {
+  const rowFor = (stage: string): StageScoreRow | undefined => input.scores.find((score) => score.stage === stage);
   const callFor = (stage: ReferenceCallStage): ReferenceCall | null => {
-    const row = input.scores.find((score) => score.stage === stage);
+    const row = rowFor(stage);
     return row ? parseReferenceCall(stage, row.transcript) : null;
   };
+  const wizard = normalizeProspectingWizardState(input.stageData as Partial<ProspectingWizardState>);
   return {
     currentStage: input.currentStage,
-    icpRows: buildIcpRows(readIcpFormFields(input.stageData)),
+    icpRows: isIcpSubmitted(wizard.currentStepId, Boolean(rowFor("prospecting"))) ? buildIcpRows(wizard) : null,
     discovery: callFor("discovery"),
     objections: callFor("objections"),
+    isPresentationSubmitted: Boolean(rowFor("presentation")),
   };
-}
-
-/** The sections shown on a stage: Negotiation joins only from the Negotiation stage on. */
-export function visibleReferenceSections(currentStage: ReferenceLibraryStage): ReferenceSectionId[] {
-  const sections: ReferenceSectionId[] = ["prospecting", "discovery", "objections"];
-  return currentStage === "negotiation" ? [...sections, "negotiation"] : sections;
-}
-
-/**
- * The section that starts open: the current stage's own section. Presentation has
- * none, so the call just before it (Discovery) opens there.
- */
-export function defaultOpenReferenceSection(currentStage: ReferenceLibraryStage): ReferenceSectionId {
-  return currentStage === "presentation" ? "discovery" : currentStage;
 }
 
 // ── Transcript search ───

@@ -29,7 +29,7 @@ import {
   TEMPO_HANDOFF_STAGE_META,
   type TempoHandoffStageKey,
 } from "@/lib/tempo-prospecting";
-import { buildIcpRows, type ReferenceLibraryData } from "@/lib/tempo-reference-library";
+import { buildIcpRows, isIcpSubmitted, type ReferenceLibraryData } from "@/lib/tempo-reference-library";
 
 type ProspectingWizardProps = {
   attemptId: string;
@@ -371,10 +371,15 @@ export function ProspectingWizard({
         onClose={() => setReferenceLibraryOpen(false)}
         testBypass={testBypass}
       >
-        {/* Live ICP: the student may still be editing it in this stage. */}
+        {/* Live ICP once submitted (past the ICP step); locked before that. */}
         <TempoReferenceLibrary
           attemptId={attemptId}
-          data={{ ...referenceLibrary, icpRows: buildIcpRows(state) }}
+          data={{
+            ...referenceLibrary,
+            icpRows: isIcpSubmitted(state.currentStepId, referenceLibrary.icpRows !== null)
+              ? buildIcpRows(state)
+              : null,
+          }}
         />
       </ReferenceLibraryDrawer>
 

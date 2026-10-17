@@ -1,11 +1,12 @@
 /**
  * TempoReferenceLibrary.tsx
  * The one Reference Library body every Tempo stage renders inside
- * ReferenceLibraryDrawer. Collapsible stage sections (the current stage's opens
- * first): Prospecting (the student's ICP and the reading list), the Discovery and
- * Objection Handling calls (meta row, AI call notes and the full transcript with
- * search; a locked "Upcoming" row until the call is saved) and, from the
- * Negotiation stage on, Negotiation (tradeable levers and pricing). Data comes from
+ * ReferenceLibraryDrawer. One collapsible section per stage, always all five (the
+ * current stage's opens first): Prospecting (the student's ICP once submitted, and
+ * the reading list), the Discovery and Objection Handling calls (meta row, AI call
+ * notes and the full transcript with search; a locked "Upcoming" row until the call
+ * is saved), Presentation (a placeholder for now) and Negotiation (tradeable levers
+ * and pricing on the Negotiation stage; locked before it). Data comes from
  * the server page as ReferenceLibraryData (lib/tempo-reference-library.ts); the
  * only fetch is the Call notes card (POST /api/student/call-notes), once per call
  * when its section first opens. The transcript never depends on the notes.
@@ -20,10 +21,9 @@ import { NEGOTIATION_DEAL_MATH, NEGOTIATION_DEAL_MATH_NOTE, TRADEABLE_LEVERS } f
 import { PROSPECTING_READING_LIST } from "@/lib/tempo-prospecting";
 import {
   callPillLabel,
-  defaultOpenReferenceSection,
   filterTranscript,
   highlightParts,
-  visibleReferenceSections,
+  REFERENCE_SECTIONS,
   type ReferenceCall,
   type ReferenceCallStage,
   type ReferenceIcpRow,
@@ -105,16 +105,29 @@ function LibrarySection({
   );
 }
 
+/** A locked row: a lock icon and when the content becomes available. */
+function LockedNote({ text }: { text: string }): React.ReactElement {
+  return (
+    <div className="flex items-center gap-2 p-3 rounded-lg bg-surface-container-low text-on-surface-variant">
+      <MaterialIcon name="lock" className="text-[18px]" />
+      <span className="font-label-md text-label-md">{text}</span>
+    </div>
+  );
+}
+
 // ── Prospecting ───
 
-function IcpCard({ rows }: { rows: readonly ReferenceIcpRow[] }): React.ReactElement {
+/** The ICP card; locked until the ICP is submitted (rows null). */
+function IcpCard({ rows }: { rows: readonly ReferenceIcpRow[] | null }): React.ReactElement {
   return (
     <div className="rounded-xl bg-[#f8fafc] p-4 space-y-3">
       <div className="flex items-center justify-between">
         <GroupLabel>Your ICP</GroupLabel>
         <MaterialIcon name="target" className="text-tertiary-container text-[18px]" />
       </div>
-      {rows.length === 0 ? (
+      {rows === null ? (
+        <LockedNote text="Available after you submit your ICP." />
+      ) : rows.length === 0 ? (
         <p className="text-body-md text-on-surface-variant">Not filled in yet.</p>
       ) : (
         <dl className="space-y-2.5">
@@ -434,11 +447,17 @@ function CallDetails({ attemptId, call }: { attemptId: string; call: ReferenceCa
   );
 }
 
-function UpcomingCall(): React.ReactElement {
+// ── Presentation ───
+
+/** Placeholder for now: the submitted pitch gets a recap here later. */
+function PresentationPlaceholder(): React.ReactElement {
   return (
-    <div className="flex items-center gap-2 p-3 rounded-lg bg-surface-container-low text-on-surface-variant">
-      <MaterialIcon name="lock" className="text-[18px]" />
-      <span className="font-label-md text-label-md">Available after the call.</span>
+    <div className="flex items-start gap-3 p-4 rounded-xl bg-[#f8fafc]">
+      <MaterialIcon name="present_to_all" className="text-primary-container text-[20px] shrink-0" />
+      <div className="space-y-1">
+        <p className="font-label-md text-label-md font-semibold text-on-surface">Pitch submitted</p>
+        <p className="font-body-md text-body-md text-on-surface-variant">A recap of your presentation will appear here soon.</p>
+      </div>
     </div>
   );
 }
@@ -490,13 +509,14 @@ function NegotiationReference(): React.ReactElement {
 // ── Library ───
 
 /**
- * The Reference Library sections for the student's current stage. Each header
+ * The Reference Library: one section per stage, in stage order. Each header
  * toggles its section; the current stage's section starts open.
  */
 export function TempoReferenceLibrary({ attemptId, data }: TempoReferenceLibraryProps): React.ReactElement {
   const [openSections, setOpenSections] = useState<ReadonlySet<ReferenceSectionId>>(
-    () => new Set([defaultOpenReferenceSection(data.currentStage)])
+    () => new Set([data.currentStage])
   );
+  const isNegotiationOpen = data.currentStage === "negotiation";
 
   const toggle = (id: ReferenceSectionId): void => {
     setOpenSections((current) => {
@@ -522,14 +542,14 @@ export function TempoReferenceLibrary({ attemptId, data }: TempoReferenceLibrary
         isOpen={openSections.has(id)}
         onToggle={() => toggle(id)}
       >
-        {call ? <CallDetails attemptId={attemptId} call={call} /> : <UpcomingCall />}
+        {call ? <CallDetails attemptId={attemptId} call={call} /> : <LockedNote text="Available after the call." />}
       </LibrarySection>
     );
   };
 
   return (
     <div className="space-y-4">
-      {visibleReferenceSections(data.currentStage).map((id) => {
+      {REFERENCE_SECTIONS.map((id) => {
         switch (id) {
           case "prospecting":
             return (
@@ -547,6 +567,24 @@ export function TempoReferenceLibrary({ attemptId, data }: TempoReferenceLibrary
             );
           case "discovery":
             return callSection(id, "Discovery Call", "bg-secondary");
+          case "presentation":
+            return (
+              <LibrarySection
+                key={id}
+                title="Presentation"
+                pill={data.isPresentationSubmitted ? "Submitted" : "Upcoming"}
+                dotClass={data.isPresentationSubmitted ? "bg-violet-600" : "bg-outline-variant"}
+                isMuted={!data.isPresentationSubmitted}
+                isOpen={openSections.has(id)}
+                onToggle={() => toggle(id)}
+              >
+                {data.isPresentationSubmitted ? (
+                  <PresentationPlaceholder />
+                ) : (
+                  <LockedNote text="Available after you submit your presentation." />
+                )}
+              </LibrarySection>
+            );
           case "objections":
             return callSection(id, "Objection Handling Call", "bg-primary-container");
           default:
@@ -554,12 +592,17 @@ export function TempoReferenceLibrary({ attemptId, data }: TempoReferenceLibrary
               <LibrarySection
                 key={id}
                 title="Negotiation"
-                pill="Pricing & levers"
-                dotClass="bg-green-600"
+                pill={isNegotiationOpen ? "Pricing & levers" : "Upcoming"}
+                dotClass={isNegotiationOpen ? "bg-green-600" : "bg-outline-variant"}
+                isMuted={!isNegotiationOpen}
                 isOpen={openSections.has(id)}
                 onToggle={() => toggle(id)}
               >
-                <NegotiationReference />
+                {isNegotiationOpen ? (
+                  <NegotiationReference />
+                ) : (
+                  <LockedNote text="Available when you reach Negotiation." />
+                )}
               </LibrarySection>
             );
         }
