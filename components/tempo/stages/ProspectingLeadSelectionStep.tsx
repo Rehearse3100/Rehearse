@@ -33,7 +33,8 @@ type ProspectingLeadSelectionStepProps = {
 };
 
 /**
- * Selectable Lead list with a Refresh button.
+ * The student's leads (at most 3, from the Data Room shortlist) as selectable rows,
+ * loaded once when the step opens.
  */
 export const ProspectingLeadSelectionStep = forwardRef<
   ProspectingLeadSelectionHandle,
@@ -145,78 +146,48 @@ export const ProspectingLeadSelectionStep = forwardRef<
         </p>
       </div>
 
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={() => void loadLeads()}
-            disabled={isLoading || isSelecting}
-            className="inline-flex items-center gap-2 px-lg py-sm rounded-lg border border-outline-variant bg-white text-on-surface font-bold text-label-md hover:bg-surface-container-low disabled:opacity-50 transition-colors"
-          >
-            <MaterialIcon name="refresh" className="text-[18px]" />
-            Refresh list
-          </button>
-        </div>
-
-        <div className="bg-white rounded-xl border border-outline-variant shadow-sm overflow-hidden">
-          <div className="h-[300px] overflow-y-auto custom-scrollbar">
-            {isLoading ? (
-              <div className="h-full flex items-center justify-center p-lg">
-                <p className="text-body-md text-on-surface-variant">Loading leads…</p>
-              </div>
-            ) : leads.length === 0 ? (
-              <div className="h-full flex items-center justify-center p-lg text-center bg-surface-container-high">
-                <p className="text-body-md text-on-surface max-w-lg">
-                  You haven&apos;t added any leads yet. Open your CRM and add at least one before
-                  continuing.
-                </p>
-              </div>
-            ) : (
-              <ul className="divide-y divide-outline-variant">
-                {leads.map((lead) => {
-                  const isPicked = pickedId === lead.id;
-                  const company = lead.company_name.trim() || "Untitled lead";
-                  const contact = lead.contact_name.trim() || "No contact";
-                  return (
-                    <li key={lead.id}>
-                      <button
-                        type="button"
-                        onClick={() => handlePick(lead.id)}
-                        disabled={isSelecting}
-                        className={`w-full text-left px-lg py-md flex items-center justify-between gap-4 transition-colors disabled:opacity-60 ${
-                          isPicked
-                            ? "bg-secondary-fixed/40"
-                            : "hover:bg-surface-container-low"
-                        }`}
-                      >
-                        <div className="min-w-0">
-                          <p className="font-label-md text-on-surface font-bold truncate">
-                            {company}
-                          </p>
-                          <p className="text-label-sm text-on-surface-variant truncate">
-                            {contact}
-                          </p>
-                        </div>
-                        <div
-                          className={`w-5 h-5 rounded-full border-2 shrink-0 flex items-center justify-center ${
-                            isPicked
-                              ? "border-primary-container bg-primary-container"
-                              : "border-outline-variant"
-                          }`}
-                        >
-                          {isPicked ? (
-                            <MaterialIcon name="check" className="text-white text-[14px]" />
-                          ) : null}
-                        </div>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        </div>
-      </div>
+      {/* At most 3 leads (the Data Room shortlist), so no box or scroll area: just the rows. */}
+      {isLoading ? (
+        <p className="text-body-md text-on-surface-variant">Loading leads…</p>
+      ) : leads.length === 0 ? (
+        <p className="text-body-md text-on-surface">
+          You haven&apos;t added any leads yet. Open your CRM and add at least one before continuing.
+        </p>
+      ) : (
+        <ul className="space-y-3">
+          {leads.map((lead) => {
+            const isPicked = pickedId === lead.id;
+            const company = lead.company_name.trim() || "Untitled lead";
+            const contact = lead.contact_name.trim() || "No contact";
+            return (
+              <li key={lead.id}>
+                <button
+                  type="button"
+                  onClick={() => handlePick(lead.id)}
+                  disabled={isSelecting}
+                  className={`w-full text-left px-lg py-md rounded-xl border flex items-center justify-between gap-4 transition-colors disabled:opacity-60 ${
+                    isPicked
+                      ? "border-primary-container bg-secondary-fixed/40"
+                      : "border-outline-variant bg-white hover:bg-surface-container-low"
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <p className="font-label-md text-on-surface font-bold truncate">{company}</p>
+                    <p className="text-label-sm text-on-surface-variant truncate">{contact}</p>
+                  </div>
+                  <div
+                    className={`w-5 h-5 rounded-full border-2 shrink-0 flex items-center justify-center ${
+                      isPicked ? "border-primary-container bg-primary-container" : "border-outline-variant"
+                    }`}
+                  >
+                    {isPicked ? <MaterialIcon name="check" className="text-white text-[14px]" /> : null}
+                  </div>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
 
       {error ? <p className="text-sm text-error">{error}</p> : null}
     </div>
