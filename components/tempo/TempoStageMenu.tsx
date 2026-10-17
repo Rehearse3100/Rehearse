@@ -1,8 +1,10 @@
 /**
  * TempoStageMenu.tsx
  * Hamburger menu in the Tempo top bar (TempoStageTopBar): Exit Simulation,
- * Handoff Note, CRM (testing purposes), and Restart. Exit, Handoff Note, and
- * Restart behave exactly as the old standalone controls; CRM opens the CRM home.
+ * Handoff Note, CRM (testing purposes; tester mode only), and Restart. Exit,
+ * Handoff Note, and Restart behave exactly as the old standalone controls; CRM
+ * opens the CRM home and shows only when the server's TEMPO_TEST_BYPASS_GATES flag
+ * reaches it as testBypass (through CrmAccess's context — never process.env).
  * The panel is portaled into document.body (fixed, z-[70]) so it sits above the
  * TEST MODE banner (z-[60]) and the Reference Library drawer (z-[48]), and below
  * ConfirmModal (z-[100]). It stays mounted while closed (invisible), because
@@ -66,8 +68,9 @@ export function TempoStageMenu({
   buttonBaseClass,
 }: TempoStageMenuProps): React.ReactElement {
   const handleExit = useExitSimulation();
-  // The menu renders inside CrmAccess (via the stage top bar), which provides openCrmHome.
-  const { openCrmHome } = useTempoCrmGate();
+  // The menu renders inside CrmAccess (via the stage top bar), which provides
+  // openCrmHome and the server's testBypass flag (false outside CrmAccess).
+  const { openCrmHome, testBypass } = useTempoCrmGate();
   const [isOpen, setIsOpen] = useState(false);
   // Portal needs document.body, so the panel renders only after mount.
   const [isMounted, setIsMounted] = useState(false);
@@ -188,18 +191,20 @@ export function TempoStageMenu({
         <MaterialIcon name="mail" className="text-[16px]" />
         Handoff Note
       </button>
-      <button
-        type="button"
-        role="menuitem"
-        className={MENU_ITEM}
-        onClick={() => {
-          closeMenu();
-          openCrmHome();
-        }}
-      >
-        <MaterialIcon name="hub" className="text-[16px]" />
-        CRM (testing purposes)
-      </button>
+      {testBypass ? (
+        <button
+          type="button"
+          role="menuitem"
+          className={MENU_ITEM}
+          onClick={() => {
+            closeMenu();
+            openCrmHome();
+          }}
+        >
+          <MaterialIcon name="hub" className="text-[16px]" />
+          CRM (testing purposes)
+        </button>
+      ) : null}
       {/* RestartSimulationButton renders its own button and confirm popup; the
           click bubbles here to close the menu while the popup opens. */}
       <div role="menuitem" onClick={closeMenu}>
