@@ -4,11 +4,11 @@
  * sidebar on the left (as on every stage), and a simple slide-deck builder in the
  * center column: the Submit bar (save status left; slides counter and Submit
  * right) on top, then a rail of six slide thumbnails (a horizontal strip on
- * mobile) and the active slide on a grey canvas, with one line of direction above
- * it and Previous / Next below. The slides are the
- * reusable PitchSlide (components/presentation/PitchSlide.tsx) with Tempo's
- * theme and configs (TEMPO_PITCH_SLIDES in lib/tempo-presentation.ts); thumbnails
- * are read-only. Slide N binds section N's PresentationForm field through the
+ * mobile) and the active slide on a grey canvas, with the section name as a large
+ * heading and its direction above it, and Previous / Next below. The slides are
+ * the reusable PitchSlide (components/presentation/PitchSlide.tsx) with Tempo's
+ * deck and configs (TEMPO_PITCH_DECK, TEMPO_PITCH_SLIDES in lib/tempo-presentation.ts);
+ * thumbnails are read-only. Slide N binds section N's PresentationForm field through the
  * same onUpdateField handler, so autosave, the "Auto-saved" status, Submit and
  * grading are unchanged.
  * The discovery reference lives in the Reference Library drawer (PresentationStage).
@@ -20,17 +20,20 @@ import { useState } from "react";
 import { PitchSlide } from "@/components/presentation/PitchSlide";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import { TempoStageForwardNav } from "@/components/tempo/TempoStageForwardNav";
-import type { PitchSlideConfig } from "@/lib/pitch-deck";
+import { resolvePitchTheme, type PitchSlideConfig } from "@/lib/pitch-deck";
 import {
   countCompletedPresentationSections,
   isPresentationSectionComplete,
   PRESENTATION_SECTIONS,
+  TEMPO_PITCH_DECK,
   TEMPO_PITCH_SLIDES,
-  TEMPO_PITCH_THEME,
   type PresentationForm,
 } from "@/lib/tempo-presentation";
 
 type TempoSlide = PitchSlideConfig<keyof PresentationForm>;
+
+/** Tempo's deck colours (the heading above the slide uses its primary). */
+const DECK_THEME = resolvePitchTheme(TEMPO_PITCH_DECK);
 
 type PresentationStageLayoutProps = {
   form: PresentationForm;
@@ -103,7 +106,7 @@ function SlideThumbnail({
     >
       <div className={`relative rounded-md bg-white overflow-hidden ${frameClass}`}>
         <div className="pointer-events-none" aria-hidden>
-          <PitchSlide theme={TEMPO_PITCH_THEME} slide={slide} slideNumber={slideNumber} value={value} bare />
+          <PitchSlide deck={TEMPO_PITCH_DECK} slide={slide} slideNumber={slideNumber} value={value} bare />
         </div>
         {isComplete ? (
           <MaterialIcon name="check_circle" filled className="absolute top-1 right-1 text-[14px] text-green-600" />
@@ -223,18 +226,21 @@ export function PresentationStageLayout({
             </ol>
           </nav>
 
-          {/* ── Canvas: direction, the slide, Previous / Next ─── */}
+          {/* ── Canvas: section heading and direction, the slide, Previous / Next ─── */}
           <section className="flex-1 min-w-0 min-h-0 overflow-y-auto bg-surface-container-low custom-scrollbar">
             <div className="max-w-4xl mx-auto px-4 lg:px-xl py-6 lg:py-8 space-y-4">
               <div>
-                <p className="text-body-md text-on-surface-variant">{slide.direction}</p>
+                <h2 className="text-[30px] leading-tight font-bold" style={{ color: DECK_THEME.primary }}>
+                  {slide.title}
+                </h2>
+                <p className="mt-1 text-[16px] leading-relaxed text-on-surface-variant">{slide.direction}</p>
                 {slide.directionNote ? (
-                  <p className="mt-1 font-code-md text-[12px] text-on-surface-variant/80">{slide.directionNote}</p>
+                  <p className="mt-1 font-code-md text-[14px] text-on-surface-variant/80">{slide.directionNote}</p>
                 ) : null}
               </div>
 
               <PitchSlide
-                theme={TEMPO_PITCH_THEME}
+                deck={TEMPO_PITCH_DECK}
                 slide={slide}
                 slideNumber={activeIndex + 1}
                 value={form[slide.field]}
