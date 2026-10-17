@@ -3,7 +3,13 @@
  * Types, copy, and helpers for Tempo Stage 3 Presentation (default class only).
  * Form follows ValueSelling fields: Business Issue / Problem / Solution /
  * Value / Power / Plan. Display titles may change; persisted keys stay stable.
+ * Also Tempo's slide-deck content (theme and six slide configs) for the reusable
+ * pitch-slide template.
  */
+
+import type { PitchDeckTheme, PitchSlideConfig } from "@/lib/pitch-deck";
+import { DISCOVERY_PERSONA } from "@/lib/tempo-discovery";
+import { OBJECTION_PERSONA } from "@/lib/tempo-objections";
 
 export type PresentationForm = {
   businessCase: string;
@@ -23,9 +29,12 @@ export const EMPTY_PRESENTATION_FORM: PresentationForm = {
   nextStep: "",
 };
 
+/** Monthly no-show loss and how it's calculated (parts of the ROI reference below). */
+const PAYOFF_MONTHLY_LOSS = "$138,240";
+const PAYOFF_FORMULA = "6,400 appts × 18% no-shows × $120";
+
 /** Static ROI reference shown in the Value section (not student-editable). */
-export const PRESENTATION_PAYOFF_REFERENCE =
-  "Reference: 6,400 appts × 18% no-shows × $120 = $138,240/month lost";
+export const PRESENTATION_PAYOFF_REFERENCE = `Reference: ${PAYOFF_FORMULA} = ${PAYOFF_MONTHLY_LOSS}/month lost`;
 
 export type PresentationStageData = {
   presentation?: PresentationForm;
@@ -40,56 +49,87 @@ export const PRESENTATION_SECTIONS = [
   { number: 6, title: "Plan", field: "nextStep" as const },
 ] as const;
 
-// ── Slide-deck builder copy (display only; each slide binds one field above) ───
+// ── Slide deck (display only; each slide binds one field above) ───
+// Tempo's content for the reusable pitch-slide template (components/presentation/PitchSlide.tsx).
 
-export type PresentationSlide = {
-  number: number;
-  field: keyof PresentationForm;
-  /** The ValueSelling label, shown as the slide's eyebrow. */
-  label: string;
-  title: string;
-  /** One line of direction above the slide. */
-  direction: string;
-  /** A second, smaller direction line (slide 4: the ROI reference). */
-  directionNote?: string;
+/** Product and customer on every slide; colors use the template defaults (Rehearse navy and gold). */
+export const TEMPO_PITCH_THEME: PitchDeckTheme = {
+  productName: "Tempo",
+  customerName: "Summit Dental Group",
 };
 
-/** Title and direction per section number. */
-const SLIDE_COPY: Record<number, Pick<PresentationSlide, "title" | "direction" | "directionNote">> = {
-  1: {
+/**
+ * The six slides, in PRESENTATION_SECTIONS order (slide N binds section N's field;
+ * the section title is the label). Layout data comes from existing Tempo copy:
+ * the ROI reference above, the "ABOUT TEMPO" key values and proof points in
+ * TEMPO_RESEARCH_SYSTEM_PROMPT (lib/tempo-prospecting.ts), and the call personas
+ * (lib/tempo-discovery.ts, lib/tempo-objections.ts).
+ */
+export const TEMPO_PITCH_SLIDES: readonly PitchSlideConfig<keyof PresentationForm>[] = [
+  {
+    id: "business-issue",
+    field: "businessCase",
+    sectionLabel: "Business Issue",
     title: "What we heard",
     direction: "Recap the business issue in their words. What did they say matters most? 2–3 short lines.",
+    layout: "quote",
+    data: { attribution: "Summit Dental Group · discovery call" },
   },
-  2: {
+  {
+    id: "problem",
+    field: "underlyingPainPoints",
+    sectionLabel: "Problem",
     title: "The cost of the problem",
     direction: "Show the problem behind it and what it costs them today. 2–3 short lines.",
+    layout: "split-stat",
+    data: { value: PAYOFF_MONTHLY_LOSS, label: "lost to no-shows every month", caption: PAYOFF_FORMULA },
   },
-  3: {
+  {
+    id: "solution",
+    field: "solution",
+    sectionLabel: "Solution",
     title: "How Tempo fixes it",
     direction: "Connect Tempo to the problems they named. Only what they need. 2–3 short lines.",
+    layout: "text-rail",
+    data: { items: ["Cut no-shows", "Free the front desk", "Capture after-hours demand"] },
   },
-  4: {
+  {
+    id: "value",
+    field: "proofPoint",
+    sectionLabel: "Value",
     title: "The impact",
     direction: "Put a number on what fixing this is worth to them.",
     directionNote: PRESENTATION_PAYOFF_REFERENCE,
+    layout: "before-after",
+    data: {
+      before: { value: "18%", label: "of appointments are no-shows" },
+      after: { value: "35%", label: "fewer no-shows within 90 days" },
+    },
   },
-  5: {
+  {
+    id: "power",
+    field: "powerStakeholder",
+    sectionLabel: "Power",
     title: "Who's involved",
     direction: "Who decides, who signs off, and what each of them cares about. 2–3 short lines.",
+    layout: "people",
+    data: {
+      people: [
+        { name: DISCOVERY_PERSONA.name, title: DISCOVERY_PERSONA.role },
+        { name: OBJECTION_PERSONA.name, title: OBJECTION_PERSONA.role },
+      ],
+    },
   },
-  6: {
+  {
+    id: "plan",
+    field: "nextStep",
+    sectionLabel: "Plan",
     title: "Next steps",
     direction: "Propose the next step with an owner and a date. 1–2 short lines.",
+    layout: "timeline",
+    data: { steps: ["Walkthrough", "Pilot", "Rollout"] },
   },
-};
-
-/** The six slides, in order: one per section, bound to that section's field. */
-export const PRESENTATION_SLIDES: readonly PresentationSlide[] = PRESENTATION_SECTIONS.map((section) => ({
-  number: section.number,
-  field: section.field,
-  label: section.title,
-  ...SLIDE_COPY[section.number],
-}));
+];
 
 const STORAGE_PREFIX = "tempo-presentation-v2-";
 export const MIN_FIELD_LENGTH = 6;

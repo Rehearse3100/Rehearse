@@ -1,9 +1,10 @@
 /**
  * presentation-builder.test.ts
- * Tempo Stage 3 as a slide-deck builder: six slides bound to the six existing
- * PresentationForm fields, the "N / 6 slides completed" counter, starting on the
- * first incomplete slide, thumbnail states (active, complete, empty) and the old
- * form content gone. Rendered to static HTML; no network.
+ * Tempo Stage 3 as a slide-deck builder: six slides (Tempo's config for the
+ * reusable PitchSlide) bound to the six existing PresentationForm fields in section
+ * order, the "N / 6 slides completed" counter, starting on the first incomplete
+ * slide, thumbnail states (active, complete, empty; read-only) and the old form
+ * content gone. Rendered to static HTML; no network.
  */
 
 import * as React from "react";
@@ -13,7 +14,8 @@ import { PresentationStageLayout } from "@/components/tempo/stages/PresentationS
 import {
   EMPTY_PRESENTATION_FORM,
   PRESENTATION_PAYOFF_REFERENCE,
-  PRESENTATION_SLIDES,
+  PRESENTATION_SECTIONS,
+  TEMPO_PITCH_SLIDES,
   type PresentationForm,
 } from "@/lib/tempo-presentation";
 
@@ -34,18 +36,21 @@ const render = (form: PresentationForm, canSubmit = false): string =>
   );
 
 describe("the six slides", () => {
-  it("bind the six existing fields in order, with their ValueSelling label, title and direction", () => {
-    expect(PRESENTATION_SLIDES.map((slide) => [slide.number, slide.field, slide.label, slide.title])).toEqual([
-      [1, "businessCase", "Business Issue", "What we heard"],
-      [2, "underlyingPainPoints", "Problem", "The cost of the problem"],
-      [3, "solution", "Solution", "How Tempo fixes it"],
-      [4, "proofPoint", "Value", "The impact"],
-      [5, "powerStakeholder", "Power", "Who's involved"],
-      [6, "nextStep", "Plan", "Next steps"],
+  it("bind the six existing fields in section order, with their ValueSelling label, title and direction", () => {
+    expect(TEMPO_PITCH_SLIDES.map((slide) => [slide.field, slide.sectionLabel, slide.title])).toEqual([
+      ["businessCase", "Business Issue", "What we heard"],
+      ["underlyingPainPoints", "Problem", "The cost of the problem"],
+      ["solution", "Solution", "How Tempo fixes it"],
+      ["proofPoint", "Value", "The impact"],
+      ["powerStakeholder", "Power", "Who's involved"],
+      ["nextStep", "Plan", "Next steps"],
     ]);
-    expect(PRESENTATION_SLIDES[3]?.direction).toBe("Put a number on what fixing this is worth to them.");
-    expect(PRESENTATION_SLIDES[3]?.directionNote).toBe(PRESENTATION_PAYOFF_REFERENCE);
-    expect(PRESENTATION_SLIDES.filter((slide) => slide.directionNote)).toHaveLength(1);
+    // Slide N is section N (completion and the counter use section numbers).
+    expect(TEMPO_PITCH_SLIDES.map((slide) => slide.field)).toEqual(PRESENTATION_SECTIONS.map((section) => section.field));
+    expect(TEMPO_PITCH_SLIDES.map((slide) => slide.sectionLabel)).toEqual(PRESENTATION_SECTIONS.map((section) => section.title));
+    expect(TEMPO_PITCH_SLIDES[3]?.direction).toBe("Put a number on what fixing this is worth to them.");
+    expect(TEMPO_PITCH_SLIDES[3]?.directionNote).toBe(PRESENTATION_PAYOFF_REFERENCE);
+    expect(TEMPO_PITCH_SLIDES.filter((slide) => slide.directionNote)).toHaveLength(1);
   });
 });
 
@@ -56,7 +61,9 @@ describe("the builder", () => {
     expect(html).toContain("Connect Tempo to the problems they named.");
     expect(html).toContain('aria-label="How Tempo fixes it"');
     expect(html).toContain('placeholder="Type here…"');
-    expect(html).toContain("Section 03");
+    // The active slide is the editable one; thumbnails are read-only (one text area on the page).
+    expect(html.match(/<textarea/g)).toHaveLength(1);
+    expect(html).toContain("Tempo · Prepared for Summit Dental Group");
   });
 
   it("with every slide complete it starts on slide 1; an empty deck too", () => {

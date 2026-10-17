@@ -4,26 +4,32 @@
  * builder. The Submit bar (save status left; slides counter and Submit right)
  * sits under the app top bar. Below it: a rail of six slide thumbnails (a
  * horizontal strip on mobile) and the active slide on a grey canvas, with one
- * line of direction above it and Previous / Next below. Each slide's text area
- * is bound to one PresentationForm field (PRESENTATION_SLIDES in
- * lib/tempo-presentation.ts) through the same onUpdateField handler, so autosave,
- * the "Auto-saved" status, Submit and grading are unchanged.
+ * line of direction above it and Previous / Next below. The slides are the
+ * reusable PitchSlide (components/presentation/PitchSlide.tsx) with Tempo's
+ * theme and configs (TEMPO_PITCH_SLIDES in lib/tempo-presentation.ts); thumbnails
+ * are read-only. Slide N binds section N's PresentationForm field through the
+ * same onUpdateField handler, so autosave, the "Auto-saved" status, Submit and
+ * grading are unchanged.
  * The discovery reference lives in the Reference Library drawer (PresentationStage).
  */
 
 "use client";
 
 import { useState } from "react";
+import { PitchSlide } from "@/components/presentation/PitchSlide";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import { TempoStageForwardNav } from "@/components/tempo/TempoStageForwardNav";
+import type { PitchSlideConfig } from "@/lib/pitch-deck";
 import {
   countCompletedPresentationSections,
   isPresentationSectionComplete,
   PRESENTATION_SECTIONS,
-  PRESENTATION_SLIDES,
+  TEMPO_PITCH_SLIDES,
+  TEMPO_PITCH_THEME,
   type PresentationForm,
-  type PresentationSlide,
 } from "@/lib/tempo-presentation";
+
+type TempoSlide = PitchSlideConfig<keyof PresentationForm>;
 
 type PresentationStageLayoutProps = {
   form: PresentationForm;
@@ -36,9 +42,9 @@ type PresentationStageLayoutProps = {
   testBypass?: boolean;
 };
 
-/** The first slide that isn't complete yet, or the first slide. */
+/** The first slide that isn't complete yet, or the first slide (slide N is section N). */
 function firstIncompleteSlideIndex(form: PresentationForm): number {
-  const index = PRESENTATION_SLIDES.findIndex((slide) => !isPresentationSectionComplete(slide.number, form));
+  const index = TEMPO_PITCH_SLIDES.findIndex((_, i) => !isPresentationSectionComplete(i + 1, form));
   return index === -1 ? 0 : index;
 }
 
@@ -60,15 +66,21 @@ function SlidesCounter({ completed }: { completed: number }): React.ReactElement
   );
 }
 
-/** One rail thumbnail: a tiny preview, a check when complete, the number and title underneath. */
+/**
+ * One rail thumbnail: the read-only slide itself (same template, scaled down), a
+ * check when complete, the number and title underneath. Active: 2px navy frame;
+ * empty and not active: dashed.
+ */
 function SlideThumbnail({
   slide,
+  slideNumber,
   value,
   isActive,
   isComplete,
   onSelect,
 }: {
-  slide: PresentationSlide;
+  slide: TempoSlide;
+  slideNumber: number;
   value: string;
   isActive: boolean;
   isComplete: boolean;
@@ -85,66 +97,21 @@ function SlideThumbnail({
       type="button"
       onClick={onSelect}
       aria-current={isActive ? "step" : undefined}
-      aria-label={`Slide ${slide.number}: ${slide.title}${isComplete ? " (complete)" : ""}`}
+      aria-label={`Slide ${slideNumber}: ${slide.title}${isComplete ? " (complete)" : ""}`}
       className="w-full text-left"
     >
-      <div className={`relative aspect-video rounded-md bg-white overflow-hidden ${frameClass}`}>
-        <div className="p-2 space-y-1.5">
-          <div className="h-1.5 w-1/2 rounded-full bg-[#1a1a2e]/70" />
-          {hasText ? (
-            <>
-              <div className="h-1 w-5/6 rounded-full bg-outline-variant/70" />
-              <div className="h-1 w-2/3 rounded-full bg-outline-variant/50" />
-            </>
-          ) : null}
+      <div className={`relative rounded-md bg-white overflow-hidden ${frameClass}`}>
+        <div className="pointer-events-none" aria-hidden>
+          <PitchSlide theme={TEMPO_PITCH_THEME} slide={slide} slideNumber={slideNumber} value={value} bare />
         </div>
         {isComplete ? (
           <MaterialIcon name="check_circle" filled className="absolute top-1 right-1 text-[14px] text-green-600" />
         ) : null}
       </div>
       <p className={`mt-1 text-[11px] leading-tight ${isActive ? "text-on-surface font-semibold" : "text-on-surface-variant"}`}>
-        <span className="font-semibold">{slide.number}</span> {slide.title}
+        <span className="font-semibold">{slideNumber}</span> {slide.title}
       </p>
     </button>
-  );
-}
-
-/** The active slide: navy band, eyebrow, title, the student's text area and the slide number. */
-function SlideCanvas({
-  slide,
-  value,
-  onChange,
-}: {
-  slide: PresentationSlide;
-  value: string;
-  onChange: (value: string) => void;
-}): React.ReactElement {
-  return (
-    <div className="aspect-video w-full bg-white rounded-xl border border-outline-variant shadow-md overflow-hidden flex flex-col">
-      <div className="h-8 shrink-0 bg-[#1a1a2e] px-6 flex items-center justify-between">
-        <span className="text-white text-[11px] font-bold uppercase tracking-[0.2em]">Tempo</span>
-        <span className="text-white/60 text-[11px] font-medium">
-          Section {String(slide.number).padStart(2, "0")}
-        </span>
-      </div>
-      <div className="flex-1 min-h-0 flex flex-col px-6 sm:px-10 pt-5 sm:pt-7 pb-3">
-        <div className="flex items-center gap-2 mb-2">
-          <span className="w-2 h-2 rounded-full bg-[#c9a84c] shrink-0" aria-hidden />
-          <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#94762b]">{slide.label}</span>
-        </div>
-        <h2 className="text-[24px] font-bold text-[#1a1a2e] leading-tight mb-3">{slide.title}</h2>
-        <textarea
-          aria-label={slide.title}
-          className="flex-1 min-h-0 w-full resize-none border-0 bg-transparent p-0 text-[16px] leading-relaxed text-on-surface placeholder:text-outline focus:outline-none focus:ring-0"
-          placeholder="Type here…"
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-        />
-        <div className="mt-2 pt-2 border-t border-outline-variant/60 flex justify-end text-[11px] text-on-surface-variant">
-          {slide.number}
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -162,9 +129,9 @@ export function PresentationStageLayout({
   testBypass = false,
 }: PresentationStageLayoutProps): React.ReactElement {
   const [activeIndex, setActiveIndex] = useState(() => firstIncompleteSlideIndex(form));
-  const slide = PRESENTATION_SLIDES[activeIndex] ?? PRESENTATION_SLIDES[0];
+  const slide = TEMPO_PITCH_SLIDES[activeIndex] ?? TEMPO_PITCH_SLIDES[0];
   const isFirst = activeIndex === 0;
-  const isLast = activeIndex === PRESENTATION_SLIDES.length - 1;
+  const isLast = activeIndex === TEMPO_PITCH_SLIDES.length - 1;
 
   return (
     <div
@@ -197,13 +164,14 @@ export function PresentationStageLayout({
             className="shrink-0 bg-white border-b lg:border-b-0 lg:border-r border-outline-variant lg:w-[190px] overflow-x-auto lg:overflow-x-hidden lg:overflow-y-auto custom-scrollbar"
           >
             <ol className="flex lg:flex-col gap-3 p-3">
-              {PRESENTATION_SLIDES.map((item, index) => (
-                <li key={item.field} className="w-28 lg:w-auto shrink-0">
+              {TEMPO_PITCH_SLIDES.map((item, index) => (
+                <li key={item.id} className="w-36 lg:w-auto shrink-0">
                   <SlideThumbnail
                     slide={item}
+                    slideNumber={index + 1}
                     value={form[item.field]}
                     isActive={index === activeIndex}
-                    isComplete={isPresentationSectionComplete(item.number, form)}
+                    isComplete={isPresentationSectionComplete(index + 1, form)}
                     onSelect={() => setActiveIndex(index)}
                   />
                 </li>
@@ -221,10 +189,12 @@ export function PresentationStageLayout({
                 ) : null}
               </div>
 
-              <SlideCanvas
+              <PitchSlide
+                theme={TEMPO_PITCH_THEME}
                 slide={slide}
+                slideNumber={activeIndex + 1}
                 value={form[slide.field]}
-                onChange={(value) => onUpdateField(slide.field, value)}
+                onChange={(field, value) => onUpdateField(field, value)}
               />
 
               <div className="flex items-center justify-between">
@@ -238,7 +208,7 @@ export function PresentationStageLayout({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setActiveIndex((index) => Math.min(PRESENTATION_SLIDES.length - 1, index + 1))}
+                  onClick={() => setActiveIndex((index) => Math.min(TEMPO_PITCH_SLIDES.length - 1, index + 1))}
                   disabled={isLast}
                   className="h-10 px-4 rounded-lg bg-[#1a1a2e] text-white text-label-md font-semibold hover:bg-[#252545] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
