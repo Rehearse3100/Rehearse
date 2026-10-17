@@ -3,10 +3,6 @@
  * Types, copy, and helpers for Tempo Stage 5 Negotiation (default class only).
  */
 
-import type { DiscoverySummaryForm } from "@/lib/tempo-discovery";
-import type { ObjectionSummaryForm } from "@/lib/tempo-objections";
-import type { PresentationForm } from "@/lib/tempo-presentation";
-
 export type NegotiationScenario = "A" | "B";
 export type ScenarioState = "locked" | "active" | "complete";
 export type TurnState = "locked" | "active" | "submitted";
@@ -58,151 +54,20 @@ export const TRADEABLE_LEVERS = [
   { lever: "Tier", give: "Stay on Pro", get: "Full features" },
 ] as const;
 
+/** Pricing shown with the tradeable levers in the Reference Library (Negotiation). */
+export const NEGOTIATION_DEAL_MATH = [
+  { label: "Pro × 8 locations annual", value: "~$14,600/yr" },
+  { label: "Monthly per location", value: "$179/mo" },
+] as const;
+
+export const NEGOTIATION_DEAL_MATH_NOTE = "Kim's true priority: certainty it works, not raw price";
+
 export const NEGOTIATION_STRATEGY_TIPS = [
   "Trade, don't concede — give something to get something",
   "Find Kim's true priority — certainty it works",
   "Protect the deal value — don't give away margin",
   "A pilot offer lowers his risk of saying yes",
 ] as const;
-
-export type PriorContextItem = {
-  label: string;
-  text: string;
-  fromStudent: boolean;
-};
-
-export type PriorContextSection = {
-  stageLabel: string;
-  borderClass: "border-primary" | "border-secondary" | "border-tertiary-container";
-  items: PriorContextItem[];
-};
-
-/** Summit Dental / Tempo reference copy when earlier stages were skipped (e.g. test shortcut). */
-const PRIOR_CONTEXT_FALLBACKS = {
-  discovery: {
-    businessIssue:
-      "Summit Dental's manual phone scheduling is breaking down at 8 locations — no-shows, front desk overload, and lost after-hours demand as they scale.",
-    keyProblems:
-      "The new 8th location exposed the limits of their phone-based system; front desk staff are drowning in confirmation calls.",
-    quantifiedValue:
-      "No-show rate around 18%; front desk spends most of the day on scheduling calls; significant demand after hours goes uncaptured.",
-    personalValue:
-      "Dana Reyes was hired to get operations under control before Dr. Kim loses confidence in the expansion.",
-    nextStep:
-      "Dana agreed to a follow-up presentation with her and Dr. Kim to review a tailored Tempo proposal.",
-  },
-  presentation: {
-    businessCase:
-      "Eight practices on manual scheduling — no-shows near 1 in 6, front desk overloaded, no after-hours capture — with Dana under pressure as they scale.",
-    underlyingPainPoints:
-      "Front desk drowning in confirmation calls; after-hours demand uncaptured; expansion exposing phone-based scheduling limits.",
-    solution:
-      "Automated reminders and self-service booking cut no-shows and free front-desk time across all eight locations.",
-    proofPoint:
-      "Tempo customers see ~35% no-show reduction in 90 days and meaningful after-hours booking volume.",
-    powerStakeholder:
-      "Dana owns operational pain; Dr. Kim owns the budget and wants proof it pays for itself before committing.",
-    nextStep:
-      "Present to Dana and Dr. Kim with a concrete rollout plan and ROI tied to Summit's expansion.",
-  },
-  objections: {
-    objectionsRaised:
-      "Price across eight locations, front desk adoption risk, and skepticism that the status quo isn't good enough.",
-    rootConcerns:
-      "Kim isn't convinced ROI is real, fears a disruptive rollout, and under-counts the cost of manual scheduling chaos.",
-    howYouResponded:
-      "Acknowledge each concern, re-anchor on no-show recovery and front desk time saved, and resist immediate discounting.",
-    priceAndDiscounting:
-      "Kim pushes on monthly cost; hold price and trade value — onboarding support, commitment term, or scope — not margin.",
-    nextStep:
-      "Earn enough confidence to move to final terms negotiation with Dana on implementation details.",
-  },
-} as const satisfies Record<string, Record<string, string>>;
-
-const MIN_STUDENT_FIELD_LENGTH = 12;
-
-function resolvePriorField(
-  label: string,
-  studentValue: string | undefined,
-  fallback: string
-): PriorContextItem {
-  const trimmed = studentValue?.trim() ?? "";
-  if (trimmed.length >= MIN_STUDENT_FIELD_LENGTH) {
-    return { label, text: trimmed, fromStudent: true };
-  }
-  return { label, text: fallback, fromStudent: false };
-}
-
-/**
- * Builds Prior Context sections from saved stage work, with Tempo simulation fallbacks.
- */
-export function buildNegotiationPriorContext(
-  discoverySummary: Partial<DiscoverySummaryForm> | null,
-  presentationSummary: Partial<PresentationForm> | null,
-  objectionSummary: Partial<ObjectionSummaryForm> | null
-): PriorContextSection[] {
-  const discoveryFields: {
-    label: string;
-    key: keyof typeof PRIOR_CONTEXT_FALLBACKS.discovery;
-  }[] = [
-    { label: "Business Issue", key: "businessIssue" },
-    { label: "Key Problems", key: "keyProblems" },
-    { label: "Quantified Value", key: "quantifiedValue" },
-    { label: "Personal Value", key: "personalValue" },
-    { label: "Agreed Next Step", key: "nextStep" },
-  ];
-
-  const presentationFields: {
-    label: string;
-    key: keyof typeof PRIOR_CONTEXT_FALLBACKS.presentation;
-  }[] = [
-    { label: "Business Issue", key: "businessCase" },
-    { label: "Problem", key: "underlyingPainPoints" },
-    { label: "Solution", key: "solution" },
-    { label: "Value", key: "proofPoint" },
-    { label: "Power", key: "powerStakeholder" },
-    { label: "Plan", key: "nextStep" },
-  ];
-
-  const objectionFields: {
-    label: string;
-    key: keyof typeof PRIOR_CONTEXT_FALLBACKS.objections;
-  }[] = [
-    { label: "Objections Raised", key: "objectionsRaised" },
-    { label: "Root Concerns", key: "rootConcerns" },
-    { label: "How You Responded", key: "howYouResponded" },
-    { label: "Price & Discounting", key: "priceAndDiscounting" },
-    { label: "Next Step", key: "nextStep" },
-  ];
-
-  return [
-    {
-      stageLabel: "Stage 2: Discovery",
-      borderClass: "border-tertiary-container",
-      items: discoveryFields.map(({ label, key }) =>
-        resolvePriorField(label, discoverySummary?.[key], PRIOR_CONTEXT_FALLBACKS.discovery[key])
-      ),
-    },
-    {
-      stageLabel: "Stage 3: Presentation",
-      borderClass: "border-primary",
-      items: presentationFields.map(({ label, key }) =>
-        resolvePriorField(
-          label,
-          presentationSummary?.[key],
-          PRIOR_CONTEXT_FALLBACKS.presentation[key]
-        )
-      ),
-    },
-    {
-      stageLabel: "Stage 4: Objection Handling",
-      borderClass: "border-secondary",
-      items: objectionFields.map(({ label, key }) =>
-        resolvePriorField(label, objectionSummary?.[key], PRIOR_CONTEXT_FALLBACKS.objections[key])
-      ),
-    },
-  ];
-}
 
 function createInitialTurns(opening: string): [NegotiationTurn, NegotiationTurn, NegotiationTurn] {
   return [
@@ -249,23 +114,6 @@ export function getOutcomeStatusLabel(outcome: NegotiationOutcome | null): strin
     return "Kim walked — terms could not be aligned";
   }
   return "Partial agreement — some terms still open";
-}
-
-/**
- * Parses objection stage transcript JSON for prior-context panel.
- */
-export function parseObjectionSummaryFromTranscript(
-  transcript: string | undefined | null
-): Partial<ObjectionSummaryForm> | null {
-  if (!transcript?.trim()) {
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(transcript) as { postCallSummary?: Partial<ObjectionSummaryForm> };
-    return parsed.postCallSummary ?? null;
-  } catch {
-    return null;
-  }
 }
 
 /**

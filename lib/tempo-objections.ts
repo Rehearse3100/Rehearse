@@ -83,20 +83,15 @@ export const OBJECTION_SUMMARY_FIELDS: {
   },
 ];
 
-export const TEMPO_OBJECTION_FACTS = [
-  { label: "Pro × 8 locations", value: "$1,432/month" },
-  { label: "Annual deal value", value: "~$14,600/year" },
-  { label: "Onboarding fee", value: "$500/location (waivable)" },
-  { label: "No-show reduction", value: "~35% within 90 days" },
-  { label: "Time to go live", value: "Days, not weeks" },
-] as const;
-
 export const OBJECTION_TIPS = [
   "Acknowledge objections before answering.",
   "Pivot from cost to return on effort — not discounts.",
   "Dr. Kim leads with price, then adoption, then status quo.",
   "Hold firm on price; trade value, not margin.",
 ] as const;
+
+/** The Objection Handling call's persona, as the Reference Library labels the transcript. */
+export const OBJECTION_PERSONA = { name: "Dr. Saul Kim", role: "Founder & Owner" } as const;
 
 /** The manager note on the Objection Handling pre-call lobby, one paragraph per entry. */
 export const OBJECTION_MANAGER_NOTE = [

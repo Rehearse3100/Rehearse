@@ -12,10 +12,8 @@ import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { HandoffModal } from "@/components/tempo/HandoffModal";
-import {
-  ReferenceLibraryDrawer,
-  ReferenceLibrarySectionLabel,
-} from "@/components/tempo/ReferenceLibraryDrawer";
+import { ReferenceLibraryDrawer } from "@/components/tempo/ReferenceLibraryDrawer";
+import { TempoReferenceLibrary } from "@/components/tempo/TempoReferenceLibrary";
 import { TempoTestBypassBanner } from "@/components/tempo/TempoTestBypassBanner";
 import {
   ObjectionHandlingCallSession,
@@ -28,10 +26,8 @@ import { ObjectionHandlingStageLayout } from "@/components/tempo/stages/Objectio
 import { ObjectionHandlingTopBar } from "@/components/tempo/stages/ObjectionHandlingTopBar";
 import { resumePlaybackContext } from "@/lib/audio-playback";
 import { completeStage } from "@/lib/attempt-actions";
-import type { PresentationForm } from "@/lib/tempo-presentation";
 import {
   EMPTY_TRACKER,
-  TEMPO_OBJECTION_FACTS,
   type ObjectionHandlingPhase,
   type ObjectionTracker,
   type ObjectionTranscriptEntry,
@@ -40,13 +36,15 @@ import {
   TEMPO_HANDOFF_MESSAGES,
   TEMPO_HANDOFF_STAGE_META,
 } from "@/lib/tempo-prospecting";
+import type { ReferenceLibraryData } from "@/lib/tempo-reference-library";
 
 type ObjectionHandlingStageProps = {
   attemptId: string;
   simulationId: string;
   classId: string;
   simulationTitle: string;
-  presentationSummary: PresentationForm | null;
+  /** Built by the server page for the shared Reference Library drawer. */
+  referenceLibrary: ReferenceLibraryData;
   /** Server page boolean from TEMPO_TEST_BYPASS_GATES — never from client env. */
   testBypass?: boolean;
 };
@@ -59,7 +57,7 @@ export function ObjectionHandlingStage({
   simulationId,
   classId,
   simulationTitle,
-  presentationSummary,
+  referenceLibrary,
   testBypass = false,
 }: ObjectionHandlingStageProps): React.ReactElement {
   const router = useRouter();
@@ -239,48 +237,9 @@ export function ObjectionHandlingStage({
       <ReferenceLibraryDrawer
         open={referenceLibraryOpen}
         onClose={() => setReferenceLibraryOpen(false)}
-        stageLabel="Stage 4: Objection Handling"
         testBypass={testBypass}
       >
-        <section>
-          <ReferenceLibrarySectionLabel>Your Pitch Summary</ReferenceLibrarySectionLabel>
-          <div className="bg-surface-container-lowest p-4 rounded-xl border border-outline-variant text-body-md space-y-3 text-on-surface-variant">
-            {presentationSummary ? (
-              <>
-                <p>
-                  • Business case:{" "}
-                  {presentationSummary.businessCase?.slice(0, 80) || "—"}
-                  {(presentationSummary.businessCase?.length ?? 0) > 80 ? "…" : ""}
-                </p>
-                <p>
-                  • Proof point: {presentationSummary.proofPoint?.slice(0, 80) || "—"}
-                  {(presentationSummary.proofPoint?.length ?? 0) > 80 ? "…" : ""}
-                </p>
-                <p>
-                  • Next step asked: {presentationSummary.nextStep?.slice(0, 80) || "—"}
-                  {(presentationSummary.nextStep?.length ?? 0) > 80 ? "…" : ""}
-                </p>
-              </>
-            ) : (
-              <p className="italic">Stage 3 pitch summary not available.</p>
-            )}
-          </div>
-        </section>
-
-        <section>
-          <ReferenceLibrarySectionLabel>Tempo Core Facts</ReferenceLibrarySectionLabel>
-          <div className="space-y-2">
-            {TEMPO_OBJECTION_FACTS.map((fact) => (
-              <div
-                key={fact.label}
-                className="flex justify-between p-3 bg-surface-container-lowest rounded-lg border border-outline-variant"
-              >
-                <span className="text-body-md text-on-surface-variant">{fact.label}</span>
-                <span className="text-body-md font-bold">{fact.value}</span>
-              </div>
-            ))}
-          </div>
-        </section>
+        <TempoReferenceLibrary data={referenceLibrary} />
       </ReferenceLibraryDrawer>
     </>
   );

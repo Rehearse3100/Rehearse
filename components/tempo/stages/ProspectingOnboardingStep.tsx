@@ -10,21 +10,11 @@
 import { useEffect, useRef } from "react";
 import { TempoOnboardingVideoInline } from "@/components/tempo/TempoOnboardingVideoModal";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
-
-type ReadingListItem = {
-  title: string;
-  href: string | null;
-};
-
-const READING_LIST: ReadingListItem[] = [
-  { title: "Tempo Sell Sheet", href: null },
-  { title: "Territory Brief", href: null },
-  { title: "How We Prospect", href: null },
-];
+import { PROSPECTING_READING_LIST } from "@/lib/tempo-prospecting";
 
 /**
- * Shared reading list UI (onboarding step + Reference Library drawer).
- * Single source of READING_LIST data — do not copy the array elsewhere.
+ * Reading list panel on the onboarding step. The Reference Library shows the same
+ * items (PROSPECTING_READING_LIST in lib/tempo-prospecting.ts) in its own rows.
  */
 export function ProspectingReadingList(): React.ReactElement {
   return (
@@ -36,7 +26,7 @@ export function ProspectingReadingList(): React.ReactElement {
         </p>
       </header>
       <ul className="divide-y divide-outline-variant/30">
-        {READING_LIST.map((item) => (
+        {PROSPECTING_READING_LIST.map((item) => (
           <li key={item.title}>
             {item.href ? (
               <a

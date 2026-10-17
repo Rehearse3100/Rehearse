@@ -5,8 +5,6 @@
  * Value / Power / Plan. Display titles may change; persisted keys stay stable.
  */
 
-import type { DiscoverySummaryForm } from "@/lib/tempo-discovery";
-
 export type PresentationForm = {
   businessCase: string;
   underlyingPainPoints: string;
@@ -40,34 +38,6 @@ export const PRESENTATION_SECTIONS = [
   { number: 4, title: "Value", field: "proofPoint" as const },
   { number: 5, title: "Power", field: "powerStakeholder" as const },
   { number: 6, title: "Plan", field: "nextStep" as const },
-] as const;
-
-export const TEMPO_REFERENCE_SECTIONS = [
-  {
-    label: "Proof Points",
-    content: [
-      "~35% drop in no-shows within 90 days",
-      "~6 hours/week saved per front desk location",
-      "Front Range Vet Partners: 19% → 11% no-shows",
-    ],
-  },
-  {
-    label: "Pricing Model",
-    content: [
-      "Starter: $99/location/month",
-      "Pro: $179/location/month",
-      "Annual: ~15% off",
-      "Onboarding: $500/location",
-    ],
-  },
-  {
-    label: "Competitor Matrix",
-    content: [
-      "SlotEasy: $59, reminders only",
-      "Status quo: hides true cost",
-      "BookSuite: too complex",
-    ],
-  },
 ] as const;
 
 const STORAGE_PREFIX = "tempo-presentation-v2-";
@@ -185,40 +155,6 @@ export function normalizePresentationForm(raw: Record<string, unknown>): Present
     powerStakeholder: sanitizeFieldText(str("powerStakeholder") || str("bothStakeholders")),
     nextStep: sanitizeFieldText(str("nextStep")),
   };
-}
-
-/**
- * Parses Stage 3 presentation form from a stage_scores transcript JSON blob.
- */
-export function parsePresentationFormFromTranscript(
-  transcript: string | null | undefined
-): PresentationForm | null {
-  if (!transcript?.trim()) {
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(transcript) as { form?: Record<string, unknown> };
-    if (!parsed.form || typeof parsed.form !== "object") {
-      return null;
-    }
-    return normalizePresentationForm(parsed.form);
-  } catch {
-    return null;
-  }
-}
-
-export function parseDiscoverySummaryFromTranscript(
-  transcript: string | null | undefined
-): Partial<DiscoverySummaryForm> {
-  if (!transcript?.trim()) {
-    return {};
-  }
-  try {
-    const parsed = JSON.parse(transcript) as { postCallSummary?: Partial<DiscoverySummaryForm> };
-    return parsed.postCallSummary ?? {};
-  } catch {
-    return {};
-  }
 }
 
 /**

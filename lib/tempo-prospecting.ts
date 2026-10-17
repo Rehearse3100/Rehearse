@@ -160,6 +160,22 @@ export const SELF_CHECK_ITEMS = [
 /** Opening Message tips shown beside the draft (non-interactive). */
 export const OPENING_MESSAGE_TIPS = SELF_CHECK_ITEMS.map((item) => item.label);
 
+export type ReadingListItem = {
+  title: string;
+  /** Null until the document exists (shown as "Coming soon"). */
+  href: string | null;
+};
+
+/**
+ * The Prospecting reading list (onboarding step and Reference Library).
+ * Single source of the reading list — do not copy the array elsewhere.
+ */
+export const PROSPECTING_READING_LIST: readonly ReadingListItem[] = [
+  { title: "Tempo Sell Sheet", href: null },
+  { title: "Territory Brief", href: null },
+  { title: "How We Prospect", href: null },
+];
+
 export type ProspectingWizardState = {
   /** Stable step id from PROSPECTING_STEPS — never rename persisted ids. */
   currentStepId: ProspectingStepId;

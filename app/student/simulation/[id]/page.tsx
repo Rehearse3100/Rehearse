@@ -13,10 +13,9 @@ import { ProspectingWizard } from "@/components/tempo/stages/ProspectingWizard";
 import { SimulationRunner } from "@/components/SimulationRunner";
 import { ATTEMPT_STATUS, DEFAULT_CLASS_ID } from "@/lib/constants";
 import { pickPreferredInProgressAttempt } from "@/lib/attempt-progress";
-import { parseDiscoverySummaryFromTranscript, parsePresentationFormFromTranscript } from "@/lib/tempo-presentation";
-import { parseObjectionSummaryFromTranscript } from "@/lib/tempo-negotiation";
 import { parseProspectingIcpState } from "@/lib/tempo-icp-criteria";
 import { stripIcpFromStageData } from "@/lib/tempo-prospecting";
+import { buildReferenceLibrary, type ReferenceLibraryStage } from "@/lib/tempo-reference-library";
 import { isTempoDefaultSimulation } from "@/lib/tempo-simulation";
 import { isGateBypassEnabled } from "@/lib/tempo-test-bypass";
 import { getStudentSession } from "@/lib/student-session";
@@ -241,15 +240,9 @@ export default async function StudentSimulationPage({
         attempt.current_stage === "discovery" &&
         discoveryHandoffSeen));
 
-  const discoveryScore = scores.find((s) => s.stage === "discovery");
-  const discoverySummary = parseDiscoverySummaryFromTranscript(discoveryScore?.transcript);
-
   const showTempoPresentation =
     isTempoDefault &&
     (testStagePresentation || (!hasTestStageJump && attempt.current_stage === "presentation"));
-
-  const presentationScore = scores.find((s) => s.stage === "presentation");
-  const presentationSummary = parsePresentationFormFromTranscript(presentationScore?.transcript);
 
   const showTempoObjections =
     isTempoDefault &&
@@ -259,8 +252,22 @@ export default async function StudentSimulationPage({
     isTempoDefault &&
     (testStageNegotiation || (!hasTestStageJump && attempt.current_stage === "close"));
 
-  const objectionScore = scores.find((s) => s.stage === "objections");
-  const objectionSummary = parseObjectionSummaryFromTranscript(objectionScore?.transcript);
+  // One Reference Library for whichever Tempo stage renders: the ICP from
+  // stage_data and each finished call's saved transcript from stage_scores.
+  const referenceStage: ReferenceLibraryStage = showTempoProspectingWizard
+    ? "prospecting"
+    : showTempoDiscovery
+      ? "discovery"
+      : showTempoPresentation
+        ? "presentation"
+        : showTempoObjections
+          ? "objections"
+          : "negotiation";
+  const referenceLibrary = buildReferenceLibrary({
+    currentStage: referenceStage,
+    stageData: attemptStageData,
+    scores,
+  });
 
   let stageView: React.ReactElement;
 
@@ -271,6 +278,7 @@ export default async function StudentSimulationPage({
         simulationId={simulation.id}
         classId={classId}
         simulationTitle={simulation.title}
+        referenceLibrary={referenceLibrary}
         initialDiscoveryHandoff={!hasTestStageJump && isDiscoveryHandoffPending}
         testBypass={testBypass}
       />
@@ -282,6 +290,7 @@ export default async function StudentSimulationPage({
         simulationId={simulation.id}
         classId={classId}
         simulationTitle={simulation.title}
+        referenceLibrary={referenceLibrary}
         initialShowHandoff={!discoveryHandoffSeen}
         resetStoredPrep={testStageDiscovery}
         testBypass={testBypass}
@@ -294,7 +303,7 @@ export default async function StudentSimulationPage({
         simulationId={simulation.id}
         classId={classId}
         simulationTitle={simulation.title}
-        discoverySummary={discoverySummary}
+        referenceLibrary={referenceLibrary}
         testBypass={testBypass}
       />
     );
@@ -305,7 +314,7 @@ export default async function StudentSimulationPage({
         simulationId={simulation.id}
         classId={classId}
         simulationTitle={simulation.title}
-        presentationSummary={presentationSummary}
+        referenceLibrary={referenceLibrary}
         testBypass={testBypass}
       />
     );
@@ -316,9 +325,7 @@ export default async function StudentSimulationPage({
         simulationId={simulation.id}
         classId={classId}
         simulationTitle={simulation.title}
-        discoverySummary={discoverySummary}
-        presentationSummary={presentationSummary}
-        objectionSummary={objectionSummary}
+        referenceLibrary={referenceLibrary}
         testBypass={testBypass}
       />
     );

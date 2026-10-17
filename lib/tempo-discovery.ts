@@ -89,17 +89,13 @@ export const DISCOVERY_TIPS = [
   "Get her to put numbers on the pain",
 ] as const;
 
+/** The Discovery call's persona, as the Reference Library labels her transcript. */
+export const DISCOVERY_PERSONA = { name: "Dana Reyes", role: "Director of Operations" } as const;
+
 /** The manager note on the Discovery pre-call lobby, one paragraph per entry. */
 export const DISCOVERY_MANAGER_NOTE = [
   "Quick one before your call with Dana Reyes, Director of Operations at Summit Dental Group. This is your first real conversation with them, so don't sell anything yet. I want to know how they book appointments and handle the phones today, and what it costs them when that goes wrong.",
   "Ask open questions, then let Dana talk. When something sounds painful, dig in and get a number on it. Save the product and pricing for later.",
-] as const;
-
-export const TEMPO_VALUE_DRIVERS = [
-  "Cut no-shows: automated reminders",
-  "Free the front desk: self-booking",
-  "After-hours demand: 24/7 booking",
-  "Drive repeat visits: smart rebooking",
 ] as const;
 
 const PREP_STORAGE_PREFIX = "tempo-discovery-prep-v2-";

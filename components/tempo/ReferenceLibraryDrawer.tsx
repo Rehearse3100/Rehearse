@@ -1,9 +1,9 @@
 /**
  * ReferenceLibraryDrawer.tsx
- * Shared right-side Reference Library drawer for Tempo stages.
- * Slides in below the top bar; sits above stage content and below modals.
- * Stays mounted through its close animation, then unmounts; reduced-motion
- * users get no animation.
+ * Shared right-side Reference Library drawer for Tempo stages (480px; every stage
+ * puts TempoReferenceLibrary inside it). Slides in below the top bar; sits above
+ * stage content and below modals. Stays mounted through its close animation, then
+ * unmounts; reduced-motion users get no animation.
  */
 
 "use client";
@@ -17,7 +17,6 @@ const DRAWER_UNMOUNT_DELAY_MS = 200;
 type ReferenceLibraryDrawerProps = {
   open: boolean;
   onClose: () => void;
-  stageLabel: string;
   children: React.ReactNode;
   /** Extra top offset when the TEST MODE banner is visible. */
   testBypass?: boolean;
@@ -29,7 +28,6 @@ type ReferenceLibraryDrawerProps = {
 export function ReferenceLibraryDrawer({
   open,
   onClose,
-  stageLabel,
   children,
   testBypass = false,
 }: ReferenceLibraryDrawerProps): React.ReactElement | null {
@@ -106,7 +104,7 @@ export function ReferenceLibraryDrawer({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className={`absolute right-0 top-0 ${heightClass} w-[400px] max-w-full bg-white border-l border-outline-variant shadow-[-8px_0_24px_rgba(0,0,0,0.08)] flex flex-col transition-transform motion-reduce:transition-none ${
+        className={`absolute right-0 top-0 ${heightClass} w-[480px] max-w-full bg-white border-l border-outline-variant shadow-[-8px_0_24px_rgba(0,0,0,0.08)] flex flex-col transition-transform motion-reduce:transition-none ${
           isShown
             ? "translate-x-0 duration-[220ms] ease-[cubic-bezier(0.32,0.72,0,1)]"
             : "translate-x-full duration-[180ms] ease-in"
@@ -119,7 +117,9 @@ export function ReferenceLibraryDrawer({
               <h2 id={titleId} className="font-bold text-on-surface text-label-md leading-tight">
                 Reference Library
               </h2>
-              <p className="text-label-sm text-on-surface-variant truncate">{stageLabel}</p>
+              <p className="text-label-sm text-on-surface-variant truncate">
+                Everything from your earlier stages, in one place.
+              </p>
             </div>
           </div>
           <button
@@ -132,23 +132,8 @@ export function ReferenceLibraryDrawer({
             <MaterialIcon name="close" className="text-[20px]" />
           </button>
         </header>
-        <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-6 custom-scrollbar">{children}</div>
+        <div className="flex-1 min-h-0 overflow-y-auto p-6 bg-[#f8fafc] custom-scrollbar">{children}</div>
       </aside>
     </div>
-  );
-}
-
-/**
- * Small-caps section label used inside Reference Library drawer bodies.
- */
-export function ReferenceLibrarySectionLabel({
-  children,
-}: {
-  children: React.ReactNode;
-}): React.ReactElement {
-  return (
-    <h3 className="font-label-sm text-label-sm uppercase tracking-tighter text-on-surface-variant mb-sm">
-      {children}
-    </h3>
   );
 }

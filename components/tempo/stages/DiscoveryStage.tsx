@@ -13,10 +13,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { HandoffModal } from "@/components/tempo/HandoffModal";
-import {
-  ReferenceLibraryDrawer,
-  ReferenceLibrarySectionLabel,
-} from "@/components/tempo/ReferenceLibraryDrawer";
+import { ReferenceLibraryDrawer } from "@/components/tempo/ReferenceLibraryDrawer";
+import { TempoReferenceLibrary } from "@/components/tempo/TempoReferenceLibrary";
 import { TempoTestBypassBanner } from "@/components/tempo/TempoTestBypassBanner";
 import { DiscoveryCallSession } from "@/components/tempo/stages/DiscoveryCallSession";
 import { DiscoveryLobby, type DiscoveryJoinStreams } from "@/components/tempo/stages/DiscoveryLobby";
@@ -30,7 +28,6 @@ import {
   clearDiscoveryPrepFromStorage,
   loadDiscoveryPrepFromStorage,
   saveDiscoveryPrepToStorage,
-  TEMPO_VALUE_DRIVERS,
   type DiscoveryPhase,
   type DiscoveryPreCallPrep as DiscoveryPreCallPrepForm,
   type DiscoveryTranscriptEntry,
@@ -39,6 +36,7 @@ import {
   TEMPO_HANDOFF_MESSAGES,
   TEMPO_HANDOFF_STAGE_META,
 } from "@/lib/tempo-prospecting";
+import type { ReferenceLibraryData } from "@/lib/tempo-reference-library";
 import {
   applyDiscoveryPrepAutofill,
   stripDiscoveryPrepTestAutofill,
@@ -49,6 +47,8 @@ type DiscoveryStageProps = {
   simulationId: string;
   classId: string;
   simulationTitle: string;
+  /** Built by the server page for the shared Reference Library drawer. */
+  referenceLibrary: ReferenceLibraryData;
   /** Show the manager handoff on mount (student has not clicked Begin Stage 2 yet). */
   initialShowHandoff?: boolean;
   /** Skip restoring local prep (Test → Discovery jumps). */
@@ -65,6 +65,7 @@ export function DiscoveryStage({
   simulationId,
   classId,
   simulationTitle,
+  referenceLibrary,
   initialShowHandoff = false,
   resetStoredPrep = false,
   testBypass = false,
@@ -321,32 +322,9 @@ export function DiscoveryStage({
       <ReferenceLibraryDrawer
         open={referenceLibraryOpen}
         onClose={() => setReferenceLibraryOpen(false)}
-        stageLabel="Stage 2: Discovery"
         testBypass={testBypass}
       >
-        <section>
-          <ReferenceLibrarySectionLabel>Tempo Product</ReferenceLibrarySectionLabel>
-          <div>
-            <h4 className="font-headline-md text-headline-md mb-1">Tempo</h4>
-            <p className="text-sm text-on-surface-variant leading-relaxed">
-              Scheduling software for appointment-based businesses. Core value: keep calendars
-              full, stop losing money to no-shows.
-            </p>
-          </div>
-        </section>
-        <section>
-          <ReferenceLibrarySectionLabel>Value Drivers</ReferenceLibrarySectionLabel>
-          <div className="grid grid-cols-1 gap-2">
-            {TEMPO_VALUE_DRIVERS.map((value) => (
-              <div
-                key={value}
-                className="p-2 bg-surface-container rounded border border-outline-variant/30 text-xs"
-              >
-                {value}
-              </div>
-            ))}
-          </div>
-        </section>
+        <TempoReferenceLibrary data={referenceLibrary} />
       </ReferenceLibraryDrawer>
     </>
   );
