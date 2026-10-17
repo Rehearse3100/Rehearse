@@ -3,9 +3,11 @@
  * The reusable, simulation-neutral pitch-slide template: one layout that renders
  * the title, the student's text and the footer from config; a visible text box
  * that writes the slide's own field while editing, and plain text (no box) when
- * read-only (thumbnails); every colour from the deck's theme (no colour values in
- * the component); no Tempo strings in the shared files. Plus Tempo's deck config.
- * Rendered to static HTML; no network.
+ * read-only (thumbnails); the footer is only the product line and the slide
+ * number; the background design (left bar, arcs, soft circle, accent line) in the
+ * theme's colours, behind the content and identical on every slide; every colour
+ * from the deck's theme (no colour values in the component); no Tempo strings in
+ * the shared files. Plus Tempo's deck config. Rendered to static HTML; no network.
  */
 
 import { readFileSync } from "node:fs";
@@ -86,13 +88,58 @@ describe("the slide", () => {
     expect(html.match(/<h3/g)).toHaveLength(1);
   });
 
-  it("has no icons, emoji or decoration", () => {
+  it("the footer is only the product line and the slide number", () => {
+    expect(render(SLIDE)).toMatch(
+      /<div class="flex items-center justify-between shrink-0"[^>]*><p class="min-w-0">Acme · Prepared for Globex<\/p><span class="shrink-0">03<\/span><\/div>/
+    );
+  });
+
+  it("has no images, icons or emoji (the background design is plain CSS shapes)", () => {
     const html = render(SLIDE, "Student words.", vi.fn());
+    expect(html).not.toContain("<img");
     expect(html).not.toContain("<svg");
     expect(html).not.toContain("material-symbols");
     expect(html).not.toContain("“");
     // Emoji sit outside the Basic Multilingual Plane (surrogate pairs).
     expect(html).not.toMatch(/[\uD800-\uDFFF]/);
+  });
+});
+
+describe("background design", () => {
+  /** The decoration layer: one wrapper of empty shape divs. */
+  const decorationOf = (html: string): string =>
+    html.match(/<div[^>]*data-pitch-decoration[^>]*>(?:<div[^>]*><\/div>)+<\/div>/)?.[0] ?? "";
+
+  it("draws the left bar, three thin arcs, the soft circle and the accent line in the theme's colours", () => {
+    const html = render(SLIDE, "Words.", vi.fn(), THEMED_DECK);
+    const decoration = decorationOf(html);
+    expect(decoration).not.toBe("");
+    expect(decoration).toContain("background:#0f3d3e");
+    expect(decoration.split("solid color-mix(in srgb, #e07a5f 20%, transparent)")).toHaveLength(4);
+    expect(decoration).toContain("background:color-mix(in srgb, #0f3d3e 5%, transparent)");
+    expect(decoration.match(/border-radius:50%/g)).toHaveLength(4);
+    // The accent line sits directly under the title.
+    expect(html).toMatch(/<\/h3><div aria-hidden="true"[^>]*style="width:5.8cqw;height:0.36cqw;background:#e07a5f;/);
+  });
+
+  it("sits behind the content, takes no clicks and holds no text; the text box keeps its own solid background", () => {
+    const html = render(SLIDE, "Words.", vi.fn(), THEMED_DECK);
+    const decoration = decorationOf(html);
+    expect(decoration).toContain('aria-hidden="true"');
+    expect(decoration).toContain("pointer-events-none");
+    expect(decoration.replace(/<[^>]*>/g, "")).toBe("");
+    expect(html.indexOf(decoration)).toBeLessThan(html.indexOf("<h3"));
+    expect(html).toContain("--pitch-box-bg:color-mix(in srgb, #777788 5%, #fffdf8)");
+  });
+
+  it("is identical on all six slides, editing or read-only (thumbnails)", () => {
+    const designs = TEMPO_PITCH_SLIDES.flatMap((slide) => [
+      decorationOf(render(slide, "Some words.", vi.fn(), TEMPO_PITCH_DECK)),
+      decorationOf(render(slide, "", undefined, TEMPO_PITCH_DECK)),
+    ]);
+    expect(designs[0]).toContain("#1a1a2e");
+    expect(designs[0]).toContain("#c9a84c");
+    expect(new Set(designs).size).toBe(1);
   });
 });
 
