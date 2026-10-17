@@ -101,9 +101,11 @@ export const TEMPO_PITCH_SLIDES: readonly PitchSlideConfig<keyof PresentationFor
     direction: "Put a number on what fixing this is worth to them.",
     directionNote: PRESENTATION_PAYOFF_REFERENCE,
     layout: "before-after",
+    // Both cards show the no-show rate: 18% (ROI reference) × (1 − 0.35) (the 35% drop
+    // in 90 days from ABOUT TEMPO) = 11.7%, shown as ~12%.
     data: {
-      before: { value: "18%", label: "of appointments are no-shows" },
-      after: { value: "35%", label: "fewer no-shows within 90 days" },
+      before: { value: "18%", label: "no-show rate today" },
+      after: { value: "~12%", label: "no-show rate with Tempo (35% fewer within 90 days)" },
     },
   },
   {

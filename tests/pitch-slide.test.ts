@@ -271,14 +271,16 @@ describe("Tempo's deck config", () => {
     expect(rail).toMatchObject({ layout: "text-rail", data: { items: ["Cut no-shows", "Free the front desk", "Capture after-hours demand"] } });
     expect(TEMPO_RESEARCH_SYSTEM_PROMPT).toContain("Key value: cut no-shows, free the front desk, capture after-hours demand");
 
-    // 18% from the ROI reference; 35% in 90 days from the ABOUT TEMPO proof points.
+    // Both cards are the no-show rate: 18% from the ROI reference; ~12% is 18% × (1 − 0.35),
+    // the 35% drop in 90 days from the ABOUT TEMPO proof points (11.7%, rounded).
     expect(beforeAfter).toMatchObject({
       layout: "before-after",
       data: {
-        before: { value: "18%", label: "of appointments are no-shows" },
-        after: { value: "35%", label: "fewer no-shows within 90 days" },
+        before: { value: "18%", label: "no-show rate today" },
+        after: { value: "~12%", label: "no-show rate with Tempo (35% fewer within 90 days)" },
       },
     });
+    expect(Math.round(18 * (1 - 0.35))).toBe(12);
     expect(PRESENTATION_PAYOFF_REFERENCE).toContain("18% no-shows");
     expect(TEMPO_RESEARCH_SYSTEM_PROMPT).toContain("35% drop in no-shows in 90 days");
 
