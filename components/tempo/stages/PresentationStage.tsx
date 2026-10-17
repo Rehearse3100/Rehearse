@@ -9,7 +9,6 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { useRouter } from "next/navigation";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { HandoffModal } from "@/components/tempo/HandoffModal";
 import { ReferenceLibraryDrawer } from "@/components/tempo/ReferenceLibraryDrawer";
@@ -46,7 +45,6 @@ export function PresentationStage({
   referenceLibrary,
   testBypass = false,
 }: PresentationStageProps): React.ReactElement {
-  const router = useRouter();
   const [showHandoff, setShowHandoff] = useState(false);
   const [showObjectionsHandoff, setShowObjectionsHandoff] = useState(false);
   const [referenceLibraryOpen, setReferenceLibraryOpen] = useState(false);
@@ -77,9 +75,6 @@ export function PresentationStage({
           classId={classId}
           simulationTitle={simulationTitle}
           onOpenHandoff={() => setShowHandoff(true)}
-          onBackToDashboard={() =>
-            router.push(`/student/simulation/${simulationId}/entry?classId=${classId}`)
-          }
           onOpenReferenceLibrary={() => setReferenceLibraryOpen(true)}
           isReferenceLibraryOpen={referenceLibraryOpen}
         />
@@ -99,9 +94,6 @@ export function PresentationStage({
         classId={classId}
         simulationTitle={simulationTitle}
         onOpenHandoff={() => setShowHandoff(true)}
-        onBackToDashboard={() =>
-          router.push(`/student/simulation/${simulationId}/entry?classId=${classId}`)
-        }
         onOpenReferenceLibrary={() => setReferenceLibraryOpen(true)}
         isReferenceLibraryOpen={referenceLibraryOpen}
       />

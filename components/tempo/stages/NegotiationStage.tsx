@@ -10,7 +10,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { HandoffModal } from "@/components/tempo/HandoffModal";
 import { ReferenceLibraryDrawer } from "@/components/tempo/ReferenceLibraryDrawer";
@@ -44,7 +43,6 @@ export function NegotiationStage({
   referenceLibrary,
   testBypass = false,
 }: NegotiationStageProps): React.ReactElement {
-  const router = useRouter();
   const [showHandoff, setShowHandoff] = useState(false);
   const [referenceLibraryOpen, setReferenceLibraryOpen] = useState(false);
   const negotiation = useNegotiationStage({
@@ -65,9 +63,6 @@ export function NegotiationStage({
           classId={classId}
           simulationTitle={simulationTitle}
           onOpenHandoff={() => setShowHandoff(true)}
-          onBackToDashboard={() =>
-            router.push(`/student/simulation/${simulationId}/entry?classId=${classId}`)
-          }
           onOpenReferenceLibrary={() => setReferenceLibraryOpen(true)}
           isReferenceLibraryOpen={referenceLibraryOpen}
         />
@@ -87,9 +82,6 @@ export function NegotiationStage({
         classId={classId}
         simulationTitle={simulationTitle}
         onOpenHandoff={() => setShowHandoff(true)}
-        onBackToDashboard={() =>
-          router.push(`/student/simulation/${simulationId}/entry?classId=${classId}`)
-        }
         onOpenReferenceLibrary={() => setReferenceLibraryOpen(true)}
         isReferenceLibraryOpen={referenceLibraryOpen}
       />

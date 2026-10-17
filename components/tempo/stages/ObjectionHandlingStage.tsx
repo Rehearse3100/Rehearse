@@ -9,7 +9,6 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { HandoffModal } from "@/components/tempo/HandoffModal";
 import { ReferenceLibraryDrawer } from "@/components/tempo/ReferenceLibraryDrawer";
@@ -60,7 +59,6 @@ export function ObjectionHandlingStage({
   referenceLibrary,
   testBypass = false,
 }: ObjectionHandlingStageProps): React.ReactElement {
-  const router = useRouter();
   const [phase, setPhase] = useState<ObjectionHandlingPhase>("lobby");
   const [connectError, setConnectError] = useState("");
   const [callSeconds, setCallSeconds] = useState(0);
@@ -163,9 +161,6 @@ export function ObjectionHandlingStage({
         classId={classId}
         simulationTitle={simulationTitle}
         onOpenHandoff={() => setShowHandoff(true)}
-        onBackToDashboard={() =>
-          router.push(`/student/simulation/${simulationId}/entry?classId=${classId}`)
-        }
         onOpenReferenceLibrary={() => setReferenceLibraryOpen(true)}
         isReferenceLibraryOpen={referenceLibraryOpen}
       />

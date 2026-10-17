@@ -11,7 +11,6 @@ type TempoWizardTopBarProps = {
   classId: string;
   simulationTitle: string;
   onOpenHandoff: () => void;
-  onBackToDashboard: () => void;
   onOpenReferenceLibrary?: () => void;
   isReferenceLibraryOpen?: boolean;
 };
@@ -25,7 +24,6 @@ export function TempoWizardTopBar({
   classId,
   simulationTitle,
   onOpenHandoff,
-  onBackToDashboard,
   onOpenReferenceLibrary,
   isReferenceLibraryOpen,
 }: TempoWizardTopBarProps): React.ReactElement {
@@ -37,7 +35,6 @@ export function TempoWizardTopBar({
       simulationTitle={simulationTitle}
       flowIndex={0}
       onOpenHandoff={onOpenHandoff}
-      onBackToDashboard={onBackToDashboard}
       onOpenReferenceLibrary={onOpenReferenceLibrary}
       isReferenceLibraryOpen={isReferenceLibraryOpen}
     />

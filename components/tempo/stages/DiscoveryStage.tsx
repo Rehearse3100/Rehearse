@@ -10,7 +10,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { HandoffModal } from "@/components/tempo/HandoffModal";
 import { ReferenceLibraryDrawer } from "@/components/tempo/ReferenceLibraryDrawer";
@@ -70,7 +69,6 @@ export function DiscoveryStage({
   resetStoredPrep = false,
   testBypass = false,
 }: DiscoveryStageProps): React.ReactElement {
-  const router = useRouter();
   const [phase, setPhase] = useState<DiscoveryPhase>("prep");
   const [prepForm, setPrepForm] = useState<DiscoveryPreCallPrepForm>(() => ({
     openQuestions: ["", "", ""],
@@ -226,9 +224,6 @@ export function DiscoveryStage({
         classId={classId}
         simulationTitle={simulationTitle}
         onOpenHandoff={() => setShowHandoff(true)}
-        onBackToDashboard={() =>
-          router.push(`/student/simulation/${simulationId}/entry?classId=${classId}`)
-        }
         onOpenReferenceLibrary={() => setReferenceLibraryOpen(true)}
         isReferenceLibraryOpen={referenceLibraryOpen}
       />

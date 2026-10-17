@@ -7,7 +7,6 @@
 
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { HandoffModal } from "@/components/tempo/HandoffModal";
 import { ReferenceLibraryDrawer } from "@/components/tempo/ReferenceLibraryDrawer";
@@ -59,7 +58,6 @@ export function ProspectingWizard({
   initialDiscoveryHandoff = false,
   testBypass = false,
 }: ProspectingWizardProps): React.ReactElement {
-  const router = useRouter();
   const wizard = useProspectingWizard({ attemptId, testBypass });
   const [postSubmitHandoff, setPostSubmitHandoff] = useState<TempoHandoffStageKey | null>(
     initialDiscoveryHandoff ? "discovery" : null
@@ -185,9 +183,6 @@ export function ProspectingWizard({
         classId={classId}
         simulationTitle={simulationTitle}
         onOpenHandoff={() => setForceHandoffOpen(true)}
-        onBackToDashboard={() =>
-          router.push(`/student/simulation/${simulationId}/entry?classId=${classId}`)
-        }
         onOpenReferenceLibrary={() => setReferenceLibraryOpen(true)}
         isReferenceLibraryOpen={referenceLibraryOpen}
       />

@@ -11,7 +11,6 @@ type DiscoveryTopBarProps = {
   classId: string;
   simulationTitle: string;
   onOpenHandoff: () => void;
-  onBackToDashboard: () => void;
   onOpenReferenceLibrary?: () => void;
   isReferenceLibraryOpen?: boolean;
 };
@@ -25,7 +24,6 @@ export function DiscoveryTopBar({
   classId,
   simulationTitle,
   onOpenHandoff,
-  onBackToDashboard,
   onOpenReferenceLibrary,
   isReferenceLibraryOpen,
 }: DiscoveryTopBarProps): React.ReactElement {
@@ -37,7 +35,6 @@ export function DiscoveryTopBar({
       simulationTitle={simulationTitle}
       flowIndex={1}
       onOpenHandoff={onOpenHandoff}
-      onBackToDashboard={onBackToDashboard}
       onOpenReferenceLibrary={onOpenReferenceLibrary}
       isReferenceLibraryOpen={isReferenceLibraryOpen}
     />

@@ -22,8 +22,6 @@ type TempoStageTopBarProps = {
   /** 0 = Prospecting … 4 = Negotiation */
   flowIndex: number;
   onOpenHandoff: () => void;
-  /** Mobile-only Back button (Exit Simulation also lives in the menu). */
-  onBackToDashboard: () => void;
   /** Opens the shared Reference Library drawer when provided. */
   onOpenReferenceLibrary?: () => void;
   /** Highlights the Reference Library button while the drawer is open. */
@@ -40,7 +38,6 @@ export function TempoStageTopBar({
   simulationTitle,
   flowIndex,
   onOpenHandoff,
-  onBackToDashboard,
   onOpenReferenceLibrary,
   isReferenceLibraryOpen = false,
 }: TempoStageTopBarProps): React.ReactElement {
@@ -63,7 +60,7 @@ export function TempoStageTopBar({
           </Link>
         </div>
 
-        {/* Mobile logo + back */}
+        {/* Mobile logo */}
         <div className="flex lg:hidden items-center gap-2 px-3 shrink-0">
           <Link
             href="/student/dashboard"
@@ -76,14 +73,6 @@ export function TempoStageTopBar({
               className="h-[1.5em] w-auto shrink-0"
             />
           </Link>
-          <button
-            type="button"
-            onClick={onBackToDashboard}
-            className={`${BAR_BUTTON} text-on-surface-variant border border-outline-variant hover:bg-surface-container`}
-          >
-            <MaterialIcon name="arrow_back" className="text-[16px]" />
-            <span>Back</span>
-          </button>
         </div>
 
         {/* Middle zone — same flex space as the stage center column */}
