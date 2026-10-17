@@ -1,6 +1,8 @@
 /**
  * complete/page.tsx
  * Student simulation results — Tempo (default class) or legacy pipeline view.
+ * With TEMPO_TEST_BYPASS_GATES on, ?testresults= and ?testbadges=all show mock
+ * Tempo results (tester shortcuts); with it off they are ignored.
  */
 
 import { BackButton } from "@/components/BackButton";
@@ -28,6 +30,7 @@ import {
   type TempoTestResultsOutcome,
 } from "@/lib/tempo-results";
 import { isTempoDefaultSimulation } from "@/lib/tempo-simulation";
+import { isGateBypassEnabled } from "@/lib/tempo-test-bypass";
 import { getStudentSession } from "@/lib/student-session";
 import { createServiceClient } from "@/lib/supabase/server";
 import type { Metadata } from "next";
@@ -66,11 +69,14 @@ export default async function SimulationCompletePage({
     redirect("/student-login");
   }
 
-  const testOutcomeRaw = searchParams.testresults?.trim();
+  // Tester previews (?testresults=, ?testbadges=all) work only with the bypass
+  // flag on; otherwise the page behaves as if neither param was given.
+  const testBypass = isGateBypassEnabled();
+  const testOutcomeRaw = testBypass ? searchParams.testresults?.trim() : undefined;
   const testOutcomeFromParam = TEST_OUTCOMES.has(testOutcomeRaw as TempoTestResultsOutcome)
     ? (testOutcomeRaw as TempoTestResultsOutcome)
     : null;
-  const testBadgesAll = searchParams.testbadges?.trim() === "all";
+  const testBadgesAll = testBypass && searchParams.testbadges?.trim() === "all";
   const testOutcome: TempoTestResultsOutcome | null =
     testOutcomeFromParam ?? (testBadgesAll ? "deal_agreed" : null);
 

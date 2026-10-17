@@ -14,6 +14,8 @@ import { StudentSidebar } from "./StudentSidebar";
 type StudentPortalShellProps = {
   displayName: string;
   classCount: number;
+  /** Server layout boolean from TEMPO_TEST_BYPASS_GATES — shows the tester shortcuts. */
+  testBypass: boolean;
   children: React.ReactNode;
 };
 
@@ -38,6 +40,7 @@ function isTempoEntryPage(pathname: string): boolean {
 export function StudentPortalShell({
   displayName,
   classCount,
+  testBypass,
   children,
 }: StudentPortalShellProps): React.ReactElement {
   const pathname = usePathname();
@@ -48,7 +51,7 @@ export function StudentPortalShell({
     <StudentShellProvider>
       <div className="fixed inset-0 z-40 flex flex-col bg-surface overflow-hidden font-body-md text-body-md text-on-surface">
         {!hideSidebar && (
-          <StudentDashboardHeader displayName={displayName} classCount={classCount} />
+          <StudentDashboardHeader displayName={displayName} classCount={classCount} testBypass={testBypass} />
         )}
         <div className="flex flex-1 min-h-0 overflow-hidden">
           {!hideSidebar && <StudentSidebar />}

@@ -161,8 +161,12 @@ export default async function StudentSimulationPage({
 
   const isTempoDefault =
     classId === DEFAULT_CLASS_ID && isTempoDefaultSimulation(simulation.id, simulation.title);
-  // Dev shortcuts for testing individual Tempo stages — exclusive when set.
-  const rawTestStage = searchParams.teststage?.trim() ?? "";
+  // Local-dev Tempo gate bypass (all 5 stages) — single helper, pass as prop.
+  // Never NEXT_PUBLIC_; client code must never read this env var.
+  const testBypass = isGateBypassEnabled();
+  // Dev shortcuts for testing individual Tempo stages — exclusive when set, and
+  // ignored (as if absent) unless the bypass flag is on.
+  const rawTestStage = testBypass ? searchParams.teststage?.trim() ?? "" : "";
   const testStageProspecting = rawTestStage === "prospecting";
   const testStageDiscovery = rawTestStage === "discovery";
   const testStagePresentation = rawTestStage === "presentation";
@@ -174,9 +178,6 @@ export default async function StudentSimulationPage({
     testStagePresentation ||
     testStageObjections ||
     testStageNegotiation;
-  // Local-dev Tempo gate bypass (all 5 stages) — single helper, pass as prop.
-  // Never NEXT_PUBLIC_; client code must never read this env var.
-  const testBypass = isGateBypassEnabled();
 
   // Ensure stale icpGateComplete flags never skip the ICP step. Decided here;
   // written in Batch 2 alongside the reads.

@@ -9,6 +9,7 @@ import { redirect } from "next/navigation";
 import { StudentPortalShell } from "@/components/student/StudentPortalShell";
 import { loadStudentEnrolledClasses } from "@/lib/student-class-data";
 import { getStudentSession } from "@/lib/student-session";
+import { isGateBypassEnabled } from "@/lib/tempo-test-bypass";
 
 /**
  * Student layout wrapper — portal shell with sidebar navigation.
@@ -25,8 +26,13 @@ export default async function StudentLayout({
 
   const enrolledClasses = await loadStudentEnrolledClasses(session.studentId);
 
+  // Server-read flag, passed down as a boolean (client code never reads process.env).
   return (
-    <StudentPortalShell displayName={session.displayName} classCount={enrolledClasses.length}>
+    <StudentPortalShell
+      displayName={session.displayName}
+      classCount={enrolledClasses.length}
+      testBypass={isGateBypassEnabled()}
+    >
       {children}
     </StudentPortalShell>
   );

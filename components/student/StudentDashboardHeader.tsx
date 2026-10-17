@@ -1,6 +1,8 @@
 /**
  * StudentDashboardHeader.tsx
- * Top app bar for the student portal — Stitch visual treatment.
+ * Top app bar for the student portal — Stitch visual treatment. The tester
+ * shortcuts dropdown shows only when the server passes testBypass (the
+ * TEMPO_TEST_BYPASS_GATES flag); this client file never reads process.env.
  */
 
 "use client";
@@ -13,14 +15,17 @@ import { TestShortcutsDropdown } from "@/app/student/dashboard/TestShortcutsDrop
 type StudentDashboardHeaderProps = {
   displayName: string;
   classCount: number;
+  /** Server boolean from TEMPO_TEST_BYPASS_GATES — shows the tester shortcuts dropdown. */
+  testBypass: boolean;
 };
 
 /**
- * Sticky header with logo, user info, and logout.
+ * Sticky header with logo, user info, the tester shortcuts (bypass flag only) and logout.
  */
 export function StudentDashboardHeader({
   displayName,
   classCount,
+  testBypass,
 }: StudentDashboardHeaderProps): React.ReactElement {
   const router = useRouter();
 
@@ -66,11 +71,13 @@ export function StudentDashboardHeader({
             </div>
           </div>
 
-          <TestShortcutsDropdown
-            simulationId={TEMPO_SIMULATION_ID}
-            classId={DEFAULT_CLASS_ID}
-            compact
-          />
+          {testBypass ? (
+            <TestShortcutsDropdown
+              simulationId={TEMPO_SIMULATION_ID}
+              classId={DEFAULT_CLASS_ID}
+              compact
+            />
+          ) : null}
 
           <button
             type="button"
