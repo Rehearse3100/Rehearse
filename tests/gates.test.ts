@@ -1,6 +1,7 @@
 /**
  * gates.test.ts
- * Locks canAdvanceProspectingStep conditions — including test-bypass short-circuit.
+ * Locks canAdvanceProspectingStep conditions — including test-bypass short-circuit —
+ * and canReturnToProspectingStep (no going back into the ICP once past it).
  * Signature is id-keyed; each gate's condition is unchanged from the index era,
  * except the agent step, which now needs the student's agent explanation.
  */
@@ -9,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   AGENT_DESIGN_MIN_CHARS,
   canAdvanceProspectingStep,
+  canReturnToProspectingStep,
   canSubmitProspectingBrief,
   DEFAULT_PROSPECTING_WIZARD_STATE,
   PROSPECTING_STEPS,
@@ -46,6 +48,22 @@ const ALL_STEPS: ProspectingStepId[] = [
   "opening",
   "agent",
 ];
+
+describe("canReturnToProspectingStep", () => {
+  it("once past the ICP step there is no going back to it or before it", () => {
+    for (const current of ["research", "select_lead", "opening", "agent"] as const) {
+      expect(canReturnToProspectingStep(current, "icp"), current).toBe(false);
+      expect(canReturnToProspectingStep(current, "onboarding"), current).toBe(false);
+    }
+    expect(canReturnToProspectingStep("agent", "opening")).toBe(true);
+    expect(canReturnToProspectingStep("select_lead", "research")).toBe(true);
+  });
+
+  it("before crossing it, the ICP step can still go back to the Welcome Briefing", () => {
+    expect(canReturnToProspectingStep("icp", "onboarding")).toBe(true);
+    expect(canReturnToProspectingStep("onboarding", "icp")).toBe(true);
+  });
+});
 
 describe("canAdvanceProspectingStep", () => {
   it("onboarding: blocks until onboardingComplete", () => {

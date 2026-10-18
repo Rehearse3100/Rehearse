@@ -297,6 +297,15 @@ export function prevProspectingStepId(
 }
 
 /**
+ * Whether the student may go back to a step. Once past the ICP step there is no
+ * going back to it (or before it): the ICP is reviewed once, so it is final.
+ */
+export function canReturnToProspectingStep(currentStepId: string, targetStepId: string): boolean {
+  const icpIndex = prospectingStepIndex("icp");
+  return !(prospectingStepIndex(currentStepId) > icpIndex && prospectingStepIndex(targetStepId) <= icpIndex);
+}
+
+/**
  * Parses a location-count input for the ICP size range (positive integer).
  */
 export function parseIcpLocationCount(value: string): number | null {

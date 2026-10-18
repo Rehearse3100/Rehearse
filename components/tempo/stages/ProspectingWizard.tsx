@@ -3,7 +3,8 @@
  * Stage 1 of the Tempo simulation — 6-step prospecting wizard (Welcome Briefing →
  * ICP → Data Room → Select Lead → Opening Message → Build Your Agent) with handoff.
  * Next on the ICP step reviews the ICP (once) and shows the manager's note in the
- * hovering manager-message window over the form until Continue to research.
+ * hovering manager-message window over the form until Continue to research. Once
+ * past the ICP step there is no going back to it.
  * Only rendered for Tempo in the Rehearse Essentials default class.
  */
 
@@ -22,6 +23,7 @@ import { ProspectingStepPanels } from "@/components/tempo/stages/ProspectingStep
 import type { ProspectingLeadSelectionHandle } from "@/components/tempo/stages/ProspectingLeadSelectionStep";
 import { useProspectingWizard } from "@/hooks/useProspectingWizard";
 import {
+  canReturnToProspectingStep,
   isIcpDefinitionComplete,
   nextProspectingStepId,
   prevProspectingStepId,
@@ -326,11 +328,11 @@ export function ProspectingWizard({
                       : null
               }
               onBack={
-                previousStepId
+                // No Back into the ICP once past it (the Data Room has none): it's reviewed once.
+                previousStepId && canReturnToProspectingStep(currentStepId, previousStepId)
                   ? () => wizard.setCurrentStepId(previousStepId)
                   : undefined
               }
-              backDisabled={currentStepId === "research" && !icpComplete}
               backLabel={
                 previousStepId
                   ? `Back to ${

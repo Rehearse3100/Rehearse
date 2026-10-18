@@ -15,6 +15,7 @@ import { completeStage } from "@/lib/attempt-actions";
 import type { ProspectDirectoryCompany } from "@/lib/tempo-prospect-directory";
 import {
   canAdvanceProspectingStep,
+  canReturnToProspectingStep,
   canSubmitProspectingBrief,
   countWords,
   formatIcpTextForFeedback,
@@ -248,6 +249,9 @@ export function useProspectingWizard({
         return;
       }
       if (!testBypass && targetIndex > 1 && !isIcpDefinitionComplete(state)) {
+        return;
+      }
+      if (!canReturnToProspectingStep(state.currentStepId, stepId)) {
         return;
       }
       updateField("currentStepId", stepId);
