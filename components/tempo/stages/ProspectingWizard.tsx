@@ -2,6 +2,8 @@
  * ProspectingWizard.tsx
  * Stage 1 of the Tempo simulation — 6-step prospecting wizard (Welcome Briefing →
  * ICP → Data Room → Select Lead → Opening Message → Build Your Agent) with handoff.
+ * Next on the ICP step reviews the ICP (once) and shows the manager's note in place
+ * of the form until Continue to research.
  * Only rendered for Tempo in the Rehearse Essentials default class.
  */
 
@@ -15,6 +17,7 @@ import { TempoStageForwardNav } from "@/components/tempo/TempoStageForwardNav";
 import { TempoTestBypassBanner } from "@/components/tempo/TempoTestBypassBanner";
 import { TempoWizardTopBar } from "@/components/tempo/TempoWizardTopBar";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
+import { IcpManagerNote } from "@/components/tempo/stages/ProspectingIcpStep";
 import { ProspectingStepPanels } from "@/components/tempo/stages/ProspectingStepPanels";
 import type { ProspectingLeadSelectionHandle } from "@/components/tempo/stages/ProspectingLeadSelectionStep";
 import { useProspectingWizard } from "@/hooks/useProspectingWizard";
@@ -94,10 +97,15 @@ export function ProspectingWizard({
 
   const selectLeadCanProceed =
     testBypass || Boolean(pickedLeadId ?? state.selectedLeadId);
+  // The manager's note replaces the ICP form until Continue to research marks it seen.
+  const isIcpNoteShowing =
+    currentStepId === "icp" && wizard.icpNote !== null && !wizard.icpNote.feedbackSeen;
   const forwardDisabled = upcomingStepId
     ? currentStepId === "select_lead"
       ? !selectLeadCanProceed || isConfirmingLead
-      : !wizard.canProceed
+      : currentStepId === "icp"
+        ? !wizard.canProceed || wizard.isContinuingIcp
+        : !wizard.canProceed
     : !wizard.canSubmit || wizard.isSubmitting;
 
   if (wizard.isLoading) {
@@ -141,6 +149,11 @@ export function ProspectingWizard({
     }
 
     if (!wizard.canProceed) {
+      return;
+    }
+    if (currentStepId === "icp") {
+      // Review the ICP and show the note (once), or move on when it's been seen.
+      await wizard.advanceFromIcp();
       return;
     }
     await wizard.handleStepAdvance(upcomingStepId);
@@ -288,7 +301,10 @@ export function ProspectingWizard({
             <TempoStageForwardNav
               forwardLabel={upcomingStepId ? "Next" : "Submit"}
               forwardDisabled={forwardDisabled}
-              isForwardLoading={!upcomingStepId && wizard.isSubmitting}
+              isForwardLoading={
+                (!upcomingStepId && wizard.isSubmitting) || (currentStepId === "icp" && wizard.isReviewingIcp)
+              }
+              loadingLabel={currentStepId === "icp" ? "Reviewing your ICP…" : undefined}
               onForward={() => {
                 if (upcomingStepId) {
                   void handleNext();
@@ -297,7 +313,9 @@ export function ProspectingWizard({
                 void handleSubmit();
               }}
               forwardHint={
-                currentStepId === "onboarding"
+                currentStepId === "icp" && wizard.icpReviewError
+                  ? wizard.icpReviewError
+                  : currentStepId === "onboarding"
                   ? state.onboardingComplete
                     ? "Briefing complete, you can continue"
                     : "Watch the briefing to unlock Next"
@@ -333,20 +351,28 @@ export function ProspectingWizard({
                 : "p-4 lg:p-xl"
             }`}
           >
-            <ProspectingStepPanels
-              currentStepId={currentStepId}
-              attemptId={attemptId}
-              state={state}
-              wordCount={wizard.wordCount}
-              testBypass={testBypass}
-              onSelectCompany={wizard.selectDirectoryCompany}
-              onShortlistChange={wizard.setShortlistedCompanyIds}
-              onFieldChange={wizard.updateField}
-              leadSelectionRef={leadSelectionRef}
-              onLeadPickedChange={handleLeadPickedChange}
-              onLeadSelected={(leadId) => wizard.completeLeadSelection(leadId)}
-              onOnboardingComplete={wizard.completeOnboarding}
-            />
+            {isIcpNoteShowing && wizard.icpNote ? (
+              <IcpManagerNote
+                note={wizard.icpNote.note}
+                onContinue={() => void wizard.continueFromIcpNote()}
+                isContinuing={wizard.isContinuingIcp}
+              />
+            ) : (
+              <ProspectingStepPanels
+                currentStepId={currentStepId}
+                attemptId={attemptId}
+                state={state}
+                wordCount={wizard.wordCount}
+                testBypass={testBypass}
+                onSelectCompany={wizard.selectDirectoryCompany}
+                onShortlistChange={wizard.setShortlistedCompanyIds}
+                onFieldChange={wizard.updateField}
+                leadSelectionRef={leadSelectionRef}
+                onLeadPickedChange={handleLeadPickedChange}
+                onLeadSelected={(leadId) => wizard.completeLeadSelection(leadId)}
+                onOnboardingComplete={wizard.completeOnboarding}
+              />
+            )}
           </div>
         </section>
         </div>
@@ -357,7 +383,8 @@ export function ProspectingWizard({
         onClose={() => setReferenceLibraryOpen(false)}
         testBypass={testBypass}
       >
-        {/* Live ICP once submitted (past the ICP step); locked before that. */}
+        {/* Live ICP once submitted (past the ICP step); locked before that. The
+            manager's note shows as soon as it exists, including one just written. */}
         <TempoReferenceLibrary
           attemptId={attemptId}
           data={{
@@ -365,6 +392,7 @@ export function ProspectingWizard({
             icpRows: isIcpSubmitted(state.currentStepId, referenceLibrary.icpRows !== null)
               ? buildIcpRows(state)
               : null,
+            icpNote: wizard.icpNote?.note.trim() || referenceLibrary.icpNote,
           }}
         />
       </ReferenceLibraryDrawer>

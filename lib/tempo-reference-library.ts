@@ -5,13 +5,15 @@
  * The server page (app/student/simulation/[id]/page.tsx) builds a
  * ReferenceLibraryData from the attempt's stage_data (the ICP and the pitch) and
  * stage_scores (each finished stage's saved row) and passes it to the stage. One
- * section per stage, always all five: Prospecting (the ICP once submitted, and the
- * reading list), the Discovery and Objection Handling calls (transcript; "Upcoming"
- * until the call is saved), Presentation (the student's submitted slides) and
- * Negotiation (levers and pricing on the Negotiation stage). No answer-key data is
- * read here.
+ * section per stage, always all five: Prospecting (the ICP once submitted, the
+ * manager's note on it once saved, and the reading list), the Discovery and
+ * Objection Handling calls (transcript; "Upcoming" until the call is saved),
+ * Presentation (the student's submitted slides) and Negotiation (levers and pricing
+ * on the Negotiation stage). No answer-key data is read here, and the ICP review's
+ * score, band and criteria never leave stage_data: only its note does.
  */
 
+import { parseIcpGradeRecord } from "@/lib/icp-grading";
 import { DISCOVERY_PERSONA, parseDiscoveryTranscript } from "@/lib/tempo-discovery";
 import { OBJECTION_PERSONA, parseObjectionTranscript } from "@/lib/tempo-objections";
 import { normalizePresentationForm, type PresentationForm } from "@/lib/tempo-presentation";
@@ -64,6 +66,8 @@ export type ReferenceLibraryData = {
   currentStage: ReferenceLibraryStage;
   /** null until the student has submitted the ICP (see isIcpSubmitted). */
   icpRows: ReferenceIcpRow[] | null;
+  /** The manager's note on the ICP (stage_data.icp); null until one is saved. */
+  icpNote: string | null;
   /** null until the call is saved to stage_scores ("Upcoming"). */
   discovery: ReferenceCall | null;
   objections: ReferenceCall | null;
@@ -200,9 +204,10 @@ type StageScoreRow = { stage: string; transcript: string | null };
 
 /**
  * Builds the library for the server page: the ICP from stage_data (once
- * submitted), each call from its stage_scores row (null — "Upcoming" — when there
- * is none yet), and the submitted pitch from stage_data.presentation once the
- * Presentation stage is saved (missing fields read as empty).
+ * submitted) and the manager's note on it (once saved; the note only), each call
+ * from its stage_scores row (null — "Upcoming" — when there is none yet), and the
+ * submitted pitch from stage_data.presentation once the Presentation stage is
+ * saved (missing fields read as empty).
  */
 export function buildReferenceLibrary(input: {
   currentStage: ReferenceLibraryStage;
@@ -216,9 +221,11 @@ export function buildReferenceLibrary(input: {
   };
   const wizard = normalizeProspectingWizardState(input.stageData as Partial<ProspectingWizardState>);
   const savedPitch = input.stageData.presentation;
+  const icpNote = parseIcpGradeRecord(input.stageData.icp)?.note.trim() ?? "";
   return {
     currentStage: input.currentStage,
     icpRows: isIcpSubmitted(wizard.currentStepId, Boolean(rowFor("prospecting"))) ? buildIcpRows(wizard) : null,
+    icpNote: icpNote || null,
     discovery: callFor("discovery"),
     objections: callFor("objections"),
     presentation: rowFor("presentation")

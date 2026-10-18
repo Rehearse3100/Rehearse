@@ -14,6 +14,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ManagerNoteCard } from "@/components/tempo/ManagerNoteCard";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 
 export type TempoJoinStreams = {
@@ -37,29 +38,6 @@ const MIC_BLOCKED_MESSAGE = "Microphone access was blocked. Allow it in your bro
 
 /** Both live-call stages show the full transcript on the post-call screen. */
 const TRANSCRIPT_NOTE = "Take notes as you go. You'll get the full call transcript when the call ends.";
-
-// ── Manager note ───
-
-/** The yellow manager note card; fills the row's height with its footer at the bottom. */
-function ManagerNoteCard({ paragraphs }: { paragraphs: readonly string[] }): React.ReactElement {
-  return (
-    <div className="h-full flex flex-col rounded-xl p-6 shadow-sm bg-[#FFF4CC] border border-[rgba(180,130,0,0.3)] text-[#584400]">
-      <div className="flex items-center gap-2 mb-4">
-        <MaterialIcon name="campaign" className="text-[20px]" />
-        <h3 className="font-bold text-[16px]">Manager note</h3>
-      </div>
-      <div className="flex-1 space-y-3 text-[15px] leading-[1.65]">
-        {paragraphs.map((paragraph) => (
-          <p key={paragraph}>{paragraph}</p>
-        ))}
-      </div>
-      <div className="mt-6 pt-4 border-t border-[rgba(88,68,0,0.15)] flex items-start gap-2.5">
-        <MaterialIcon name="edit_note" className="text-[20px] shrink-0 mt-0.5" />
-        <span className="text-[14px] font-semibold leading-snug">{TRANSCRIPT_NOTE}</span>
-      </div>
-    </div>
-  );
-}
 
 // ── Lobby ───
 
@@ -160,7 +138,16 @@ export function TempoCallLobby({
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch min-h-0">
-          <ManagerNoteCard paragraphs={managerNote} />
+          <ManagerNoteCard
+            title="Manager note"
+            paragraphs={managerNote}
+            footer={
+              <>
+                <MaterialIcon name="edit_note" className="text-[20px] shrink-0 mt-0.5" />
+                <span className="text-[14px] font-semibold leading-snug">{TRANSCRIPT_NOTE}</span>
+              </>
+            }
+          />
 
           {/* Camera + device setup */}
           <div className="flex flex-col gap-4 min-h-0">

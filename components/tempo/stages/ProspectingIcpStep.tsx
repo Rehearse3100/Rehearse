@@ -1,11 +1,16 @@
 /**
  * ProspectingIcpStep.tsx
  * ICP step — target verticals, size range, operational signals, and disqualifiers.
+ * After Next, the wizard shows IcpManagerNote in place of the form: the manager's
+ * note on the ICP (graded once by /api/student/icp-check) in the yellow
+ * manager-note card, with Continue to research.
  */
 
 "use client";
 
 import { FieldCounter } from "@/components/tempo/FieldCounter";
+import { ManagerNoteCard } from "@/components/tempo/ManagerNoteCard";
+import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import {
   ICP_MIN_DECISION_MAKER_ROLE_CHARS,
   ICP_MIN_DISQUALIFIER_CHARS,
@@ -233,6 +238,47 @@ export function ProspectingIcpStep({
             ))}
           </div>
         </section>
+      </main>
+    </div>
+  );
+}
+
+/**
+ * The manager's note on the student's ICP, shown in place of the form after Next:
+ * "Note from your manager" in the yellow manager-note card, with Continue to
+ * research (which marks it seen and moves to the research step).
+ */
+export function IcpManagerNote({
+  note,
+  onContinue,
+  isContinuing,
+}: {
+  note: string;
+  onContinue: () => void;
+  isContinuing: boolean;
+}): React.ReactElement {
+  const paragraphs = note
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+  return (
+    <div className="bg-surface text-on-surface font-body-md min-h-full flex items-start justify-center px-md pt-lg pb-md">
+      <main className="w-full max-w-[720px] mx-auto">
+        <ManagerNoteCard
+          title="Note from your manager"
+          paragraphs={paragraphs}
+          footer={
+            <button
+              type="button"
+              onClick={onContinue}
+              disabled={isContinuing}
+              className="w-full sm:w-auto sm:ml-auto inline-flex items-center justify-center gap-2 h-11 px-5 rounded-lg bg-primary-container text-white font-bold text-label-md hover:bg-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Continue to research
+              <MaterialIcon name="arrow_forward" className="text-[18px]" />
+            </button>
+          }
+        />
       </main>
     </div>
   );

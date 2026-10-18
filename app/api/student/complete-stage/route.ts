@@ -9,6 +9,7 @@
 
 import { NextResponse } from "next/server";
 import { requireStudentApi } from "@/lib/api-auth";
+import { parseIcpGradeRecord } from "@/lib/icp-grading";
 import { getNextStage } from "@/lib/stages";
 import { createServiceClient } from "@/lib/supabase/server";
 import { isTempoAttempt, readJoinedSimulationTitle } from "@/lib/tempo-attempt";
@@ -68,8 +69,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       return NextResponse.json({ error: "Attempt not found." }, { status: 404 });
     }
 
-    // PART 4: ensure prospecting transcript carries the active ICP from stage_data
-    // (coaching gate) even if the client omittted it.
+    // Ensure the prospecting transcript carries the ICP review (rubric version,
+    // status and the manager note) from stage_data.icp, in the current or the old
+    // shape, even if the client omitted it. The score, band and criteria stay in
+    // stage_data only.
     let transcriptToStore = transcript;
     if (stage === "prospecting") {
       try {
@@ -78,18 +81,14 @@ export async function POST(request: Request): Promise<NextResponse> {
             ? (JSON.parse(transcript) as Record<string, unknown>)
             : {};
         const stageData = (attempt.stage_data ?? {}) as Record<string, unknown>;
-        const icpRaw = stageData.icp;
-        if (icpRaw && typeof icpRaw === "object" && !Array.isArray(icpRaw)) {
-          const icpObj = icpRaw as Record<string, unknown>;
-          if (!parsed.icp) {
-            parsed.icp = {
-              originalText: typeof icpObj.originalText === "string" ? icpObj.originalText : "",
-              result: icpObj.result === "corrected" ? "corrected" : "affirmed",
-              activeIcpText:
-                typeof icpObj.activeIcpText === "string" ? icpObj.activeIcpText : "",
-            };
-            transcriptToStore = JSON.stringify(parsed);
-          }
+        const icpRecord = parseIcpGradeRecord(stageData.icp);
+        if (icpRecord && !parsed.icp) {
+          parsed.icp = {
+            rubricVersion: icpRecord.rubricVersion,
+            status: icpRecord.status,
+            note: icpRecord.note,
+          };
+          transcriptToStore = JSON.stringify(parsed);
         }
       } catch {
         /* keep original transcript */

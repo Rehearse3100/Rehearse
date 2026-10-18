@@ -15,6 +15,8 @@ type TempoStageForwardNavProps = {
   forwardDisabled?: boolean;
   onForward: () => void;
   isForwardLoading?: boolean;
+  /** The forward button's text while loading (default "Submitting..."). */
+  loadingLabel?: string;
   /** Shown left of the forward button when the gate blocks (desktop). */
   forwardHint?: string | null;
   onBack?: () => void;
@@ -32,6 +34,7 @@ export function TempoStageForwardNav({
   forwardDisabled = false,
   onForward,
   isForwardLoading = false,
+  loadingLabel = "Submitting...",
   forwardHint = null,
   onBack,
   backDisabled = false,
@@ -69,7 +72,7 @@ export function TempoStageForwardNav({
             : "bg-surface-container-highest text-on-surface-variant/40 cursor-not-allowed"
         }`}
       >
-        {isForwardLoading ? "Submitting..." : forwardLabel}
+        {isForwardLoading ? loadingLabel : forwardLabel}
         <MaterialIcon
           name={forwardLabel === "Submit" ? "send" : "arrow_forward"}
           className="text-[18px]"

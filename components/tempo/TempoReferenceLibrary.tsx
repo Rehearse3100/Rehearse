@@ -2,8 +2,9 @@
  * TempoReferenceLibrary.tsx
  * The one Reference Library body every Tempo stage renders inside
  * ReferenceLibraryDrawer. One collapsible section per stage, always all five (the
- * current stage's opens first): Prospecting (the student's ICP once submitted, and
- * the reading list), the Discovery and Objection Handling calls (meta row, AI call
+ * current stage's opens first): Prospecting (the student's ICP once submitted, the
+ * manager's feedback note on it once saved, never a score, and the reading list),
+ * the Discovery and Objection Handling calls (meta row, AI call
  * notes and the full transcript with search; a locked "Upcoming" row until the call
  * is saved), Presentation (the student's submitted slides, read-only, each one
  * opening full size in a viewer; locked before submitting) and Negotiation
@@ -145,6 +146,23 @@ function IcpCard({ rows }: { rows: readonly ReferenceIcpRow[] | null }): React.R
           ))}
         </dl>
       )}
+    </div>
+  );
+}
+
+/** The manager's note on the ICP, in the yellow manager-note colours; shown only once the note exists. */
+function IcpManagerFeedback({ note }: { note: string }): React.ReactElement {
+  return (
+    <div className="rounded-xl bg-[#FFF4CC] border border-[rgba(180,130,0,0.3)] p-4 space-y-2.5 text-[#584400]">
+      <div className="flex items-center justify-between">
+        <span className="font-label-sm text-label-sm uppercase tracking-wider font-semibold">Manager feedback</span>
+        <MaterialIcon name="campaign" className="text-[18px]" />
+      </div>
+      <div className="space-y-2 text-[14px] leading-relaxed">
+        {note.split(/\n\s*\n/).map((paragraph) => (
+          <p key={paragraph}>{paragraph}</p>
+        ))}
+      </div>
     </div>
   );
 }
@@ -679,12 +697,13 @@ export function TempoReferenceLibrary({ attemptId, data }: TempoReferenceLibrary
               <LibrarySection
                 key={id}
                 title="Prospecting"
-                pill="2 items"
+                pill={data.icpNote ? "3 items" : "2 items"}
                 dotClass="bg-tertiary-container"
                 isOpen={openSections.has(id)}
                 onToggle={() => toggle(id)}
               >
                 <IcpCard rows={data.icpRows} />
+                {data.icpNote ? <IcpManagerFeedback note={data.icpNote} /> : null}
                 <ReadingList />
               </LibrarySection>
             );

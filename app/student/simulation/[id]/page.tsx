@@ -13,7 +13,7 @@ import { ProspectingWizard } from "@/components/tempo/stages/ProspectingWizard";
 import { SimulationRunner } from "@/components/SimulationRunner";
 import { ATTEMPT_STATUS, DEFAULT_CLASS_ID } from "@/lib/constants";
 import { pickPreferredInProgressAttempt } from "@/lib/attempt-progress";
-import { parseProspectingIcpState } from "@/lib/tempo-icp-criteria";
+import { parseIcpGradeRecord } from "@/lib/icp-grading";
 import { stripIcpFromStageData } from "@/lib/tempo-prospecting";
 import { buildReferenceLibrary, type ReferenceLibraryStage } from "@/lib/tempo-reference-library";
 import { isTempoDefaultSimulation } from "@/lib/tempo-simulation";
@@ -186,7 +186,7 @@ export default async function StudentSimulationPage({
     const stageData =
       ((attempt as unknown as { stage_data?: Record<string, unknown> | null }).stage_data ??
         {}) as Record<string, unknown>;
-    const icp = parseProspectingIcpState(stageData.icp);
+    const icp = parseIcpGradeRecord(stageData.icp);
 
     if (testStageProspecting) {
       nextStageData = stripIcpFromStageData(stageData);

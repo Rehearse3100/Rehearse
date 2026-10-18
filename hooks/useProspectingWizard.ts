@@ -2,11 +2,15 @@
  * useProspectingWizard.ts
  * State and persistence for the Tempo Stage 1 Prospecting wizard.
  * Research step uses company-directory scoped chats (per-company history).
+ * ICP review: Next on the ICP step sends the ICP to /api/student/icp-check
+ * (graded once) and the manager's note shows until Continue marks it seen; a seen
+ * note means Next simply moves on. The note is loaded with the draft on resume.
  */
 
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { IcpNoteView } from "@/lib/icp-grading";
 import { completeStage } from "@/lib/attempt-actions";
 import type { ProspectDirectoryCompany } from "@/lib/tempo-prospect-directory";
 import {
@@ -67,7 +71,31 @@ type UseProspectingWizardResult = {
   dismissProspectingHandoff: () => void;
   /** Called when the onboarding briefing video ends. */
   completeOnboarding: () => void;
+  /** The manager's note on the ICP (note and state only); null until reviewed. */
+  icpNote: IcpNoteView | null;
+  isReviewingIcp: boolean;
+  isContinuingIcp: boolean;
+  /** Shown when the review request itself fails (the student can try again). */
+  icpReviewError: string;
+  /** Next on the ICP step: review it (once), continue past a shown note, or move on. */
+  advanceFromIcp: () => Promise<void>;
+  /** Continue to research: marks the note seen and moves to the research step. */
+  continueFromIcpNote: () => Promise<void>;
 };
+
+const ICP_REVIEW_ERROR = "Could not review your ICP right now. Try again.";
+
+/** Reads the note from the icp-check API (GET returns { icp }, POST the view itself). */
+function readIcpNoteView(raw: unknown): IcpNoteView | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const { status, note, feedbackSeen } = raw as Record<string, unknown>;
+  if ((status !== "graded" && status !== "ungraded") || typeof note !== "string") {
+    return null;
+  }
+  return { status, note, feedbackSeen: feedbackSeen === true };
+}
 
 /**
  * Manages prospecting wizard state, scoped research chat, save, and submit flows.
@@ -82,6 +110,10 @@ export function useProspectingWizard({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isAILoading, setIsAILoading] = useState(false);
   const [chatInput, setChatInput] = useState("");
+  const [icpNote, setIcpNote] = useState<IcpNoteView | null>(null);
+  const [isReviewingIcp, setIsReviewingIcp] = useState(false);
+  const [isContinuingIcp, setIsContinuingIcp] = useState(false);
+  const [icpReviewError, setIcpReviewError] = useState("");
   const directoryRef = useRef<ProspectDirectoryCompany[]>([]);
 
   const persistState = useCallback(
@@ -109,9 +141,17 @@ export function useProspectingWizard({
     const load = async (): Promise<void> => {
       const local = loadProspectingWizardFromStorage(attemptId);
       try {
-        const wizardRes = await fetch(
-          `/api/student/prospecting-wizard?attemptId=${encodeURIComponent(attemptId)}`
-        );
+        // The saved ICP note loads with the draft, so Next on the ICP step never
+        // reviews an ICP that already has one. Its failure just means no note yet.
+        const [wizardRes, icpView] = await Promise.all([
+          fetch(`/api/student/prospecting-wizard?attemptId=${encodeURIComponent(attemptId)}`),
+          fetch(`/api/student/icp-check?attemptId=${encodeURIComponent(attemptId)}`)
+            .then(async (res) => (res.ok ? readIcpNoteView(((await res.json()) as { icp?: unknown }).icp) : null))
+            .catch(() => null),
+        ]);
+        if (!cancelled) {
+          setIcpNote(icpView);
+        }
 
         let nextState = local ? normalizeProspectingWizardState(local) : DEFAULT_PROSPECTING_WIZARD_STATE;
         if (wizardRes.ok) {
@@ -312,6 +352,82 @@ export function useProspectingWizard({
     [persistState, state]
   );
 
+  const continueFromIcpNote = useCallback(async (): Promise<void> => {
+    setIsContinuingIcp(true);
+    try {
+      await fetch("/api/student/icp-check", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ attemptId, feedbackSeen: true }),
+      });
+    } catch {
+      /* the local continue still moves on; the note shows again on resume */
+    }
+    setIcpNote((prev) => (prev ? { ...prev, feedbackSeen: true } : prev));
+    try {
+      await handleStepAdvance("research");
+    } finally {
+      setIsContinuingIcp(false);
+    }
+  }, [attemptId, handleStepAdvance]);
+
+  const advanceFromIcp = useCallback(async (): Promise<void> => {
+    if (isReviewingIcp || isContinuingIcp) {
+      return;
+    }
+    // Seen: move on as before. Showing: Next works like Continue. Never re-graded.
+    if (icpNote?.feedbackSeen) {
+      await handleStepAdvance("research");
+      return;
+    }
+    if (icpNote) {
+      await continueFromIcpNote();
+      return;
+    }
+    if (!isIcpDefinitionComplete(state)) {
+      // Test bypass moves on without a complete ICP, as before (nothing to review).
+      if (testBypass) {
+        await handleStepAdvance("research");
+      }
+      return;
+    }
+
+    setIsReviewingIcp(true);
+    setIcpReviewError("");
+    try {
+      const res = await fetch("/api/student/icp-check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          attemptId,
+          icpText: formatIcpTextForFeedback(state),
+          fields: Object.fromEntries(ICP_FORM_FIELD_KEYS.map((key) => [key, state[key]])),
+        }),
+      });
+      const view = res.ok ? readIcpNoteView(await res.json()) : null;
+      if (!view) {
+        throw new Error("ICP review failed");
+      }
+      setIcpNote(view);
+      if (view.feedbackSeen) {
+        await handleStepAdvance("research");
+      }
+    } catch {
+      setIcpReviewError(ICP_REVIEW_ERROR);
+    } finally {
+      setIsReviewingIcp(false);
+    }
+  }, [
+    attemptId,
+    continueFromIcpNote,
+    handleStepAdvance,
+    icpNote,
+    isContinuingIcp,
+    isReviewingIcp,
+    state,
+    testBypass,
+  ]);
+
   /**
    * Persists the validated target lead. Does not advance the step — Next uses the gate.
    */
@@ -489,5 +605,11 @@ export function useProspectingWizard({
     handleSubmit,
     dismissProspectingHandoff,
     completeOnboarding,
+    icpNote,
+    isReviewingIcp,
+    isContinuingIcp,
+    icpReviewError,
+    advanceFromIcp,
+    continueFromIcpNote,
   };
 }

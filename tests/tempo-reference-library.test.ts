@@ -77,6 +77,7 @@ function library(currentStage: ReferenceLibraryStage, overrides: Partial<Referen
   return {
     currentStage,
     icpRows: [{ label: "Target industry", value: "Multi-location dental groups" }],
+    icpNote: null,
     discovery: parseReferenceCall("discovery", DISCOVERY_PAYLOAD),
     objections: parseReferenceCall("objections", OBJECTIONS_PAYLOAD),
     presentation: PITCH,
@@ -185,6 +186,7 @@ describe("sections per stage progress", () => {
     expect(buildReferenceLibrary({ currentStage: "prospecting", stageData, scores: [] })).toEqual({
       currentStage: "prospecting",
       icpRows: null,
+      icpNote: null,
       discovery: null,
       objections: null,
       presentation: null,
@@ -285,6 +287,44 @@ describe("the rendered library", () => {
     // Closed sections render no body: no lock text until a section is opened.
     expect(html).not.toContain("Available after the call.");
     expect(html).not.toContain("Available when you reach Negotiation.");
+  });
+
+  it("the manager's note on the ICP shows under Your ICP once it exists; never a score", () => {
+    const note = "You named \"multi-location dental groups\" clearly.\n\nWhat would you change about the signals?";
+    const html = render(library("prospecting", { icpNote: note }));
+    expect(html).toContain("Manager feedback");
+    expect(html).toContain("You named &quot;multi-location dental groups&quot; clearly.");
+    expect(html).toContain("What would you change about the signals?");
+    expect(html).toContain("3 items");
+    expect(html.indexOf("Your ICP")).toBeLessThan(html.indexOf("Manager feedback"));
+    expect(html.indexOf("Manager feedback")).toBeLessThan(html.indexOf("Tempo Sell Sheet"));
+    expect(html).not.toMatch(/score|band|\/100/i);
+    expect(render(library("prospecting"))).not.toContain("Manager feedback");
+  });
+
+  it("the library reads only the note from stage_data.icp (current or old shape)", () => {
+    const graded = {
+      rubricVersion: "tempo-icp-v1",
+      fields: {},
+      criteria: [{ id: "industry", verdict: "met", evidence: "dental", gap: "", points: 20 }],
+      score: 87.5,
+      band: "strong",
+      note: "Strong start on the industry.",
+      status: "graded",
+      gradedAt: "2026-10-18T00:00:00.000Z",
+      feedbackSeen: true,
+    };
+    const data = buildReferenceLibrary({ currentStage: "discovery", stageData: { icp: graded }, scores: [] });
+    expect(data.icpNote).toBe("Strong start on the industry.");
+    expect(JSON.stringify(data)).not.toMatch(/87\.5|strong"|criteria|evidence/);
+    expect(
+      buildReferenceLibrary({
+        currentStage: "discovery",
+        stageData: { icp: { result: "affirmed", displayText: "Old fixed text.", originalText: "x", activeIcpText: "x" } },
+        scores: [],
+      }).icpNote
+    ).toBe("Old fixed text.");
+    expect(buildReferenceLibrary({ currentStage: "discovery", stageData: {}, scores: [] }).icpNote).toBeNull();
   });
 
   it("before the ICP is submitted, its card is locked and shows none of the fields", () => {

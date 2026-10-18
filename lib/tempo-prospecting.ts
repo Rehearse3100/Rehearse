@@ -5,7 +5,7 @@
  */
 
 import type { ChatMessage } from "@/types";
-import { parseProspectingIcpState } from "@/lib/tempo-icp-criteria";
+import { parseIcpGradeRecord } from "@/lib/icp-grading";
 
 export type ProspectingStepId =
   | "onboarding"
@@ -398,7 +398,7 @@ export function normalizeProspectingWizardState(
       ? companyChats[selectedCompanyId]
       : legacyMessages;
 
-  const icpRecord = parseProspectingIcpState(anyRaw.icp);
+  const icpRecord = parseIcpGradeRecord(anyRaw.icp);
   const icpDone = icpRecord?.feedbackSeen === true;
   const icpFields = readIcpFormFields(anyRaw);
   const icpStepComplete = isIcpDefinitionComplete({
