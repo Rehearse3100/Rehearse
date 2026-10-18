@@ -3,8 +3,7 @@
  * The yellow manager-note card (#FFF4CC / #584400): a campaign icon and title,
  * the note's paragraphs, and an optional footer row over a thin rule. Fills its
  * row's height with the footer at the bottom. Used by the live-call lobbies
- * (TempoCallLobby, footer: the transcript tip) and the Prospecting ICP review
- * (IcpManagerNote in ProspectingIcpStep, footer: Continue to research).
+ * (TempoCallLobby, footer: the transcript tip).
  */
 
 import { MaterialIcon } from "@/components/ui/MaterialIcon";

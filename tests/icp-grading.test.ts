@@ -4,7 +4,7 @@
  * quotes that aren't in the student's text get downgraded, score and band math,
  * the manager-note checks and the fallback note, the two prompts (what each model
  * may and may not see), the saved record parser (current and old shape), and the
- * ICP note card. No network.
+ * ICP note in the same hovering manager window as the stage handoffs. No network.
  */
 
 import { readFileSync } from "node:fs";
@@ -12,7 +12,8 @@ import path from "node:path";
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { IcpManagerNote } from "@/components/tempo/stages/ProspectingIcpStep";
+import { HandoffModal } from "@/components/tempo/HandoffModal";
+import { IcpManagerNoteModal } from "@/components/tempo/stages/ProspectingIcpStep";
 import {
   applyEvidenceCheck,
   bandFor,
@@ -267,16 +268,38 @@ describe("saved record", () => {
   });
 });
 
-describe("ICP note card", () => {
-  it("the yellow manager-note card: heading, the note's paragraphs, Continue to research", () => {
-    const html = renderToStaticMarkup(
-      React.createElement(IcpManagerNote, { note: "First paragraph.\n\nSecond paragraph.", onContinue: vi.fn(), isContinuing: false })
-    );
-    expect(html).toContain("Note from your manager");
-    expect(html).toContain("<p>First paragraph.</p><p>Second paragraph.</p>");
+describe("ICP note window", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(IcpManagerNoteModal, { note: "First paragraph.\n\nSecond paragraph.", onContinue: vi.fn(), isContinuing: false })
+  );
+
+  it("the hovering manager-message window: the manager, the note's paragraphs, up next, Continue to research", () => {
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain("modal-overlay");
+    expect(html).toContain("MESSAGE FROM YOUR MANAGER");
+    expect(html).toContain("ICP review");
+    expect(html).toContain("Alex Torres");
+    expect(html).toMatch(/<p class="[^"]*italic">First paragraph\.<\/p><p class="[^"]*italic">Second paragraph\.<\/p>/);
+    expect(html).toContain("Up next");
+    expect(html).toContain("Data Room");
     expect(html).toContain("Continue to research");
-    expect(html).toContain("bg-[#FFF4CC]");
-    expect(html).toContain("text-[#584400]");
     expect(html).not.toMatch(/score|band/i);
+  });
+
+  it("is the same window as the stage handoffs (top bar and manager)", () => {
+    const handoff = renderToStaticMarkup(
+      React.createElement(HandoffModal, {
+        stageNumber: 2,
+        stageName: "Discovery",
+        stageIcon: "forum",
+        message: "Book the call.",
+        hasAIRestriction: true,
+        onBegin: vi.fn(),
+        onDismiss: vi.fn(),
+      })
+    );
+    const shell = (markup: string): string => markup.slice(0, markup.indexOf("bg-surface-container-low p-4"));
+    expect(shell(html).replace("ICP review", "X")).toBe(shell(handoff).replace("Stage 2 of 5", "X"));
+    expect(handoff).toContain("Begin Stage 2");
   });
 });

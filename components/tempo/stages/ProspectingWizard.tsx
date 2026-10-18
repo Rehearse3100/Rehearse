@@ -2,8 +2,8 @@
  * ProspectingWizard.tsx
  * Stage 1 of the Tempo simulation — 6-step prospecting wizard (Welcome Briefing →
  * ICP → Data Room → Select Lead → Opening Message → Build Your Agent) with handoff.
- * Next on the ICP step reviews the ICP (once) and shows the manager's note in place
- * of the form until Continue to research.
+ * Next on the ICP step reviews the ICP (once) and shows the manager's note in the
+ * hovering manager-message window over the form until Continue to research.
  * Only rendered for Tempo in the Rehearse Essentials default class.
  */
 
@@ -17,7 +17,7 @@ import { TempoStageForwardNav } from "@/components/tempo/TempoStageForwardNav";
 import { TempoTestBypassBanner } from "@/components/tempo/TempoTestBypassBanner";
 import { TempoWizardTopBar } from "@/components/tempo/TempoWizardTopBar";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
-import { IcpManagerNote } from "@/components/tempo/stages/ProspectingIcpStep";
+import { IcpManagerNoteModal } from "@/components/tempo/stages/ProspectingIcpStep";
 import { ProspectingStepPanels } from "@/components/tempo/stages/ProspectingStepPanels";
 import type { ProspectingLeadSelectionHandle } from "@/components/tempo/stages/ProspectingLeadSelectionStep";
 import { useProspectingWizard } from "@/hooks/useProspectingWizard";
@@ -97,7 +97,7 @@ export function ProspectingWizard({
 
   const selectLeadCanProceed =
     testBypass || Boolean(pickedLeadId ?? state.selectedLeadId);
-  // The manager's note replaces the ICP form until Continue to research marks it seen.
+  // The manager's note pops up over the ICP form until Continue to research marks it seen.
   const isIcpNoteShowing =
     currentStepId === "icp" && wizard.icpNote !== null && !wizard.icpNote.feedbackSeen;
   const forwardDisabled = upcomingStepId
@@ -351,28 +351,20 @@ export function ProspectingWizard({
                 : "p-4 lg:p-xl"
             }`}
           >
-            {isIcpNoteShowing && wizard.icpNote ? (
-              <IcpManagerNote
-                note={wizard.icpNote.note}
-                onContinue={() => void wizard.continueFromIcpNote()}
-                isContinuing={wizard.isContinuingIcp}
-              />
-            ) : (
-              <ProspectingStepPanels
-                currentStepId={currentStepId}
-                attemptId={attemptId}
-                state={state}
-                wordCount={wizard.wordCount}
-                testBypass={testBypass}
-                onSelectCompany={wizard.selectDirectoryCompany}
-                onShortlistChange={wizard.setShortlistedCompanyIds}
-                onFieldChange={wizard.updateField}
-                leadSelectionRef={leadSelectionRef}
-                onLeadPickedChange={handleLeadPickedChange}
-                onLeadSelected={(leadId) => wizard.completeLeadSelection(leadId)}
-                onOnboardingComplete={wizard.completeOnboarding}
-              />
-            )}
+            <ProspectingStepPanels
+              currentStepId={currentStepId}
+              attemptId={attemptId}
+              state={state}
+              wordCount={wizard.wordCount}
+              testBypass={testBypass}
+              onSelectCompany={wizard.selectDirectoryCompany}
+              onShortlistChange={wizard.setShortlistedCompanyIds}
+              onFieldChange={wizard.updateField}
+              leadSelectionRef={leadSelectionRef}
+              onLeadPickedChange={handleLeadPickedChange}
+              onLeadSelected={(leadId) => wizard.completeLeadSelection(leadId)}
+              onOnboardingComplete={wizard.completeOnboarding}
+            />
           </div>
         </section>
         </div>
@@ -415,6 +407,14 @@ export function ProspectingWizard({
           }}
         />
       )}
+
+      {isIcpNoteShowing && wizard.icpNote ? (
+        <IcpManagerNoteModal
+          note={wizard.icpNote.note}
+          onContinue={() => void wizard.continueFromIcpNote()}
+          isContinuing={wizard.isContinuingIcp}
+        />
+      ) : null}
 
       {postSubmitHandoff === "discovery" && (
         <HandoffModal

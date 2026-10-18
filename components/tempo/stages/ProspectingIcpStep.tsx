@@ -1,15 +1,15 @@
 /**
  * ProspectingIcpStep.tsx
  * ICP step — target verticals, size range, operational signals, and disqualifiers.
- * After Next, the wizard shows IcpManagerNote in place of the form: the manager's
- * note on the ICP (graded once by /api/student/icp-check) in the yellow
- * manager-note card, with Continue to research.
+ * After Next, the wizard shows IcpManagerNoteModal over the form: the manager's
+ * note on the ICP (graded once by /api/student/icp-check) in the hovering
+ * manager-message window, with Continue to research.
  */
 
 "use client";
 
 import { FieldCounter } from "@/components/tempo/FieldCounter";
-import { ManagerNoteCard } from "@/components/tempo/ManagerNoteCard";
+import { ManagerMessageModal } from "@/components/tempo/ManagerMessageModal";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import {
   ICP_MIN_DECISION_MAKER_ROLE_CHARS,
@@ -17,6 +17,7 @@ import {
   ICP_MIN_OPERATIONAL_SIGNALS_CHARS,
   ICP_MIN_TARGET_VERTICALS_CHARS,
   parseIcpLocationCount,
+  PROSPECTING_STEPS,
   type ProspectingWizardState,
 } from "@/lib/tempo-prospecting";
 
@@ -244,11 +245,12 @@ export function ProspectingIcpStep({
 }
 
 /**
- * The manager's note on the student's ICP, shown in place of the form after Next:
- * "Note from your manager" in the yellow manager-note card, with Continue to
- * research (which marks it seen and moves to the research step).
+ * The manager's note on the student's ICP, in the same hovering manager-message
+ * window as every other manager note, over the ICP form after Next: the note, the
+ * research step up next, and Continue to research (which marks it seen and moves
+ * on). As with the Prospecting handoff, clicking outside does the same.
  */
-export function IcpManagerNote({
+export function IcpManagerNoteModal({
   note,
   onContinue,
   isContinuing,
@@ -257,29 +259,33 @@ export function IcpManagerNote({
   onContinue: () => void;
   isContinuing: boolean;
 }): React.ReactElement {
-  const paragraphs = note
-    .split(/\n\s*\n/)
-    .map((paragraph) => paragraph.trim())
-    .filter(Boolean);
+  const research = PROSPECTING_STEPS.find((step) => step.id === "research");
+  const handleContinue = (): void => {
+    if (!isContinuing) {
+      onContinue();
+    }
+  };
   return (
-    <div className="bg-surface text-on-surface font-body-md min-h-full flex items-start justify-center px-md pt-lg pb-md">
-      <main className="w-full max-w-[720px] mx-auto">
-        <ManagerNoteCard
-          title="Note from your manager"
-          paragraphs={paragraphs}
-          footer={
-            <button
-              type="button"
-              onClick={onContinue}
-              disabled={isContinuing}
-              className="w-full sm:w-auto sm:ml-auto inline-flex items-center justify-center gap-2 h-11 px-5 rounded-lg bg-primary-container text-white font-bold text-label-md hover:bg-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Continue to research
-              <MaterialIcon name="arrow_forward" className="text-[18px]" />
-            </button>
-          }
-        />
-      </main>
-    </div>
+    <ManagerMessageModal
+      context="ICP review"
+      message={note}
+      actionLabel="Continue to research"
+      onAction={handleContinue}
+      isActionDisabled={isContinuing}
+      onDismiss={handleContinue}
+    >
+      {research ? (
+        <div className="bg-secondary-fixed/10 border border-secondary-fixed/20 p-4 rounded-lg flex items-center gap-3">
+          <div className="w-10 h-10 bg-secondary-fixed/20 rounded-lg flex items-center justify-center shrink-0">
+            <MaterialIcon name="folder_open" className="text-secondary" />
+          </div>
+          <div className="min-w-0">
+            <p className="font-label-sm text-secondary uppercase tracking-tight">Up next</p>
+            <h3 className="font-headline-md text-on-surface">{research.label}</h3>
+            <p className="font-label-sm text-on-surface-variant">{research.description}</p>
+          </div>
+        </div>
+      ) : null}
+    </ManagerMessageModal>
   );
 }
