@@ -1,7 +1,11 @@
 /**
  * TempoProjectFlow.tsx
  * Compact segmented stage timeline for Tempo top bars — completed / current / upcoming.
+ * The current and upcoming segments show the stage's expected time in brackets
+ * (from TEMPO_STAGES in lib/tempo-simulation.ts); completed ones show only the name.
  */
+
+import { TEMPO_STAGES } from "@/lib/tempo-simulation";
 
 export const TEMPO_FLOW_STAGES = [
   { id: "prospecting", label: "Prospecting" },
@@ -33,9 +37,15 @@ function statusForIndex(index: number, currentIndex: number): FlowStatus {
   return "upcoming";
 }
 
+/** The expected time for the flow stage at this index (stage N is TEMPO_STAGES number N), e.g. "~15 min". */
+function expectedTimeForIndex(index: number): string | undefined {
+  return TEMPO_STAGES.find((stage) => stage.number === index + 1)?.time;
+}
+
 /**
  * Horizontal segmented project-flow strip used in every Tempo stage top bar.
- * Completed = gold, current = left-column navy, upcoming = muted; labels live in-segment.
+ * Completed = gold, current = left-column navy, upcoming = muted; labels live
+ * in-segment, with "(~N min)" after the name on the current and upcoming stages.
  */
 export function TempoProjectFlow({ currentIndex }: TempoProjectFlowProps): React.ReactElement {
   const clampedIndex = Math.max(0, Math.min(currentIndex, TEMPO_FLOW_STAGES.length - 1));
@@ -51,6 +61,7 @@ export function TempoProjectFlow({ currentIndex }: TempoProjectFlowProps): React
         const isFirst = index === 0;
         const isLast = index === TEMPO_FLOW_STAGES.length - 1;
         const roundClass = isFirst ? "rounded-l-full" : isLast ? "rounded-r-full" : "";
+        const time = status === "completed" ? undefined : expectedTimeForIndex(index);
 
         let segmentClass = `absolute inset-0 flex items-center justify-center px-1 bg-surface-container-highest ${roundClass}`;
         let textClass = "text-on-surface-variant/70";
@@ -75,6 +86,7 @@ export function TempoProjectFlow({ currentIndex }: TempoProjectFlowProps): React
                 className={`font-label-md text-[8px] sm:text-[10px] tracking-wide truncate ${textClass}`}
               >
                 {stage.label}
+                {time ? <span className="font-normal"> ({time})</span> : null}
               </span>
             </div>
           </div>
