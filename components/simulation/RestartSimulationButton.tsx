@@ -27,8 +27,11 @@ type RestartSimulationButtonProps = {
   simulationId: string;
   classId: string;
   simulationTitle: string;
-  /** Light styling for dark hero backgrounds (e.g. Tempo entry page). */
-  variant?: "default" | "onDark" | "tempoTopBar" | "tempoMenuItem";
+  /**
+   * onDark: light outline for dark backgrounds. danger: solid red, h-12, for a
+   * page-level button row (the Tempo in-progress entry page, beside Continue).
+   */
+  variant?: "default" | "onDark" | "danger" | "tempoTopBar" | "tempoMenuItem";
   /**
    * Where to redirect after restart.
    * Defaults to entry page for Tempo/default class, else simulation runner.
@@ -94,6 +97,8 @@ export function RestartSimulationButton({
   const buttonClass =
     variant === "tempoMenuItem"
       ? "w-full flex items-center gap-2 px-3 py-2 text-left font-label-sm text-label-sm text-error hover:bg-surface-container focus:outline-none focus-visible:bg-surface-container transition-colors"
+      : variant === "danger"
+      ? "inline-flex items-center justify-center gap-2 h-12 px-5 rounded-lg bg-[#b3261e] text-white font-bold text-base hover:bg-[#93201a] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-primary-container shrink-0"
       : variant === "tempoTopBar"
       ? "flex items-center gap-1.5 px-3 py-1.5 text-white font-label-sm text-label-sm bg-black border border-black rounded-lg hover:bg-neutral-900 transition-all duration-150 shrink-0"
       : variant === "onDark"
@@ -107,7 +112,7 @@ export function RestartSimulationButton({
         onClick={() => setShowConfirm(true)}
         className={buttonClass}
       >
-        <MaterialIcon name="restart_alt" className="text-[16px]" />
+        <MaterialIcon name="restart_alt" className={variant === "danger" ? "text-[20px]" : "text-[16px]"} />
         Restart
       </button>
 

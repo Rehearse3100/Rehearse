@@ -2,6 +2,9 @@
  * TempoEntryInProgress.tsx
  * In-progress briefing layout for the Tempo simulation entry page — shown after Stage 1 begins.
  * Structural reference: Stitch "Simulation Entry - In Progress" with dynamic stage data.
+ * Assignment Objective shows Key KPI and Sim Time as plain facts and the onboarding
+ * video button; the roadmap shows each stage's expected time; the bottom row has
+ * Continue, then Restart (stacked full width on mobile).
  */
 
 import Link from "next/link";
@@ -118,6 +121,8 @@ function RoadmapNode({
       : stage.stageKey === "objections"
         ? "shield"
         : stage.icon;
+  // Same size and font as the fresh-start roadmap's time; a light tone, since this roadmap is on navy.
+  const time = <p className="mt-1 text-[11px] font-code-md text-white/60">{stage.time}</p>;
 
   if (status === "completed") {
     return (
@@ -128,6 +133,7 @@ function RoadmapNode({
         <div className="text-center">
           <p className="font-code-md text-tertiary-fixed font-bold text-[13px]">STAGE {stage.number}</p>
           <p className="text-body-md font-bold text-white">{stage.title}</p>
+          {time}
         </div>
       </div>
     );
@@ -142,6 +148,7 @@ function RoadmapNode({
         <div className="text-center">
           <p className="font-code-md text-tertiary-fixed font-bold text-[13px]">STAGE {stage.number}</p>
           <p className="text-body-md font-bold text-white">{stage.title}</p>
+          {time}
         </div>
       </div>
     );
@@ -155,6 +162,7 @@ function RoadmapNode({
       <div className="text-center">
         <p className="font-code-md text-white/70 font-bold text-[13px]">STAGE {stage.number}</p>
         <p className="text-body-md font-bold text-white/85">{stage.title}</p>
+        {time}
       </div>
     </div>
   );
@@ -195,16 +203,6 @@ export function TempoEntryInProgress({
               <MaterialIcon name="arrow_back" className="text-[18px]" />
               Back
             </Link>
-            {restartAttemptId && (
-              <RestartSimulationButton
-                attemptId={restartAttemptId}
-                simulationId={simulationId}
-                classId={classId}
-                simulationTitle={simulationTitle}
-                variant="onDark"
-                redirectHref={entryRedirectHref}
-              />
-            )}
           </div>
           <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-12 items-center relative z-10">
             <div className="space-y-6">
@@ -269,21 +267,21 @@ export function TempoEntryInProgress({
               <p className="text-body-lg text-on-surface-variant mb-6 leading-relaxed">
                 {stageObjective.objective}
               </p>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="p-4 border border-outline-variant rounded-lg flex items-start gap-3">
-                  <MaterialIcon name="verified" className="text-secondary" />
-                  <div>
-                    <div className="font-bold text-on-surface">Key KPI</div>
-                    <div className="text-body-md text-on-surface-variant">{stageObjective.kpiLabel}</div>
-                  </div>
+              {/* Plain facts, not buttons: one row with a thin divider (stacked on mobile). */}
+              <dl className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6">
+                <div className="flex items-center gap-2">
+                  <MaterialIcon name="verified" className="text-secondary text-[20px]" />
+                  <dt className="font-bold text-on-surface">Key KPI</dt>
+                  <dd className="text-body-md text-on-surface-variant">{stageObjective.kpiLabel}</dd>
                 </div>
-                <div className="p-4 border border-outline-variant rounded-lg flex items-start gap-3">
-                  <MaterialIcon name="timer" className="text-secondary" />
-                  <div>
-                    <div className="font-bold text-on-surface">Sim Time</div>
-                    <div className="text-body-md text-on-surface-variant">{stageObjective.simTime}</div>
-                  </div>
+                <div className="flex items-center gap-2 sm:border-l sm:border-outline-variant sm:pl-6">
+                  <MaterialIcon name="timer" className="text-secondary text-[20px]" />
+                  <dt className="font-bold text-on-surface">Sim Time</dt>
+                  <dd className="text-body-md text-on-surface-variant">{stageObjective.simTime}</dd>
                 </div>
+              </dl>
+              <div className="mt-6">
+                <TempoOnboardingVideoTrigger />
               </div>
             </div>
             <div className="col-span-12 md:col-span-4 bg-surface-container-lowest border border-outline-variant rounded-xl p-8 flex flex-col justify-center items-center text-center">
@@ -318,15 +316,25 @@ export function TempoEntryInProgress({
         {/* CTA */}
         <section className="bg-primary-container py-20 px-6 lg:px-8">
           <div className="max-w-2xl mx-auto text-center flex flex-col items-center gap-4">
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+            {/* Continue, then Restart; stacked full width on mobile. */}
+            <div className="w-full sm:w-auto flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3">
               <Link
                 href={ctaHref}
-                className="bg-tertiary-container hover:opacity-90 text-on-tertiary-fixed font-bold text-lg px-12 py-4 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-lg flex items-center gap-3 group"
+                className="bg-tertiary-container hover:opacity-90 text-on-tertiary-fixed font-bold text-base h-12 px-6 rounded-lg transition-all active:scale-95 shadow-lg flex items-center justify-center gap-3 group"
               >
                 {ctaLabel}
                 <MaterialIcon name="arrow_forward" className="group-hover:translate-x-1 transition-transform" />
               </Link>
-              <TempoOnboardingVideoTrigger />
+              {restartAttemptId && (
+                <RestartSimulationButton
+                  attemptId={restartAttemptId}
+                  simulationId={simulationId}
+                  classId={classId}
+                  simulationTitle={simulationTitle}
+                  variant="danger"
+                  redirectHref={entryRedirectHref}
+                />
+              )}
             </div>
             {lastStageScore !== null && (
               <div className="mt-6 flex flex-col items-center gap-2">

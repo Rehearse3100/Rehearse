@@ -473,7 +473,8 @@ export function TempoOnboardingVideoInline(): React.ReactElement {
 }
 
 /**
- * Entry-page trigger button that opens the onboarding video modal.
+ * Entry-page trigger button that opens the onboarding video modal: an outlined
+ * secondary button for a light card (the in-progress page's Assignment Objective).
  */
 export function TempoOnboardingVideoTrigger(): React.ReactElement {
   const [isOpen, setIsOpen] = useState(false);
@@ -483,10 +484,10 @@ export function TempoOnboardingVideoTrigger(): React.ReactElement {
       <button
         type="button"
         onClick={() => setIsOpen(true)}
-        className="inline-flex items-center gap-2 px-8 py-4 rounded-full font-bold text-body-lg text-white border border-white/30 hover:border-white/60 hover:bg-white/10 transition-all"
+        className="inline-flex items-center justify-center gap-2 h-11 px-5 rounded-lg border border-secondary text-secondary font-semibold text-body-md hover:bg-secondary/5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-secondary/40"
       >
-        <MaterialIcon name="play_circle" className="text-[22px]" />
-        Watch Onboarding Video
+        <MaterialIcon name="play_circle" className="text-[20px]" />
+        Watch onboarding video
       </button>
       <TempoOnboardingVideoModal isOpen={isOpen} onClose={() => setIsOpen(false)} />
     </>
