@@ -27,7 +27,6 @@ type TempoEntryInProgressProps = {
   ctaLabel: string;
   currentStage: SimulationStage;
   completedStageKeys: ReadonlySet<string>;
-  lastStageScore: number | null;
   restartAttemptId: string | null;
 };
 
@@ -179,15 +178,11 @@ export function TempoEntryInProgress({
   ctaLabel,
   currentStage,
   completedStageKeys,
-  lastStageScore,
   restartAttemptId,
 }: TempoEntryInProgressProps): React.ReactElement {
   const currentTempoStage = getCurrentTempoStage(currentStage);
   const stageNumber = currentTempoStage?.number ?? 1;
   const stageObjective = TEMPO_STAGE_OBJECTIVES[currentStage] ?? TEMPO_STAGE_OBJECTIVES.prospecting;
-  const completedCount = TEMPO_STAGES.filter(
-    (s) => getRoadmapStatus(s, currentStage, completedStageKeys) === "completed"
-  ).length;
   const entryRedirectHref = `/student/simulation/${simulationId}/entry?classId=${classId}`;
 
   return (
@@ -336,23 +331,6 @@ export function TempoEntryInProgress({
                 />
               )}
             </div>
-            {lastStageScore !== null && (
-              <div className="mt-6 flex flex-col items-center gap-2">
-                <p className="text-white/40 text-[12px] font-code-md tracking-widest uppercase">
-                  Last stage score: {lastStageScore}/100
-                </p>
-                <div className="flex gap-1">
-                  {Array.from({ length: 5 }).map((_, i) => (
-                    <span
-                      key={i}
-                      className={`w-1.5 h-1.5 rounded-full ${
-                        i < completedCount ? "bg-tertiary-container" : "bg-white/20"
-                      }`}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         </section>
 

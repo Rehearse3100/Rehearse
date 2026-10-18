@@ -134,21 +134,14 @@ export default async function TempoSimulationEntryPage({
   const hasInProgressAttempt = !!inProgressAttempt;
 
   let completedStageKeys = new Set<string>();
-  let lastStageScore: number | null = null;
 
   if (attemptId && hasInProgressAttempt) {
     const { data: stageScores } = await supabase
       .from("stage_scores")
-      .select("stage, score, completed_at")
-      .eq("attempt_id", attemptId)
-      .order("completed_at", { ascending: false });
+      .select("stage")
+      .eq("attempt_id", attemptId);
 
     completedStageKeys = new Set((stageScores ?? []).map((row) => row.stage as string));
-
-    const latest = stageScores?.[0];
-    if (latest && typeof latest.score === "number") {
-      lastStageScore = latest.score;
-    }
   }
 
   if (displayStage === "prospecting" && currentStage === "discovery") {
@@ -197,7 +190,6 @@ export default async function TempoSimulationEntryPage({
         ctaLabel={ctaLabel}
         currentStage={displayStage}
         completedStageKeys={completedStageKeys}
-        lastStageScore={lastStageScore}
         restartAttemptId={attemptId}
       />
     );

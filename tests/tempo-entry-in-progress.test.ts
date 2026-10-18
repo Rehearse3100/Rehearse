@@ -33,7 +33,6 @@ const render = (restartAttemptId: string | null = "attempt-1"): string =>
         ctaLabel: "Continue Stage 2",
         currentStage: "discovery",
         completedStageKeys: new Set(["prospecting"]),
-        lastStageScore: 82,
         restartAttemptId,
       })
     )
@@ -69,6 +68,11 @@ describe("in-progress entry page", () => {
     // The hero keeps its Back link; Restart sits after the roadmap now.
     expect(html.indexOf(">Restart<")).toBeGreaterThan(html.indexOf("Simulation Roadmap"));
     expect(html).toContain("Back");
+  });
+
+  it("no last-stage score line or progress dots under the buttons", () => {
+    expect(html).not.toContain("Last stage score");
+    expect(html).not.toContain("w-1.5 h-1.5 rounded-full");
   });
 
   it("no Restart without an attempt to restart", () => {
