@@ -2,8 +2,8 @@
  * data-room-chat-guard.test.ts
  * The Data Room chat safety checks (lib/data-room-chat-guard.ts) and their order in
  * POST /api/student/data-room-chat, against a fake database and mocked OpenAI (no
- * network, no live database): the 500-character cap; the 20-in-5-minutes and
- * 300-total limits, skipped in tester mode, failing open; counting; moderation
+ * network, no live database): the 500-character cap; the 300-total limit (no
+ * per-minute limit), skipped in tester mode, failing open; counting; moderation
  * (self-harm, other flags, clean, errors); English (the non-Latin heuristic and the
  * router's english:false); a normal question reaching the router unchanged; and
  * fixed replies with no opening sentence.
@@ -31,8 +31,8 @@ type Op = { table: string; calls: Array<[string, unknown[]]> };
 
 const fake = vi.hoisted(() => ({
   ops: [] as Array<{ table: string; calls: Array<[string, unknown[]]> }>,
-  /** Rows in data_room_chat_usage: total, and in the last 5 minutes. */
-  usage: { total: 0, recent: 0 },
+  /** Rows in data_room_chat_usage before the test; rows the test inserts are added on top. */
+  usageTotal: 0,
   usageError: null as unknown,
   router: vi.fn(),
   other: vi.fn(),
@@ -67,7 +67,10 @@ function answer(op: Op): { data: unknown; error: unknown; count?: number | null 
     if (fake.usageError) {
       return { data: null, error: fake.usageError, count: null };
     }
-    return { data: null, error: null, count: called("gte") ? fake.usage.recent : fake.usage.total };
+    const inserted = fake.ops.filter(
+      (other) => other.table === "data_room_chat_usage" && other.calls.some(([name]) => name === "insert")
+    ).length;
+    return { data: null, error: null, count: fake.usageTotal + inserted };
   }
   if (op.table === "crm_prospect_directory" && (called("select")?.[0] as string) === "research_facts") {
     return { data: { research_facts: [] }, error: null };
@@ -151,7 +154,7 @@ const inserts = (): Op[] => usageOps().filter((op) => op.calls.some(([name]) => 
 
 beforeEach(() => {
   fake.ops = [];
-  fake.usage = { total: 0, recent: 0 };
+  fake.usageTotal = 0;
   fake.usageError = null;
   fake.router.mockReset().mockResolvedValue(reply({ intent: "overview", topic: null, attribute: null, confidence: "high" }));
   fake.other.mockReset().mockResolvedValue(reply({ opening: "Here is what's on record." }));
@@ -193,14 +196,14 @@ describe("guard helpers", () => {
     );
   });
 
-  it("limits: 300 in total, else 20 in 5 minutes; a failed or throwing count allows", async () => {
+  it("limit: 300 in total, one count query with no time window; a failed or throwing count allows", async () => {
     const client = fakeClient() as never;
-    fake.usage = { total: 300, recent: 0 };
+    fake.usageTotal = 300;
     expect(await checkUsageLimits(client, "attempt-1")).toBe("totalLimit");
-    fake.usage = { total: 40, recent: 20 };
-    expect(await checkUsageLimits(client, "attempt-1")).toBe("tooFast");
-    fake.usage = { total: 299, recent: 19 };
+    fake.usageTotal = 299;
     expect(await checkUsageLimits(client, "attempt-1")).toBeNull();
+    expect(usageOps()).toHaveLength(2);
+    expect(usageOps().some((op) => op.calls.some(([name]) => name === "gte"))).toBe(false);
     fake.usageError = { code: "PGRST205", message: "Could not find the table" };
     expect(await checkUsageLimits(client, "attempt-1")).toBeNull();
     const throwing = { from: () => ({ select: () => { throw new Error("boom"); } }) } as never;
@@ -250,19 +253,26 @@ describe("route: checks before the pipeline", () => {
     expect(fake.router).toHaveBeenCalledTimes(1);
   });
 
-  it("the limits refuse without counting; tester mode skips them", async () => {
-    fake.usage = { total: 300, recent: 0 };
+  it("the 300-total limit refuses without counting; tester mode skips it", async () => {
+    fake.usageTotal = 300;
     expect(await ask("What are their risks?")).toEqual(guardReply("totalLimit"));
-    fake.usage = { total: 25, recent: 20 };
-    expect(await ask("What are their risks?")).toEqual(guardReply("tooFast"));
     expect(inserts()).toHaveLength(0);
     expect(fake.router).not.toHaveBeenCalled();
 
     process.env.TEMPO_TEST_BYPASS_GATES = "true";
     fake.ops = [];
     expect(await ask("Tell me about them")).toEqual(ALL_MODE);
-    expect(usageOps().some((op) => op.calls.some(([name]) => name === "gte"))).toBe(false);
+    // No limit query in tester mode, but the question is still counted.
+    expect(usageOps().some((op) => op.calls.some(([name]) => name === "select"))).toBe(false);
     expect(inserts()).toHaveLength(1);
+  });
+
+  it("25 questions in a minute are all allowed (no per-minute limit), and each is counted", async () => {
+    for (let i = 0; i < 25; i += 1) {
+      expect(await ask("Tell me about them"), `question ${i + 1}`).toEqual(ALL_MODE);
+    }
+    expect(fake.router).toHaveBeenCalledTimes(25);
+    expect(inserts()).toHaveLength(25);
   });
 
   it("a failed count query lets the message through, and it is counted", async () => {

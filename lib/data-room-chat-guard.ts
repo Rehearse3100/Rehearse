@@ -2,8 +2,8 @@
  * data-room-chat-guard.ts
  * Safety checks the Data Room chat route (app/api/student/data-room-chat) runs on
  * every question before its answer pipeline, in this order: the 500-character cap,
- * the per-attempt message limits (rows in public.data_room_chat_usage; skipped in
- * tester mode by the route; fail open), counting the message, OpenAI moderation
+ * the per-attempt message limit (USAGE_TOTAL_MAX rows in public.data_room_chat_usage;
+ * skipped in tester mode by the route; fail open), counting the message, OpenAI moderation
  * (fail open), and the non-Latin-script check that runs before the router's own
  * English check. Every refusal is a fixed reply from GUARD_REPLIES (the one place
  * the texts live), in the same shape as the route's other fixed replies: no
@@ -21,10 +21,7 @@ import type { ScopedAnswer } from "@/lib/data-room-chat-scope";
 export const DATA_ROOM_CHAT_MAX_CHARS = 500;
 /** The input box shows its "N / 500" counter past this many characters. */
 export const DATA_ROOM_CHAT_COUNTER_FROM = 400;
-/** At most USAGE_WINDOW_MAX questions per attempt in any USAGE_WINDOW_MS. */
-export const USAGE_WINDOW_MS = 5 * 60 * 1000;
-export const USAGE_WINDOW_MAX = 20;
-/** Questions per attempt over the whole simulation. */
+/** Questions per attempt over the whole simulation (no per-minute limit). */
 export const USAGE_TOTAL_MAX = 300;
 /** More than this share of the letters in a non-Latin script reads as not English. */
 export const NON_LATIN_MAX_SHARE = 0.3;
@@ -35,7 +32,6 @@ export const USAGE_TABLE = "data_room_chat_usage";
 
 export const GUARD_REPLIES = {
   tooLong: "Please keep your question under 500 characters.",
-  tooFast: "You're asking quickly. Take a minute to go through what you've found, then try again.",
   totalLimit:
     "You've reached the research assistant's limit for this simulation. Use your notes and the company pages to finish your research.",
   selfHarm:
@@ -58,32 +54,23 @@ export function isTooLong(message: string): boolean {
 }
 
 /**
- * The attempt's message limits: "totalLimit" at USAGE_TOTAL_MAX questions in
- * all, else "tooFast" at USAGE_WINDOW_MAX in the last USAGE_WINDOW_MS, else null.
- * Fails open: if the table is missing or a count fails, it logs and allows.
+ * The attempt's message limit: "totalLimit" once it has asked USAGE_TOTAL_MAX
+ * questions, else null (one count query; how fast it asks doesn't matter).
+ * Fails open: if the table is missing or the count fails, it logs and allows.
  */
 export async function checkUsageLimits(
   supabase: SupabaseClient,
-  attemptId: string,
-  now: number = Date.now()
-): Promise<"tooFast" | "totalLimit" | null> {
+  attemptId: string
+): Promise<"totalLimit" | null> {
   try {
-    const since = new Date(now - USAGE_WINDOW_MS).toISOString();
-    const [total, recent] = await Promise.all([
-      supabase.from(USAGE_TABLE).select("id", { count: "exact", head: true }).eq("attempt_id", attemptId),
-      supabase
-        .from(USAGE_TABLE)
-        .select("id", { count: "exact", head: true })
-        .eq("attempt_id", attemptId)
-        .gte("created_at", since),
-    ]);
-    if (total.error || recent.error) {
-      throw total.error ?? recent.error;
+    const { count, error } = await supabase
+      .from(USAGE_TABLE)
+      .select("id", { count: "exact", head: true })
+      .eq("attempt_id", attemptId);
+    if (error) {
+      throw error;
     }
-    if ((total.count ?? 0) >= USAGE_TOTAL_MAX) {
-      return "totalLimit";
-    }
-    return (recent.count ?? 0) >= USAGE_WINDOW_MAX ? "tooFast" : null;
+    return (count ?? 0) >= USAGE_TOTAL_MAX ? "totalLimit" : null;
   } catch (error) {
     console.error("[data-room-chat] usage limits unavailable, allowing:", error);
     return null;
