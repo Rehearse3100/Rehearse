@@ -5,7 +5,9 @@
  * "overview" on anything invalid, unknown, low-confidence (except valid filters in
  * All companies mode), or specific_research without a topic (for filter_list an
  * unknown topic or attribute just becomes null). Filters: 1–3 conditions, or a
- * single "filter" read as a one-item list.
+ * single "filter" read as a one-item list. The prompt's examples never hint at the
+ * real ICP (industries, territory places and states, location bounds), checked
+ * against scripts/config/tempo-icp.ts.
  */
 
 import { describe, expect, it } from "vitest";
@@ -16,6 +18,7 @@ import {
   ROUTER_SYSTEM_PROMPT,
   scopeKindOf,
 } from "@/lib/data-room-chat-router";
+import { TEMPO_ICP } from "@/scripts/config/tempo-icp";
 
 const reply = (value: unknown): string => JSON.stringify(value);
 
@@ -59,7 +62,7 @@ describe("classifier input", () => {
       'field "state": op "eq", value the two-letter state code',
       "criteria_count: how many separate conditions the question asks to filter by",
       'Questions phrased as "how many…", "which are…" or "list the…" with one to three conditions are filter_list; read them charitably',
-      '"how many are located dental?" is filter_list with filters [{"field": "industry", "op": "contains", "value": "dental"}]',
+      '"how many are located retail?" is filter_list with filters [{"field": "industry", "op": "contains", "value": "retail"}]',
     ]) {
       expect(ROUTER_SYSTEM_PROMPT, text).toContain(text);
     }
@@ -230,12 +233,12 @@ describe("classifier reply", () => {
     expect(parseRouterReply(filtersReply([{ field: "locations", op: "about", value: 3 }]))).toMatchObject({ filters: null });
     expect(ROUTER_SYSTEM_PROMPT).toContain('"filters": object[] | null');
     expect(ROUTER_SYSTEM_PROMPT).toContain(
-      'Conditions on different fields must all hold. Two conditions on the same field mean either one ("in Colorado or Utah" is two state conditions), except locations, where both hold ("between 3 and 8 locations" is gte 3 and lte 8).'
+      'Conditions on different fields must all hold. Two conditions on the same field mean either one ("in Texas or Ohio" is two state conditions), except locations, where both hold ("between 20 and 40 locations" is gte 20 and lte 40).'
     );
   });
 
   it('"CO", "CA", "TX": the prompt reads two-letter uppercase tokens as state codes, and they parse as codes', () => {
-    expect(ROUTER_SYSTEM_PROMPT).toContain("- Two-letter uppercase tokens such as CO, CA or TX are US state codes.");
+    expect(ROUTER_SYSTEM_PROMPT).toContain("- Two-letter uppercase tokens such as TX, CA or NY are US state codes.");
     for (const code of ["CO", "CA", "TX"]) {
       expect(parseRouterReply(filtersReply([{ field: "state", op: "eq", value: code }]), "all"), code).toMatchObject({
         filters: [{ field: "state", op: "eq", value: code }],
@@ -288,6 +291,60 @@ describe("classifier reply", () => {
       }),
     ]) {
       expect(parseRouterReply(raw), String(raw)).toEqual(OVERVIEW_DECISION);
+    }
+  });
+});
+
+describe("prompt examples stay neutral", () => {
+  /** Full names of the territory's state codes. */
+  const STATE_NAMES: Record<string, string> = {
+    CO: "Colorado",
+    UT: "Utah",
+    ID: "Idaho",
+    NM: "New Mexico",
+    WY: "Wyoming",
+    MT: "Montana",
+  };
+  const metros = TEMPO_ICP.territoryMetros.map((metro) => {
+    const [city = "", code = ""] = metro.split(",").map((part) => part.trim());
+    return { city, code };
+  });
+  const codes = Array.from(new Set(metros.map((metro) => metro.code)));
+
+  /** Whole word or phrase, any case: "CO" never matches "company". */
+  const wholeWord = (term: string): RegExp =>
+    new RegExp(`(^|[^a-z0-9])${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^a-z0-9])`, "i");
+
+  it("names no ICP industry (the config's list, plus vet and PT)", () => {
+    for (const term of [...TEMPO_ICP.verticals, "vet", "PT"]) {
+      expect(ROUTER_SYSTEM_PROMPT, term).not.toMatch(wholeWord(term));
+    }
+  });
+
+  it("names no territory city, state or state code", () => {
+    expect(codes.every((code) => STATE_NAMES[code]), "every territory state has a name to check").toBe(true);
+    for (const term of [...metros.map((metro) => metro.city), ...codes, ...codes.map((code) => STATE_NAMES[code] ?? code)]) {
+      expect(ROUTER_SYSTEM_PROMPT, term).not.toMatch(wholeWord(term));
+    }
+  });
+
+  it("uses no ICP location bound in an example range", () => {
+    const { minLocations: min, maxLocations: max } = TEMPO_ICP;
+    expect(ROUTER_SYSTEM_PROMPT).not.toMatch(new RegExp(`\\b${min}\\s*(?:and|to|-|–)\\s*\\d+\\b`));
+    expect(ROUTER_SYSTEM_PROMPT).not.toMatch(new RegExp(`\\b\\d+\\s*(?:and|to|-|–)\\s*${max}\\b`));
+    expect(ROUTER_SYSTEM_PROMPT).not.toMatch(new RegExp(`\\bgte ${min}\\b|\\blte ${max}\\b`));
+  });
+
+  it("keeps the neutral examples, each with the same field and op as before", () => {
+    for (const text of [
+      '"which are in Texas?"',
+      '(for example "TX")',
+      '"in Texas or Ohio" is two state conditions',
+      '"between 20 and 40 locations" is gte 20 and lte 40',
+      '"fitness studios in Phoenix" is 2',
+      "such as TX, CA or NY are US state codes",
+    ]) {
+      expect(ROUTER_SYSTEM_PROMPT, text).toContain(text);
     }
   });
 });
