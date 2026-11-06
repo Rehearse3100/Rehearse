@@ -24,6 +24,7 @@ import type { ProspectingLeadSelectionHandle } from "@/components/tempo/stages/P
 import { useProspectingWizard } from "@/hooks/useProspectingWizard";
 import {
   canReturnToProspectingStep,
+  firstIncompleteProspectingStep,
   isIcpDefinitionComplete,
   nextProspectingStepId,
   prevProspectingStepId,
@@ -99,6 +100,8 @@ export function ProspectingWizard({
 
   const selectLeadCanProceed =
     testBypass || Boolean(pickedLeadId ?? state.selectedLeadId);
+  // Submit needs every step's gate, not only the agent box: name the step still missing.
+  const submitBlockedBy = !upcomingStepId && !testBypass ? firstIncompleteProspectingStep(state) : null;
   // The manager's note pops up over the ICP form until Continue to research marks it seen.
   const isIcpNoteShowing =
     currentStepId === "icp" && wizard.icpNote !== null && !wizard.icpNote.feedbackSeen;
@@ -325,7 +328,9 @@ export function ProspectingWizard({
                     ? "Pick a lead to continue"
                     : currentStepId === "agent" && !wizard.canProceed
                       ? "Explain your agent to submit"
-                      : null
+                      : currentStepId === "agent" && !wizard.canSubmit && submitBlockedBy
+                        ? `Finish ${submitBlockedBy.label} to submit`
+                        : null
               }
               onBack={
                 // No Back into the ICP once past it (the Data Room has none): it's reviewed once.

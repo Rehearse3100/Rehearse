@@ -14,6 +14,7 @@ import type { IcpNoteView } from "@/lib/icp-grading";
 import { completeStage } from "@/lib/attempt-actions";
 import type { ProspectDirectoryCompany } from "@/lib/tempo-prospect-directory";
 import {
+  advanceWizardStep,
   canAdvanceProspectingStep,
   canReturnToProspectingStep,
   canSubmitProspectingBrief,
@@ -340,20 +341,19 @@ export function useProspectingWizard({
 
   const handleStepAdvance = useCallback(
     async (nextStepId: ProspectingStepId): Promise<void> => {
-      // Leaving Welcome Briefing counts as onboarding complete (video end OR Next
-      // under testBypass, which unlocks Next without waiting for ended).
-      const next = {
-        ...state,
-        currentStepId: nextStepId,
-        onboardingComplete:
-          state.currentStepId === "onboarding" && nextStepId !== "onboarding"
-            ? true
-            : state.onboardingComplete,
-      };
-      setState(next);
-      await persistState(next);
+      // Built from the latest state (functional update), never from this render's
+      // copy: callers often run it right after another update in the same click
+      // (Select Target Lead saves the picked lead, then advances), and writing back
+      // an older copy erased that lead and left Submit disabled for good.
+      await new Promise<void>((resolve) => {
+        setState((prev) => {
+          const next = advanceWizardStep(prev, nextStepId);
+          void persistState(next).finally(resolve);
+          return next;
+        });
+      });
     },
-    [persistState, state]
+    [persistState]
   );
 
   const continueFromIcpNote = useCallback(async (): Promise<void> => {

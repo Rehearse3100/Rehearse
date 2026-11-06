@@ -674,6 +674,31 @@ export function canAdvanceProspectingStep(
 }
 
 /**
+ * The first step whose gate isn't met (tester mode off), or null when all are:
+ * what still blocks Submit on the final step.
+ */
+export function firstIncompleteProspectingStep(state: ProspectingWizardState): ProspectingStepDefinition | null {
+  return PROSPECTING_STEPS.find((step) => !canAdvanceProspectingStep(step.id, state, false)) ?? null;
+}
+
+/**
+ * The wizard state after moving to a step: leaving Welcome Briefing marks
+ * onboarding complete (video end, or Next under testBypass); everything else is
+ * kept as it is in the given state.
+ */
+export function advanceWizardStep(
+  state: ProspectingWizardState,
+  nextStepId: ProspectingStepId
+): ProspectingWizardState {
+  return {
+    ...state,
+    currentStepId: nextStepId,
+    onboardingComplete:
+      state.currentStepId === "onboarding" && nextStepId !== "onboarding" ? true : state.onboardingComplete,
+  };
+}
+
+/**
  * Returns whether stage Submit is enabled on the final agent step: every step's
  * gate, the agent explanation included, so the stage cannot complete with gaps.
  * testBypass short-circuits only. Never reads process.env.
