@@ -145,4 +145,25 @@ describe("the builder", () => {
     expect(html).toContain("← Previous");
     expect(html).toContain("Next slide →");
   });
+
+  it("no Next slide button on the last slide (Submit is the way on); Previous stays", () => {
+    const fiveDone: PresentationForm = {
+      businessCase: "Phones are overloaded.",
+      underlyingPainPoints: "Missed calls cost them.",
+      solution: "Automated reminders.",
+      proofPoint: "Recover lost revenue.",
+      powerStakeholder: "Dana and Dr. Kim.",
+      nextStep: "",
+    };
+    const last = render(fiveDone);
+    expect(last).toContain('aria-label="Plan"');
+    expect(last).not.toContain("Next slide");
+    expect(last).toMatch(/<div class="flex items-center justify-between"><button type="button" class="[^"]*">← Previous<\/button><\/div>/);
+    // Every other slide keeps it.
+    for (const done of [0, 1, 2, 3, 4]) {
+      const fields = ["businessCase", "underlyingPainPoints", "solution", "proofPoint", "powerStakeholder"] as const;
+      const form = { ...EMPTY_PRESENTATION_FORM, ...Object.fromEntries(fields.slice(0, done).map((field) => [field, "Filled in."])) };
+      expect(render(form), `slide ${done + 1}`).toContain("Next slide →");
+    }
+  });
 });

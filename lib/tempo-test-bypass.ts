@@ -2,6 +2,9 @@
  * tempo-test-bypass.ts
  * Server-only Tempo Prospecting gate bypass for local testing.
  * Enabled solely by TEMPO_TEST_BYPASS_GATES=true — never NEXT_PUBLIC_, never client process.env.
+ * With the flag off, the CRM leads tester mode seeded (isTesterSeededLead) are
+ * deleted and the wizard's references to them dropped, so they never pass for the
+ * student's own picks.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -11,7 +14,7 @@ import {
 } from "@/lib/tempo-crm-account";
 import { emptyContactFields } from "@/lib/tempo-crm-contact";
 import type { ProspectingWizardState } from "@/lib/tempo-prospecting";
-import { TEST_BYPASS_PREFIX } from "@/lib/tempo-test-bypass-client";
+import { isTestBypassAutofillValue, TEST_BYPASS_PREFIX } from "@/lib/tempo-test-bypass-client";
 
 /** Re-export for server callers; single definition lives in tempo-test-bypass-client. */
 export { TEST_BYPASS_PREFIX };
@@ -64,6 +67,129 @@ const TEST_CONTACT_DEFAULTS = {
 
 const LEAD_SELECT_COLUMNS =
   "id, attempt_id, company_name, contact_name, contact_title, why_fit, trigger_event, next_step, decision_maker_rationale, status, created_at, updated_at";
+
+// ── Tester-seeded CRM leads ───
+
+/** why_fit of the three shortlist leads ensureShortlist seeds (after the [TEST] prefix). */
+export const TEST_SHORTLIST_WHY_FIT = "Shortlist placeholder for gate bypass";
+/** why_fit of the selected target lead ensureTargetLead seeds (after the [TEST] prefix). */
+export const TEST_TARGET_WHY_FIT = "Correct target pre-seeded for faster testing";
+
+const SEEDED_LEAD_WHY_FIT: readonly string[] = [TEST_SHORTLIST_WHY_FIT, TEST_TARGET_WHY_FIT];
+
+/** The crm_leads text columns tester mode fills. */
+export const LEAD_TEXT_COLUMNS = [
+  "company_name",
+  "contact_name",
+  "contact_title",
+  "why_fit",
+  "trigger_event",
+  "next_step",
+  "decision_maker_rationale",
+] as const;
+
+export type LeadTextRow = Partial<Record<(typeof LEAD_TEXT_COLUMNS)[number], unknown>>;
+
+const withoutPrefix = (value: string): string => {
+  const trimmed = value.trim();
+  return trimmed.startsWith(TEST_BYPASS_PREFIX) ? trimmed.slice(TEST_BYPASS_PREFIX.length).trim() : trimmed;
+};
+
+/**
+ * True for a CRM lead tester mode seeded (ensureShortlist / ensureTargetLead):
+ * any text column starts with the [TEST] prefix, or why_fit is one of the seed
+ * placeholders with or without the prefix. A lead the student wrote matches neither.
+ */
+export function isTesterSeededLead(lead: LeadTextRow): boolean {
+  const texts = LEAD_TEXT_COLUMNS.map((column) => (typeof lead[column] === "string" ? (lead[column] as string) : ""));
+  if (texts.some(isTestBypassAutofillValue)) {
+    return true;
+  }
+  return SEEDED_LEAD_WHY_FIT.includes(withoutPrefix(typeof lead.why_fit === "string" ? lead.why_fit : ""));
+}
+
+/**
+ * Tester mode off: deletes the attempt's tester-seeded leads among `leads` and
+ * returns the rest. If the delete fails, logs it and returns `leads` unchanged.
+ */
+export async function deleteTesterSeededLeads<T extends LeadTextRow & { id: unknown }>(
+  supabase: SupabaseClient,
+  attemptId: string,
+  leads: readonly T[]
+): Promise<T[]> {
+  const seededIds = leads.filter(isTesterSeededLead).map((lead) => String(lead.id));
+  if (seededIds.length === 0) {
+    return [...leads];
+  }
+  const { error } = await supabase.from("crm_leads").delete().eq("attempt_id", attemptId).in("id", seededIds);
+  if (error) {
+    console.error("[tempo-test-bypass] seeded lead delete failed:", error);
+    return [...leads];
+  }
+  return leads.filter((lead) => !seededIds.includes(String(lead.id)));
+}
+
+/**
+ * Drops wizard references to leads that no longer exist: a selectedLeadId with no
+ * lead row, and shortlisted directory company ids whose company has no lead left.
+ * Ids whose company name is unknown are kept.
+ */
+export function dropMissingLeadRefs(
+  state: ProspectingWizardState,
+  leads: ReadonlyArray<{ id: unknown; company_name?: unknown }>,
+  companyNameById: ReadonlyMap<string, string>
+): ProspectingWizardState {
+  const leadIds = new Set(leads.map((lead) => String(lead.id)));
+  const leadCompanies = new Set(leads.map((lead) => String(lead.company_name ?? "")));
+  const shortlistedCompanyIds = state.shortlistedCompanyIds.filter((companyId) => {
+    const name = companyNameById.get(companyId);
+    return name === undefined || leadCompanies.has(name);
+  });
+  const selectedLeadId = state.selectedLeadId && leadIds.has(state.selectedLeadId) ? state.selectedLeadId : null;
+  return shortlistedCompanyIds.length === state.shortlistedCompanyIds.length && selectedLeadId === state.selectedLeadId
+    ? state
+    : { ...state, shortlistedCompanyIds, selectedLeadId };
+}
+
+/**
+ * Tester mode off: deletes the attempt's tester-seeded leads, then drops the
+ * wizard's references to leads that are gone (selected lead, shortlist ids).
+ */
+export async function clearTesterSeededLeads(
+  supabase: SupabaseClient,
+  attemptId: string,
+  state: ProspectingWizardState
+): Promise<ProspectingWizardState> {
+  const { data, error } = await supabase
+    .from("crm_leads")
+    .select(`id, ${LEAD_TEXT_COLUMNS.join(", ")}`)
+    .eq("attempt_id", attemptId);
+  if (error) {
+    console.error("[tempo-test-bypass] lead load failed:", error);
+    return state;
+  }
+  const remaining = await deleteTesterSeededLeads(
+    supabase,
+    attemptId,
+    (data ?? []) as unknown as Array<LeadTextRow & { id: unknown }>
+  );
+
+  const companyNameById = new Map<string, string>();
+  if (state.shortlistedCompanyIds.length > 0) {
+    // Public columns only: the directory company's id and name.
+    const { data: companies, error: companiesError } = await supabase
+      .from("crm_prospect_directory")
+      .select("id, company_name")
+      .in("id", state.shortlistedCompanyIds);
+    if (companiesError) {
+      console.error("[tempo-test-bypass] directory lookup failed:", companiesError);
+    }
+    for (const company of companies ?? []) {
+      companyNameById.set(String(company.id), String(company.company_name ?? ""));
+    }
+  }
+  return dropMissingLeadRefs(state, remaining, companyNameById);
+}
 
 type DirectoryPick = {
   id: string;
@@ -208,7 +334,7 @@ async function ensureShortlist(
       company_name: company.company_name,
       contact_name: `${TEST_BYPASS_PREFIX} ${contact.contact_name}`,
       contact_title: `${TEST_BYPASS_PREFIX} ${contact.contact_title}`,
-      why_fit: `${TEST_BYPASS_PREFIX} Shortlist placeholder for gate bypass`,
+      why_fit: `${TEST_BYPASS_PREFIX} ${TEST_SHORTLIST_WHY_FIT}`,
       trigger_event: `${TEST_BYPASS_PREFIX} Test trigger`,
       next_step: `${TEST_BYPASS_PREFIX} Call to qualify`,
       decision_maker_rationale: `${TEST_BYPASS_PREFIX} Placeholder rationale`,
@@ -344,7 +470,7 @@ async function ensureTargetLead(
         company_name: CORRECT_COMPANY,
         contact_name: CORRECT_CONTACT,
         contact_title: "Director of Operations",
-        why_fit: `${TEST_BYPASS_PREFIX} Correct target pre-seeded for faster testing`,
+        why_fit: `${TEST_BYPASS_PREFIX} ${TEST_TARGET_WHY_FIT}`,
         trigger_event: `${TEST_BYPASS_PREFIX} Eighth location opening`,
         next_step: `${TEST_BYPASS_PREFIX} Book discovery`,
         decision_maker_rationale: `${TEST_BYPASS_PREFIX} Dana owns operations`,

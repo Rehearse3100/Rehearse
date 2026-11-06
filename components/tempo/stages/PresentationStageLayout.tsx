@@ -4,7 +4,8 @@
  * sidebar on the left (as on every stage), and a simple slide-deck builder in the
  * center column: the Submit bar (save status left; slides counter and Submit
  * right) on top, then the active slide on a grey canvas, with the section name as
- * a large heading and its direction above it and Previous / Next below, and a rail
+ * a large heading and its direction above it and Previous / Next below (no Next on
+ * the last slide), and a rail
  * of six slide thumbnails at the right end (a horizontal strip above the slide on
  * mobile). The slides are
  * the reusable PitchSlide (components/presentation/PitchSlide.tsx) with Tempo's
@@ -257,14 +258,16 @@ export function PresentationStageLayout({
                 >
                   ← Previous
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveIndex((index) => Math.min(TEMPO_PITCH_SLIDES.length - 1, index + 1))}
-                  disabled={isLast}
-                  className="h-10 px-4 rounded-lg bg-[#1a1a2e] text-white text-label-md font-semibold hover:bg-[#252545] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  Next slide →
-                </button>
+                {/* None on the last slide: Submit (top right) is the way forward there. */}
+                {!isLast ? (
+                  <button
+                    type="button"
+                    onClick={() => setActiveIndex((index) => Math.min(TEMPO_PITCH_SLIDES.length - 1, index + 1))}
+                    className="h-10 px-4 rounded-lg bg-[#1a1a2e] text-white text-label-md font-semibold hover:bg-[#252545] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Next slide →
+                  </button>
+                ) : null}
               </div>
             </div>
           </section>

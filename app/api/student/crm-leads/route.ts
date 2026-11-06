@@ -1,13 +1,13 @@
 /**
  * crm-leads/route.ts
  * GET/POST /api/student/crm-leads — list and create multi-entry CRM Leads.
+ * With tester mode off, GET first deletes the leads tester mode seeded.
  * Uses service role because students do not have Supabase auth sessions.
  */
 
 import { NextResponse } from "next/server";
 import { requireStudentApi } from "@/lib/api-auth";
-import { isGateBypassEnabled } from "@/lib/tempo-test-bypass";
-import { stripTestBypassString } from "@/lib/tempo-test-bypass-client";
+import { deleteTesterSeededLeads, isGateBypassEnabled } from "@/lib/tempo-test-bypass";
 import { createServiceClient } from "@/lib/supabase/server";
 import type { CrmLead } from "@/types";
 
@@ -108,55 +108,10 @@ export async function GET(request: Request): Promise<NextResponse> {
 
     let leads = (data ?? []).map((row) => mapLeadRow(row as Record<string, unknown>));
 
-    // Bypass off: clear leftover [TEST] autofill on lead text fields.
+    // Bypass off: delete the leads tester mode seeded, so they never pass for the
+    // student's own picks. Leads the student wrote are left alone.
     if (!isGateBypassEnabled()) {
-      const now = new Date().toISOString();
-      const cleaned: CrmLead[] = [];
-      for (const lead of leads) {
-        const next: CrmLead = {
-          ...lead,
-          company_name: stripTestBypassString(lead.company_name),
-          contact_name: stripTestBypassString(lead.contact_name),
-          contact_title: stripTestBypassString(lead.contact_title),
-          why_fit: stripTestBypassString(lead.why_fit),
-          trigger_event: stripTestBypassString(lead.trigger_event),
-          next_step: stripTestBypassString(lead.next_step),
-          decision_maker_rationale: stripTestBypassString(lead.decision_maker_rationale),
-        };
-        const changed =
-          next.company_name !== lead.company_name ||
-          next.contact_name !== lead.contact_name ||
-          next.contact_title !== lead.contact_title ||
-          next.why_fit !== lead.why_fit ||
-          next.trigger_event !== lead.trigger_event ||
-          next.next_step !== lead.next_step ||
-          next.decision_maker_rationale !== lead.decision_maker_rationale;
-        if (changed) {
-          const { error: persistError } = await supabase
-            .from("crm_leads")
-            .update({
-              company_name: next.company_name,
-              contact_name: next.contact_name,
-              contact_title: next.contact_title,
-              why_fit: next.why_fit,
-              trigger_event: next.trigger_event,
-              next_step: next.next_step,
-              decision_maker_rationale: next.decision_maker_rationale,
-              updated_at: now,
-            })
-            .eq("id", lead.id)
-            .eq("attempt_id", attemptId);
-          if (persistError) {
-            console.error("[crm-leads] strip persist failed:", persistError);
-            cleaned.push(lead);
-          } else {
-            cleaned.push({ ...next, updated_at: now });
-          }
-        } else {
-          cleaned.push(lead);
-        }
-      }
-      leads = cleaned;
+      leads = await deleteTesterSeededLeads(supabase, attemptId, leads);
     }
 
     return NextResponse.json({ leads });

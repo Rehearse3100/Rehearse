@@ -10,7 +10,7 @@ import {
   normalizeProspectingWizardState,
   type ProspectingWizardState,
 } from "@/lib/tempo-prospecting";
-import { isGateBypassEnabled, prepareTempoTestBypass } from "@/lib/tempo-test-bypass";
+import { clearTesterSeededLeads, isGateBypassEnabled, prepareTempoTestBypass } from "@/lib/tempo-test-bypass";
 import { stripWizardTestAutofill } from "@/lib/tempo-test-bypass-client";
 import { revalidateStudentAttemptSurfaces } from "@/lib/revalidate-student-progress";
 import { createServiceClient } from "@/lib/supabase/server";
@@ -23,8 +23,10 @@ type SaveBody = {
 /**
  * GET /api/student/prospecting-wizard?attemptId=...
  * Returns saved wizard state or defaults. When TEMPO_TEST_BYPASS_GATES=true,
- * empty fields are auto-filled server-side. Client gate short-circuits use the
- * testBypass prop from the server page — not this response field.
+ * empty fields are auto-filled server-side. When it is off, [TEST] autofill is
+ * cleared, tester-seeded CRM leads are deleted and the wizard's references to
+ * them dropped. Client gate short-circuits use the testBypass prop from the
+ * server page — not this response field.
  */
 export async function GET(request: Request): Promise<NextResponse> {
   const auth = await requireStudentApi();
@@ -77,8 +79,10 @@ export async function GET(request: Request): Promise<NextResponse> {
       }
     }
   } else {
-    // Bypass off: clear leftover [TEST] autofill so it cannot leak into normal mode.
-    const stripped = stripWizardTestAutofill(state);
+    // Bypass off: clear leftover [TEST] autofill so it cannot leak into normal mode,
+    // delete the CRM leads tester mode seeded, and drop the shortlist ids and
+    // selected lead that pointed at them (the student then picks their own).
+    const stripped = await clearTesterSeededLeads(supabase, attemptId, stripWizardTestAutofill(state));
     if (JSON.stringify(stripped) !== JSON.stringify(state)) {
       state = stripped;
       const existing = (attempt.stage_data ?? {}) as Record<string, unknown>;
