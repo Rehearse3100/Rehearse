@@ -11,7 +11,8 @@ Updated: 2026-10-16 (exact detail: "That exact detail isn't publicly findable. R
 Updated: 2026-10-16 (opening sentence: the router writes one short framing sentence, checked by code, shown above the facts)
 Updated: 2026-10-16 (opening sentence written last: its own call sees only the question and the finished answer, companies as "Company 1"…; the router no longer writes it)
 Updated: 2026-10-16 (All companies filters combine up to 3 conditions; an unrecognised locations comparison is invalid; one count line above 20; valid filters used at low confidence in All companies mode)
-Scope: `POST /api/student/data-room-chat`, its client `components/tempo/stages/ProspectingDataRoomChat.tsx`, and the pure helpers in `lib/data-room-chat-scope.ts`, `lib/data-room-chat-router.ts`, `lib/data-room-chat-filter.ts`, `lib/data-room-chat-policy.ts` and `lib/data-room-chat-render.ts`.
+Updated: 2026-11-06 (safety checks before the pipeline: 500-character cap, per-attempt message limits, moderation, English only — 2.1; neutral router examples)
+Scope: `POST /api/student/data-room-chat`, its client `components/tempo/stages/ProspectingDataRoomChat.tsx`, the safety checks in `lib/data-room-chat-guard.ts`, and the pure helpers in `lib/data-room-chat-scope.ts`, `lib/data-room-chat-router.ts`, `lib/data-room-chat-filter.ts`, `lib/data-room-chat-policy.ts` and `lib/data-room-chat-render.ts`.
 
 **Previous state (2026-08-30):** the student attached companies with a picker; the model saw every attached company by name, with research findings for all of them, and replied in free text. That design let an answer about one company drift onto another, and let names come from the model.
 
@@ -59,7 +60,7 @@ A plain text line next to the **All companies** toggle (above the input) shows t
 
 The model never writes answer text. Every answer is built by code from stored facts.
 
-1. **Request checks**: auth; the attempt belongs to the student; scope is All companies or 1–3 distinct ids, every one in this simulation's active Data Room roster (400 otherwise).
+1. **Request checks**: auth; the attempt belongs to the student; scope is All companies or 1–3 distinct ids, every one in this simulation's active Data Room roster (400 otherwise). **Safety checks** run here, before anything else (2.1): over 500 characters, the attempt's message limits, counting the message, moderation and the non-Latin-script check; any refusal is a fixed reply.
 2. **Unselected company mentioned** (1–3 company scope) → fixed reply, no model call (4.1).
 3. **Question about company names** → answered from the roster, no model call (4.2).
 4. **Router call** (one gpt-4o call, no facts) labels the question: intent, topic, attribute, `exact_value`, and for All companies a filter and a criteria count (5.1). Unclear or failed → `overview`.
@@ -74,6 +75,18 @@ The model never writes answer text. Every answer is built by code from stored fa
 7. **Opening call** (7.1), last, only when the finished answer shows facts: one gpt-4o call sees the student's question and the exact answer text they will see (companies as "Company 1", "Company 2"…) and writes one sentence; code checks it and puts it above the answer. A failed call or a dropped sentence leaves the answer unchanged.
 
 So: the model writes no facts and no company names; the only model-written text is the one-sentence opening (written from the finished answer, checked by code, 7.1), shown above the facts; a hidden finding appears exactly when the policy allows it (only allowed ones ever reach the selection call, which can't add or remove them); and in All companies mode no model picks or reads company data (the opening call sees only the finished list).
+
+### 2.1 Safety checks (`lib/data-room-chat-guard.ts`)
+
+Run on every question in this order, before the roster loads or any answering model call. Each refusal is a fixed reply in the usual fixed-reply shape (`{ "intro": text, "items": [] }`): no opening sentence, no findings. The texts live in `GUARD_REPLIES`.
+
+1. **Length:** an empty question → 400 as before. Over 500 characters → "Please keep your question under 500 characters." No model call; not counted. The input box also stops at 500 and shows "N / 500" past 400.
+2. **Message limits** (skipped in tester mode, `isGateBypassEnabled()`, so testers and evals aren't blocked): counts this attempt's rows in `public.data_room_chat_usage`. 300 or more in total → "You've reached the research assistant's limit for this simulation. Use your notes and the company pages to finish your research." Otherwise 20 or more in the last 5 minutes → "You're asking quickly. Take a minute to go through what you've found, then try again." Neither is counted. A missing table or a failed count is logged and the message allowed (fail open).
+3. **Count it:** one row (`attempt_id`, `student_id`, `created_at`); an insert error is logged and the question carries on. Restart deletes the attempt's rows (a missing table doesn't block it).
+4. **Moderation:** OpenAI moderations, `omni-moderation-latest`, on the message only. Flagged in any self-harm category → "It sounds like you might be going through something hard. I'm only a research assistant, but you don't have to deal with it alone. In the US you can call or text 988 to reach the Suicide & Crisis Lifeline at any time; elsewhere, your local emergency number or a crisis line can help." Flagged for anything else → "I can only help with researching these companies. Please keep questions professional." A moderation error is logged and the question carries on (the rest only shows database facts).
+5. **English:** more than 30% of the letters in a non-Latin script → "Please ask in English.", without calling the router. Otherwise the router's reply includes `"english"` (5.1); `false` with high confidence → "Please ask in English." (checked as soon as the router returns, on both the All-companies and the 1–3-company paths). A missing or invalid field counts as English.
+
+Table (in `supabase/FULL-SETUP.sql`): `public.data_room_chat_usage (id uuid primary key default gen_random_uuid(), attempt_id uuid not null references public.attempts(id) on delete cascade, student_id uuid not null, created_at timestamptz not null default now())`, index on `(attempt_id, created_at)`, row level security on with no policies (only the server's service client touches it).
 
 ---
 
@@ -168,12 +181,13 @@ A value that can't be read (a non-numeric locations value, a yes/no field with "
 
 ### 5.1 Router call (`lib/data-room-chat-router.ts`)
 
-`gpt-4o`, `temperature: 0`, `max_tokens: 300` (room for the decision and up to three filters), JSON mode. Its input is **only** the student's question (names redacted), their **last 3 questions** (any scope, redacted) and the scope kind (`one company` / `two or three companies` / `all companies`) — **no facts and no company data**. Reply: `{ "intent", "topic", "attribute", "filters", "criteria_count", "exact_value", "confidence" }`. It writes no opening sentence (that is its own call, written last, 7.1); a stray `intro` in its reply is ignored.
+`gpt-4o`, `temperature: 0`, `max_tokens: 300` (room for the decision and up to three filters), JSON mode. Its input is **only** the student's question (names redacted), their **last 3 questions** (any scope, redacted) and the scope kind (`one company` / `two or three companies` / `all companies`) — **no facts and no company data**. Reply: `{ "intent", "topic", "attribute", "filters", "criteria_count", "exact_value", "english", "confidence" }`. It writes no opening sentence (that is its own call, written last, 7.1); a stray `intro` in its reply is ignored.
 
 - intent: `overview` | `attribute_lookup` | `specific_research` | `compare` | `filter_list` | `meta_or_bulk` | `off_topic`; topic: a question topic from `lib/data-room-research-topics.ts` or null; attribute: `industry` | `locations` | `metro` | `territory` | `online_booking` | `size` | `contacts` | null.
-- filters (All companies `filter_list` only, otherwise null): a list of 1–3 `{ "field", "op", "value" }` from the whitelist (4.3), one per condition; conditions on different fields all hold, two on the same field mean either one, except locations, where both hold; null when any condition is about something else (software, budget, staffing, reviews, risks, fit). A reply that still uses the single `filter` field is read as a one-item list. criteria_count: how many separate conditions the question filters by ("dental clinics in Denver" = 2).
+- filters (All companies `filter_list` only, otherwise null): a list of 1–3 `{ "field", "op", "value" }` from the whitelist (4.3), one per condition; conditions on different fields all hold, two on the same field mean either one, except locations, where both hold; null when any condition is about something else (software, budget, staffing, reviews, risks, fit). A reply that still uses the single `filter` field is read as a one-item list. criteria_count: how many separate conditions the question filters by ("fitness studios in Phoenix" = 2).
 - exact_value: true when the question asks for one specific detail (a number, amount, count, email or phone number, or a named vendor or product); anything but exactly `true` reads as false (7).
-- Prompt rules: questions phrased as "how many…", "which are…" or "list the…" with one to three conditions are `filter_list`, read charitably ("how many are located dental?" → filters `[{"field": "industry", "op": "contains", "value": "dental"}]`); the count intro answers "how many". Two-letter uppercase tokens such as CO, CA or TX are US state codes. When the scope is all companies, the router still returns the filters with "low" confidence.
+- english: true when the question is written in English, typos and short questions included. Read by `parseRouterEnglish`: only `false` with `"high"` confidence means not English (fixed reply, 2.1); anything missing or invalid counts as English.
+- Prompt rules: questions phrased as "how many…", "which are…" or "list the…" with one to three conditions are `filter_list`, read charitably ("how many are located retail?" → filters `[{"field": "industry", "op": "contains", "value": "retail"}]`); the count intro answers "how many". Two-letter uppercase tokens such as TX, CA or NY are US state codes. The prompt's examples are neutral: none names an ICP industry, territory place or state, or the ICP location bounds (a test checks this against `scripts/config/tempo-icp.ts`). When the scope is all companies, the router still returns the filters with "low" confidence.
 - `off_topic` is only for questions clearly unrelated to researching companies (the weather, homework, jokes). Anything about a company is never off topic: revenue, finances, metrics, patients, people's roles or who decides are `specific_research` with the closest topic (revenue or finances → `budget`; people's roles or who decides → `ownership`). Email addresses, phone numbers or who to contact are `attribute_lookup` with attribute `contacts`, so the answer is the contacts list (2026-10-16).
 - **Fails closed in code** (`parseRouterReply`): invalid JSON, unknown values, low or missing confidence, or `specific_research` without a topic → `overview`. **All companies mode only:** a `filter_list` reply whose filters are all valid is used whatever its confidence (code checks every condition; about 1–3 companies low confidence still means `overview`). For `filter_list` an unknown topic or attribute just becomes null (it never uses them), so it can't sink valid filters. Filters with any condition the whitelist can't read (4.3), or more than 3, become null (an All-companies question then gets the fixed reply); a criteria count that isn't a whole number ≥ 0 (a number or a numeric string such as `"1"`) becomes null. A failed router call also counts as `overview`.
 - Follow-ups ("tell me more about that") are understood from the recent questions; no answering step sees history.
@@ -342,7 +356,7 @@ Request:
 }
 ```
 
-Response: `{ "intro": string, "items": [{ "companyId", "companyName", "text" }] }` (unchanged in Phase 3, so the UI needs no change). No directory columns, fact ids or answer-key fields are returned.
+Response: `{ "intro": string, "items": [{ "companyId", "companyName", "text" }] }` (unchanged in Phase 3, so the UI needs no change). The safety checks' fixed replies (2.1) use the same shape with `items: []`. No directory columns, fact ids or answer-key fields are returned.
 
 ---
 
@@ -359,6 +373,7 @@ Response: `{ "intro": string, "items": [{ "companyId", "companyName", "text" }] 
 
 ## 13. Change history
 
+- **2026-11-06, safety checks (2.1):** before the pipeline, a 500-character cap (and `maxLength` 500 with an "N / 500" counter past 400 on the input), per-attempt limits from the new `data_room_chat_usage` table (20 in 5 minutes, 300 in total; not in tester mode; fail open), counting each question, OpenAI moderation (`omni-moderation-latest`; self-harm gets a 988 Lifeline reply, other flags a "keep it professional" reply; errors carry on), and English only (a non-Latin-script check, then the router's new `english` field). Restart clears the attempt's usage rows. Router prompt examples made neutral (no ICP industries, territory places or states, or ICP location bounds).
 - **2026-10-14:** compact multi/All lines; factual comparisons allowed (ranking refused); "never leave both empty" plus an empty-answer retry (blank answers came from format rules that let the model say nothing); Tempo product context and an "up to 4, most relevant first" findings line; hidden-findings requests answered like general questions.
 - **2026-10-15, Phase 2:** the router and the code-side policy replaced the prompt's withholding rules; one exact sentence for "nothing found".
 - **2026-10-15, Phase 3:** extractive answers. Removed: the free-text answering prompt (and its single / multi / All prompt modes and compact lines), the scan of model prose for company names, refs and the words "references"/"labels", the stricter retry and the empty-answer retry with their reminders, the fallback reply `I can only answer about the companies in your question.`, the meta-or-bulk question substitution, and history in the answering call (`selectHistoryForScope`). Kept: id verification, scope checks, the out-of-scope reply, name questions, the router's fail-closed parsing, and name redaction for model input.
@@ -403,3 +418,5 @@ Response: `{ "intro": string, "items": [{ "companyId", "companyName", "text" }] 
 - [ ] One company open + a question naming a different company → "Your question mentions …, which isn't selected. …" (instant)
 - [ ] Ask about two companies, then "What does it sell?" → "Which one did you mean?" with those two; picking one answers about that one only
 - [ ] Network response contains only `{ intro, items }` — no fact ids, no answer-key fields
+- [ ] Safety (2.1, tester mode off): the input stops at 500 characters and shows "N / 500" past 400; a question in Spanish or Chinese → "Please ask in English."; an abusive question → "I can only help with researching these companies. Please keep questions professional."; a self-harm message → the 988 Lifeline reply; 21 quick questions in 5 minutes → "You're asking quickly. …"; none of these has an opening sentence
+- [ ] Before the `data_room_chat_usage` SQL is run, the chat still answers normally (limits fail open); after Restart, the attempt's usage rows are gone

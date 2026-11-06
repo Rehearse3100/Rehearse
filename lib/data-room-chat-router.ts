@@ -6,7 +6,8 @@
  * its JSON reply, failing closed to "overview". For All-companies filter questions
  * the reply also carries up to three filters and how many conditions the question
  * asks for (validated by lib/data-room-chat-filter.ts); in All companies mode valid
- * filters are used even when the router is unsure. POST /api/student/data-room-chat
+ * filters are used even when the router is unsure. The reply also says whether the
+ * question is in English (parseRouterEnglish). POST /api/student/data-room-chat
  * makes the gpt-4o call; lib/data-room-chat-policy.ts turns the decision into the
  * allowed facts and lib/data-room-chat-render.ts into the answer path.
  */
@@ -96,7 +97,7 @@ const TOPIC_LIST = QUESTION_TOPICS.map(
 /** The classifier's instructions (it never sees company data). */
 export const ROUTER_SYSTEM_PROMPT = [
   "You classify one question a student asks while researching companies in a sales-training Data Room. You never see any company information, only the question. Reply with a single JSON object and nothing else:",
-  '{"intent": string, "topic": string | null, "attribute": string | null, "filters": object[] | null, "criteria_count": number, "exact_value": boolean, "confidence": "high" | "low"}',
+  '{"intent": string, "topic": string | null, "attribute": string | null, "filters": object[] | null, "criteria_count": number, "exact_value": boolean, "english": boolean, "confidence": "high" | "low"}',
   "",
   "intent (pick one):",
   '- overview: a general or open-ended question about the company or companies ("tell me about them", "what should I know?", "tell me everything", "summarize").',
@@ -122,6 +123,8 @@ export const ROUTER_SYSTEM_PROMPT = [
   'criteria_count: how many separate conditions the question asks to filter by ("which have online booking?" is 1; "fitness studios in Phoenix" is 2; 0 when it filters by nothing).',
   "",
   "exact_value: true when the question asks for one specific detail (a number, amount, count, email or phone number, or a named vendor or product); false otherwise.",
+  "",
+  "english: true when the question is written in English, typos and short questions included; false otherwise.",
   "",
   "Rules:",
   '- specific_research needs a concrete angle. "Tell me everything", "what should I know?" and "anything else?" are overview.',
@@ -230,4 +233,22 @@ export function parseRouterReply(raw: string | null | undefined, scopeKind?: Sco
   return decision.intent === "specific_research" && decision.topic === null
     ? OVERVIEW_DECISION
     : decision;
+}
+
+/**
+ * Whether the router reply says the question is in English: false only for
+ * "english": false with "high" confidence; anything missing or invalid (or a
+ * reply that isn't JSON) counts as English.
+ */
+export function parseRouterEnglish(raw: string | null | undefined): boolean {
+  try {
+    const parsed: unknown = JSON.parse(raw ?? "");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return true;
+    }
+    const { english, confidence } = parsed as Record<string, unknown>;
+    return !(english === false && confidence === "high");
+  } catch {
+    return true;
+  }
 }

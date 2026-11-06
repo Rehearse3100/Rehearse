@@ -8,7 +8,8 @@
  * or the open company. Type-to-pick: after 3 letters, matching companies appear in a
  * dropdown above the input (Enter picks the highlighted one, then Enter sends); "Which one did you
  * mean?" uses the same dropdown. The server receives company ids only and returns
- * per-company blocks; names shown come from the server reply.
+ * per-company blocks; names shown come from the server reply. The input takes at
+ * most 500 characters, with an "N / 500" counter past 400 (lib/data-room-chat-guard.ts).
  */
 
 "use client";
@@ -16,6 +17,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import type { DataRoomCompany } from "@/app/api/student/data-room/route";
+import { DATA_ROOM_CHAT_COUNTER_FROM, DATA_ROOM_CHAT_MAX_CHARS } from "@/lib/data-room-chat-guard";
 import {
   buildScopeIndex,
   insertPickedName,
@@ -825,6 +827,7 @@ export function ProspectingDataRoomChat({
                 setAmbiguity(null);
               }}
               placeholder="Type a message"
+              maxLength={DATA_ROOM_CHAT_MAX_CHARS}
               aria-label="Ask the AI Research Assistant"
               role="combobox"
               aria-autocomplete="list"
@@ -845,6 +848,11 @@ export function ProspectingDataRoomChat({
               <MaterialIcon name="arrow_upward" className="text-[16px]" />
             </button>
           </div>
+          {input.length > DATA_ROOM_CHAT_COUNTER_FROM ? (
+            <p className="mt-1 text-right text-[11px] text-on-surface-variant" aria-live="polite">
+              {input.length} / {DATA_ROOM_CHAT_MAX_CHARS}
+            </p>
+          ) : null}
         </div>
       </div>
     </section>

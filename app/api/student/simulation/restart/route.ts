@@ -1,8 +1,10 @@
 /**
  * restart/route.ts
- * Resets the current in-progress attempt — clears stage scores and CRM rows
- * (crm_log_entries, crm_account_notes, crm_contact_notes, crm_leads), then
- * returns the student to lead_gen. Called when a student clicks "Restart Simulation".
+ * Resets the current in-progress attempt — clears stage scores, CRM rows
+ * (crm_log_entries, crm_account_notes, crm_contact_notes, crm_leads) and the Data
+ * Room chat message count (data_room_chat_usage), then returns the student to
+ * lead_gen. A missing crm_leads or data_room_chat_usage table doesn't block the
+ * restart. Called when a student clicks "Restart Simulation".
  * Requires a valid student session cookie.
  *
  * POST body: { attemptId, simulationId, classId }
@@ -20,6 +22,17 @@ type RestartBody = {
   simulationId?: string;
   classId?: string;
 };
+
+/** True when a delete failed only because its table hasn't been created yet. */
+function isMissingTableError(error: { code?: string; message?: string }): boolean {
+  const msg = (error.message ?? "").toLowerCase();
+  return (
+    error.code === "PGRST205" ||
+    msg.includes("schema cache") ||
+    msg.includes("does not exist") ||
+    msg.includes("could not find the table")
+  );
+}
 
 /**
  * Clears progress on the current attempt and resets it to the first stage.
@@ -131,13 +144,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     if (deleteCrmLeadsError) {
       // Table missing until supabase/crm-leads-migration.sql is applied — do not block restart.
-      const msg = (deleteCrmLeadsError.message ?? "").toLowerCase();
-      const isMissingTable =
-        deleteCrmLeadsError.code === "PGRST205" ||
-        msg.includes("schema cache") ||
-        msg.includes("does not exist") ||
-        msg.includes("could not find the table");
-      if (!isMissingTable) {
+      if (!isMissingTableError(deleteCrmLeadsError)) {
         console.error("[simulation/restart] delete crm leads", deleteCrmLeadsError);
         return NextResponse.json(
           { error: deleteCrmLeadsError.message || "Could not clear CRM leads." },
@@ -146,6 +153,25 @@ export async function POST(request: Request): Promise<NextResponse> {
       }
       console.warn(
         "[simulation/restart] crm_leads table missing — run supabase/crm-leads-migration.sql"
+      );
+    }
+
+    const { error: deleteChatUsageError } = await supabase
+      .from("data_room_chat_usage")
+      .delete()
+      .eq("attempt_id", attemptId);
+
+    if (deleteChatUsageError) {
+      // Table missing until the data_room_chat_usage SQL in FULL-SETUP.sql is run — do not block restart.
+      if (!isMissingTableError(deleteChatUsageError)) {
+        console.error("[simulation/restart] delete data room chat usage", deleteChatUsageError);
+        return NextResponse.json(
+          { error: deleteChatUsageError.message || "Could not clear Data Room chat usage." },
+          { status: 500 }
+        );
+      }
+      console.warn(
+        "[simulation/restart] data_room_chat_usage table missing — run its SQL in supabase/FULL-SETUP.sql"
       );
     }
 

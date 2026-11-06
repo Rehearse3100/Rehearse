@@ -329,6 +329,19 @@ CREATE TABLE IF NOT EXISTS public.crm_prospect_documents (
 CREATE INDEX IF NOT EXISTS crm_prospect_documents_company_id_idx
   ON public.crm_prospect_documents (company_id);
 
+-- ── Data Room chat usage (one row per question; message limits) ─────────────
+-- Read and written only by the server's service client (app/api/student/data-room-chat,
+-- lib/data-room-chat-guard.ts); cleared on Restart. RLS on, no policies.
+CREATE TABLE IF NOT EXISTS public.data_room_chat_usage (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  attempt_id uuid NOT NULL REFERENCES public.attempts(id) ON DELETE CASCADE,
+  student_id uuid NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS data_room_chat_usage_attempt_created_idx
+  ON public.data_room_chat_usage (attempt_id, created_at);
+
 -- ── RLS ──────────────────────────────────────────────────────────────────────
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.simulations ENABLE ROW LEVEL SECURITY;
@@ -345,6 +358,7 @@ ALTER TABLE public.crm_leads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.crm_prospect_directory ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.crm_prospect_contacts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.crm_prospect_documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.data_room_chat_usage ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Users read own profile" ON public.profiles;
 CREATE POLICY "Users read own profile" ON public.profiles
@@ -616,7 +630,8 @@ SELECT
         'crm_leads',
         'crm_prospect_directory',
         'crm_prospect_contacts',
-        'crm_prospect_documents'
+        'crm_prospect_documents',
+        'data_room_chat_usage'
       ])
   ) AS expected_tables_present,
   EXISTS (

@@ -7,7 +7,12 @@
  * code and shown above the facts — never on a nothing-findable or fixed reply; if it
  * fails or is dropped, the answer goes out unchanged. The client sends a
  * scope (1–3 company ids, or all companies) and the question; facts are loaded
- * server-side. Flow: unselected-company mention or company-names question → server
+ * server-side. Before anything else, every question passes the safety checks
+ * (lib/data-room-chat-guard.ts), each refusal a fixed reply: over 500 characters;
+ * the attempt's message limits (not in tester mode; fail open); then it is counted;
+ * OpenAI moderation (self-harm or other flags; errors carry on); mostly non-Latin
+ * letters; and the router's own "not English" verdict where it runs.
+ * Flow: unselected-company mention or company-names question → server
  * reply; otherwise a router call (lib/data-room-chat-router.ts; sees only the
  * redacted question, recent questions and scope kind) labels the question. All
  * companies: no model picks or reads company data — 1–3 validated conditions run over
@@ -55,8 +60,17 @@ import {
   type Selection,
 } from "@/lib/data-room-chat-render";
 import {
+  checkUsageLimits,
+  guardReply,
+  isMostlyNonLatin,
+  isTooLong,
+  moderateMessage,
+  recordUsage,
+} from "@/lib/data-room-chat-guard";
+import {
   buildRouterMessages,
   OVERVIEW_DECISION,
+  parseRouterEnglish,
   parseRouterReply,
   scopeKindOf,
   type RouterDecision,
@@ -79,6 +93,7 @@ import {
 } from "@/lib/data-room-chat-scope";
 import { createServiceClient } from "@/lib/supabase/server";
 import { parseResearchFindings } from "@/lib/data-room-research-topics";
+import { isGateBypassEnabled } from "@/lib/tempo-test-bypass";
 
 type DataRoomChatBody = {
   attemptId?: unknown;
@@ -192,13 +207,14 @@ function redactFactText(text: string, index: ScopeIndex, company: ScopedCompany)
 
 /**
  * The router call (gpt-4o, temperature 0, JSON). It sees only the redacted question,
- * recent questions and scope kind. Any failure counts as an overview (public facts only).
+ * recent questions and scope kind. Any failure counts as an overview (public facts
+ * only) in English. english is false only when the router says so with high confidence.
  */
 async function classifyQuestion(
   openai: OpenAI,
   messages: OpenAI.Chat.ChatCompletionMessageParam[],
   scopeKind: ScopeKind
-): Promise<RouterDecision> {
+): Promise<{ decision: RouterDecision; english: boolean }> {
   try {
     const response = await openai.chat.completions.create({
       model: "gpt-4o",
@@ -207,10 +223,11 @@ async function classifyQuestion(
       response_format: { type: "json_object" },
       messages,
     });
-    return parseRouterReply(response.choices[0]?.message?.content, scopeKind);
+    const content = response.choices[0]?.message?.content;
+    return { decision: parseRouterReply(content, scopeKind), english: parseRouterEnglish(content) };
   } catch (error) {
     console.error("[data-room-chat] router:", error);
-    return OVERVIEW_DECISION;
+    return { decision: OVERVIEW_DECISION, english: true };
   }
 }
 
@@ -289,6 +306,12 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
+    // ── Safety checks (lib/data-room-chat-guard.ts), before the answer pipeline ───
+    // 1. Length: refused without a model call, not counted.
+    if (isTooLong(newMessage)) {
+      return NextResponse.json(guardReply("tooLong"));
+    }
+
     if (!scope) {
       return NextResponse.json(
         { error: "Ask about 1 to 3 companies, or turn on All companies." },
@@ -314,6 +337,27 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     if (attemptError || !attempt) {
       return NextResponse.json({ error: "Attempt not found." }, { status: 404 });
+    }
+
+    // 2. Limits (not in tester mode): refused replies are not counted; fails open.
+    if (!isGateBypassEnabled()) {
+      const limit = await checkUsageLimits(supabase, attemptId);
+      if (limit) {
+        return NextResponse.json(guardReply(limit));
+      }
+    }
+    // 3. Count it.
+    await recordUsage(supabase, attemptId, auth.session.studentId);
+    // 4. Moderation on the message only; errors carry on.
+    const openai = new OpenAI({ apiKey });
+    const moderation = await moderateMessage(openai, newMessage);
+    if (moderation) {
+      return NextResponse.json(guardReply(moderation));
+    }
+    // 5. English: mostly non-Latin letters are refused before the router (which
+    // also says whether the question is English; checked where it runs below).
+    if (isMostlyNonLatin(newMessage)) {
+      return NextResponse.json(guardReply("notEnglish"));
     }
 
     const simulationId = String(attempt.simulation_id);
@@ -383,7 +427,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     const refLabels = buildRefLabels(scopedIds);
     const openingQuestion = newMessage.slice(0, 8_000);
     const question = redactStudentText(openingQuestion, index, refLabels);
-    const openai = new OpenAI({ apiKey });
 
     // The router never sees facts or company data.
     const scopeKind = scopeKindOf(scope);
@@ -399,13 +442,16 @@ export async function POST(request: Request): Promise<NextResponse> {
     // from the database), then the opening is written for the list; anything else
     // gets the fixed reply (no opening call).
     if (scope.mode === "all") {
-      const decision = await classifyQuestion(openai, routerMessages, scopeKind);
+      const { decision, english } = await classifyQuestion(openai, routerMessages, scopeKind);
+      if (!english) {
+        return NextResponse.json(guardReply("notEnglish"));
+      }
       const answer = answerAllCompanies(decision, roster.map(toListCompany));
       return NextResponse.json(await withWrittenOpening(openai, openingQuestion, answer, index));
     }
 
     // One to three companies: the router runs alongside the data loads.
-    const [decision, researchResult, contactsResult] = await Promise.all([
+    const [{ decision, english }, researchResult, contactsResult] = await Promise.all([
       classifyQuestion(openai, routerMessages, scopeKind),
       singleCompanyId
         ? supabase
@@ -420,6 +466,11 @@ export async function POST(request: Request): Promise<NextResponse> {
         .select("company_id, contact_name, contact_title, department")
         .in("company_id", scopedIds),
     ]);
+
+    // The router says the question isn't in English (high confidence): fixed reply.
+    if (!english) {
+      return NextResponse.json(guardReply("notEnglish"));
+    }
 
     if (researchResult?.error) {
       console.error("[data-room-chat] research facts", researchResult.error);
