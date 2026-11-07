@@ -7,7 +7,9 @@
  * keyboard) and the scope each side sends; All companies mode (no name suggestions or
  * highlighting, questions go out as typed with scope all and never leave the mode);
  * the placeholder by mode; "Search all companies" (only under the latest reply that
- * offers it; asks the same question in All companies mode, then is gone).
+ * offers it; asks the same question in All companies mode, then is gone); 2026-11-07:
+ * a reply's line sources and note are kept for the reply body (malformed ones are
+ * dropped, so the reply shows as text), and history sent back stays text only.
  */
 
 import * as React from "react";
@@ -372,5 +374,50 @@ describe("after All-companies lists, back in Selected: the question goes where t
       // Back to the list as the latest exchange for the next case.
       await listThen(["maple"]);
     }
+  });
+});
+
+describe("line sources and the note (2026-11-07)", () => {
+  it("the reply keeps each line's source and its note; malformed lines or a non-text note are dropped", async () => {
+    replyWith({
+      intro: "Here's what's publicly findable about budget.",
+      items: [
+        {
+          companyId: "summit",
+          companyName: "Summit Dental Group",
+          text: "Finance memo cites a freeze.\nHiring two hygienists\n8 locations.",
+          lines: [
+            { text: "Finance memo cites a freeze.", source: "research" },
+            { text: "Hiring two hygienists", source: "public" },
+            { text: "8 locations.", source: "card" },
+          ],
+        },
+        { companyId: "falcon", companyName: "Falcon Market", text: "Retail", lines: [{ text: "Retail", source: "secret" }] },
+      ],
+      note: "Ask about one company at a time to see its research findings.",
+    });
+    type("What about their budget?");
+    await send();
+    const reply = (hooks.values[0] as Array<Record<string, unknown>>)[1] as {
+      note?: string;
+      items: Array<{ lines?: unknown }>;
+    };
+    expect(reply.note).toBe("Ask about one company at a time to see its research findings.");
+    expect(reply.items[0]?.lines).toEqual([
+      { text: "Finance memo cites a freeze.", source: "research" },
+      { text: "Hiring two hygienists", source: "public" },
+      { text: "8 locations.", source: "card" },
+    ]);
+    // An unknown source: no lines (that block shows its text, as before).
+    expect(reply.items[1]).not.toHaveProperty("lines");
+
+    replyWith({ intro: "Here's what's on record.", items: [], note: 42 });
+    type("Anything else?");
+    await send();
+    expect((hooks.values[0] as Array<Record<string, unknown>>)[3]).not.toHaveProperty("note");
+    // History sent back is text only: no sources, no note.
+    const history = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)).history as Array<Record<string, unknown>>;
+    expect(JSON.stringify(history)).not.toContain("source");
+    expect(JSON.stringify(history)).not.toContain("note");
   });
 });

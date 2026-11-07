@@ -317,7 +317,8 @@ describe("route: checks before the pipeline", () => {
     await ask("Which ones have online booking?");
     expect(fake.router).toHaveBeenCalledTimes(1);
     expect(fake.router.mock.calls[0]?.[0]).toMatchObject({
-      model: "gpt-4o",
+      // 2026-11-07: gpt-6-luna (the config's model settings; gpt-4o shuts down 2027-01-14).
+      model: "gpt-6-luna",
       messages: buildRouterMessages({ question: "Which ones have online booking?", recentQuestions: [], scopeKind: "all" }),
     });
   });

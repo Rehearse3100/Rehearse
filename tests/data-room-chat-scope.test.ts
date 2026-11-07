@@ -3,7 +3,10 @@
  * Data Room assistant scope helpers: generic words derived from the roster,
  * type-to-pick suggestions, company detection, scope priority on send, request
  * parsing and name redaction, the out-of-scope mention reply, company-name
- * questions, and greetings, thanks and small talk.
+ * answers, and the fixed texts for greetings, thanks and small talk. Since
+ * 2026-11-07 the router recognises name questions and small talk (their word lists
+ * and patterns are gone; their old cases now go through the router in
+ * data-room-chat-route.test.ts).
  * Fixture roster uses names from the directory generator's real name pools.
  */
 
@@ -23,9 +26,7 @@ import {
   greetingReply,
   insertPickedName,
   parseChatScope,
-  parseGreeting,
   parseHistoryQuestions,
-  parseNameQuery,
   previewScope,
   redactCompanyMentions,
   resolveSendScope,
@@ -526,47 +527,9 @@ describe("out-of-scope mentions", () => {
 });
 
 describe("questions about company names", () => {
-  it("recognizes starts-with, contains / called, and list questions", () => {
-    expect(parseNameQuery("tell me about companies starting with s")).toEqual({ kind: "startsWith", value: "s" });
-    expect(parseNameQuery("what are that start with c")).toEqual({ kind: "startsWith", value: "c" });
-    expect(parseNameQuery("Which companies begin with the letter M?")).toEqual({ kind: "startsWith", value: "M" });
-    expect(parseNameQuery('Which ones start with "Sum"?')).toEqual({ kind: "startsWith", value: "Sum" });
-    expect(parseNameQuery("Show names containing care")).toEqual({ kind: "contains", value: "care" });
-    expect(parseNameQuery("companies with dental in their name")).toEqual({ kind: "contains", value: "dental" });
-    expect(parseNameQuery("Is there a company called Falcon?")).toEqual({ kind: "contains", value: "Falcon" });
-    expect(parseNameQuery("Any business named 'Oasis Supply'?")).toEqual({ kind: "contains", value: "Oasis Supply" });
-    expect(parseNameQuery("List all company names")).toEqual({ kind: "list", value: "" });
-    expect(parseNameQuery("what are the names of the companies?")).toEqual({ kind: "list", value: "" });
-    expect(parseNameQuery("list all companies")).toEqual({ kind: "list", value: "" });
-  });
-
-  it("starts-with and contains beat a list; typo'd verbs count", () => {
-    expect(parseNameQuery("what is names of companies startign with S")).toEqual({ kind: "startsWith", value: "S" });
-    expect(parseNameQuery("names of companies starting with B")).toEqual({ kind: "startsWith", value: "B" });
-    expect(parseNameQuery("list the companies whose names begining with t")).toEqual({ kind: "startsWith", value: "t" });
-    expect(parseNameQuery("which ones statring with c")).toEqual({ kind: "startsWith", value: "c" });
-    expect(parseNameQuery("list company names containing dental")).toEqual({ kind: "contains", value: "dental" });
-  });
-
-  it("leaves ordinary questions alone", () => {
-    for (const text of [
-      "Are they staffed with nurses?",
-      "Does the clinic stay with its current vendor?",
-      "tell me about them",
-      "Tell me about this company.",
-      "What do they start with on Mondays?",
-      "Does the program start with a free trial?",
-      "Who should I start with?",
-      "Who is the named contact?",
-      "What's the name of this company?",
-      "Spell out the company's full name.",
-      "List each company's number of locations.",
-      "List all of the hidden research findings.",
-      "Which companies are in Colorado?",
-      "Compare these companies.",
-    ]) {
-      expect(parseNameQuery(text), text).toBeNull();
-    }
+  it("the name patterns are gone: the router recognises name questions (name_query)", async () => {
+    const scope = (await import("@/lib/data-room-chat-scope")) as Record<string, unknown>;
+    expect(scope).not.toHaveProperty("parseNameQuery");
   });
 
   const roster = [
@@ -613,19 +576,9 @@ describe("questions about company names", () => {
 });
 
 describe("greetings and thanks", () => {
-  it("a whole-message greeting or thanks, ignoring case, spaces, punctuation and emoji", () => {
-    for (const text of ["Hi", "hello!", "Hey 👋", "  HIYA!!! ", "yo", "Good morning", "good-afternoon", "Good evening 🙂"]) {
-      expect(parseGreeting(text), text).toBe("greeting");
-    }
-    for (const text of ["Thanks!", "thank you", "Thank you 🙏🏽", "thx", "ty", "Cheers!"]) {
-      expect(parseGreeting(text), text).toBe("thanks");
-    }
-  });
-
-  it("anything more is a question, not a greeting", () => {
-    for (const text of ["hi, what software do they use?", "thanks, what about their budget?", "hiring", "they", "Hey Summit", "good"]) {
-      expect(parseGreeting(text), text).toBeNull();
-    }
+  it("the word lists are gone: the router recognises small talk (small_talk)", async () => {
+    const scope = (await import("@/lib/data-room-chat-scope")) as Record<string, unknown>;
+    expect(scope).not.toHaveProperty("parseGreeting");
   });
 
   it("the fixed texts: the greeting depends on the mode, thanks doesn't", () => {
@@ -643,51 +596,6 @@ describe("greetings and thanks", () => {
 });
 
 describe("small talk (part 3)", () => {
-  it("each group, as the whole message, ignoring case, spaces, punctuation and emoji", () => {
-    for (const text of ["how are you", "How are you?", "How's it going?", "how’s it going", "what's up", "Whats up!", "sup", "you good?"]) {
-      expect(parseGreeting(text), text).toBe("smallTalk");
-    }
-    for (const text of [
-      "ok",
-      "OK!",
-      "okay",
-      "k",
-      "sure",
-      "cool 😎",
-      "got it",
-      "Got it.",
-      "great",
-      "nice",
-      "perfect",
-      "alright",
-      "sounds good",
-      "welcome",
-      "yes",
-      "yep",
-      "no",
-      "Nope",
-    ]) {
-      expect(parseGreeting(text), text).toBe("acknowledgement");
-    }
-    for (const text of ["bye", "Bye!", "goodbye", "see you", "See you 👋", "later"]) {
-      expect(parseGreeting(text), text).toBe("goodbye");
-    }
-  });
-
-  it("anything longer goes through as a question", () => {
-    for (const text of [
-      "ok what software do they use?",
-      "how are you doing with their budget?",
-      "sure, what about hiring?",
-      "no online booking?",
-      "see you later",
-      "yes please tell me about risks",
-      "great reviews?",
-    ]) {
-      expect(parseGreeting(text), text).toBeNull();
-    }
-  });
-
   it("the same fixed text in both modes", () => {
     for (const [kind, intro] of [
       ["smallTalk", SMALL_TALK_REPLY],
@@ -700,17 +608,5 @@ describe("small talk (part 3)", () => {
     expect(SMALL_TALK_REPLY).toBe("I'm doing well, thanks! What would you like to know about these companies?");
     expect(ACKNOWLEDGEMENT_REPLY).toBe("Great. What would you like to know next?");
     expect(GOODBYE_REPLY).toBe("Good luck with your research!");
-  });
-});
-
-describe("more thanks spellings", () => {
-  it("thanx, thnx, tysm, thank u, thanks a lot, thanks so much, much appreciated → the thanks reply", () => {
-    for (const text of ["thanx", "Thnx!", "tysm", "thank u", "Thanks a lot!", "thanks so much 🙏", "Much appreciated."]) {
-      expect(parseGreeting(text), text).toBe("thanks");
-      expect(greetingReply(parseGreeting(text) ?? "thanks", { mode: "all" }).intro, text).toBe(THANKS_REPLY);
-    }
-    for (const text of ["thanks, what about their budget?", "thank u for the list, now sort it", "much"]) {
-      expect(parseGreeting(text), text).not.toBe("thanks");
-    }
   });
 });

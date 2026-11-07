@@ -6,7 +6,10 @@
  * AND, same field OR, locations AND), matching over the roster (unknown values never
  * match), the list answer (count intro, every match A–Z with no cap, no matches),
  * the roster total for a count question with no conditions, the answer-key reply,
- * and the fixed reply for anything that isn't valid conditions.
+ * and the fixed reply for anything that isn't valid conditions. 2026-11-07: a
+ * question that also asks for something no filter can express (unfiltered) gets the
+ * list for the conditions applied, under a count line naming those fields and a
+ * fixed note; the criteria-count partial-filter refusal is gone.
  */
 
 import { describe, expect, it } from "vitest";
@@ -23,9 +26,11 @@ import {
   parseRosterFilter,
   parseRosterFilters,
   parseRosterSort,
+  partialMatchCountIntro,
   refersToPreviousList,
   sortCompanies,
   totalCountReply,
+  unfilteredNote,
   type FilterCompany,
   type RosterFilter,
 } from "@/lib/data-room-chat-filter";
@@ -297,12 +302,14 @@ describe("the list answer", () => {
 describe("All-companies answers", () => {
   const bookingFilter: RosterFilter = { field: "online_booking", op: "eq", value: true };
 
-  it("one valid filter runs (a missing criteria count reads as one); more than one criterion, no filter, or any other intent → the fixed reply", () => {
+  it("one valid filter runs (whatever the criteria count); no filter, or any other intent → the fixed reply", () => {
     expect(answerAllCompanies(decision({ filter: bookingFilter }), ROSTER).items).toHaveLength(3);
     expect(answerAllCompanies(decision({ filter: bookingFilter, criteriaCount: null }), ROSTER).items).toHaveLength(3);
     expect(answerAllCompanies(decision({ filter: bookingFilter, criteriaCount: 0 }), ROSTER).items).toHaveLength(3);
+    // 2026-11-07: a count above the filters no longer refuses (was the fixed reply);
+    // what the filters can't express is the router's unfiltered.
+    expect(answerAllCompanies(decision({ filter: bookingFilter, criteriaCount: 2 }), ROSTER).items).toHaveLength(3);
     const fixed = { intro: ALL_MODE_REPLY, items: [] };
-    expect(answerAllCompanies(decision({ filter: bookingFilter, criteriaCount: 2 }), ROSTER)).toEqual(fixed);
     expect(answerAllCompanies(decision({ filter: null }), ROSTER)).toEqual(fixed);
     for (const intent of ["overview", "attribute_lookup", "specific_research", "compare", "off_topic"] as const) {
       expect(answerAllCompanies(decision({ intent, filter: bookingFilter }), ROSTER), intent).toEqual(fixed);
@@ -470,9 +477,10 @@ describe("any number of conditions", () => {
     expect(listed([CO, ID], null)).toHaveLength(4);
   });
 
-  it("an invalid condition, or a count above the conditions given (a partial filter) → the fixed reply", () => {
-    expect(answerAllCompanies(decision({ filters: [DENTAL, CO], criteriaCount: 3 }), ROSTER)).toEqual(fixed);
-    expect(answerAllCompanies(decision({ filters: [DENTAL, CO, BOOKING], criteriaCount: 4 }), ROSTER)).toEqual(fixed);
+  it("an invalid condition → the fixed reply; a count above the conditions given now runs them (2026-11-07)", () => {
+    // Was the fixed reply (the criteria-count partial-filter refusal, removed).
+    expect(listed([DENTAL, CO], 3)).toEqual(["Maple Family Dentistry", "Summit Dental Group"]);
+    expect(listed([DENTAL, CO, BOOKING], 4)).toEqual(["Maple Family Dentistry"]);
     const parsed = (raw: unknown[]): RosterFilter[] | null => parseRosterFilters(raw, undefined);
     expect(answerAllCompanies(decision({ filters: parsed([DENTAL, { field: "class", op: "eq", value: "strong_fit" }]) }), ROSTER)).toEqual(
       fixed
@@ -514,6 +522,72 @@ describe("any number of conditions", () => {
     for (const intent of ["specific_research", "compare"] as const) {
       expect(answerAllCompanies(decision({ intent, filters: [DENTAL] }), ROSTER), intent).toEqual(fixed);
     }
+  });
+});
+
+describe("partial questions: what the filters could apply (2026-11-07)", () => {
+  const CO: RosterFilter = { field: "state", op: "eq", value: "CO" };
+  const ID: RosterFilter = { field: "state", op: "eq", value: "ID" };
+  const DENTAL: RosterFilter = { field: "industry", op: "contains", value: "dental" };
+  const range: RosterFilter[] = [
+    { field: "locations", op: "gte", value: 5 },
+    { field: "locations", op: "lte", value: 8 },
+  ];
+  const NOTE = "I can't search research like software, budget or risks across all companies. Switch to Selected and ask about a company to check.";
+
+  it("valid filters + unfiltered: the same list, a count line naming the fields applied (config labels), and the fixed note", () => {
+    expect(answerAllCompanies(decision({ filters: [DENTAL, CO], criteriaCount: 3, unfiltered: true }), ROSTER)).toEqual({
+      ...(asTable({
+        intro: "2 companies match the filters I could apply (industry and state).",
+        items: [
+          { companyId: "maple", companyName: "Maple Family Dentistry", text: "Dental · 3 locations · Boulder, CO" },
+          { companyId: "summit", companyName: "Summit Dental Group", text: "Dental · 8 locations · Front Range, CO" },
+        ],
+      }) as Record<string, unknown>),
+      note: NOTE,
+    });
+    expect(unfilteredNote()).toBe(NOTE);
+  });
+
+  it("the '5 to 8 locations + SlotEasy' corner case: the range runs and the note says what it couldn't search", () => {
+    const answer = answerAllCompanies(decision({ filters: [DENTAL, ...range], criteriaCount: 3, unfiltered: true }), ROSTER);
+    expect(answer.intro).toBe("1 company matches the filters I could apply (industry and number of locations).");
+    expect(answer.items.map((item) => item.companyName)).toEqual(["Summit Dental Group"]);
+    expect(answer.note).toBe(NOTE);
+  });
+
+  it("each field once, in filter-field order, in plain words; one, none, and every field", () => {
+    expect(partialMatchCountIntro(1, [CO, ID])).toBe("1 company matches the filters I could apply (state).");
+    expect(partialMatchCountIntro(0, [{ field: "metro", op: "contains", value: "Austin" }])).toBe(
+      "No companies match the filters I could apply (city)."
+    );
+    expect(
+      partialMatchCountIntro(5, [
+        { field: "online_booking", op: "eq", value: true },
+        { field: "territory", op: "eq", value: true },
+        { field: "locations", op: "gt", value: 2 },
+        CO,
+        { field: "metro", op: "contains", value: "Austin" },
+        DENTAL,
+      ])
+    ).toBe("5 companies match the filters I could apply (industry, city, state, number of locations, territory and online booking).");
+    // No match: the same line (with its note), not the plain "No companies match that."
+    const none = answerAllCompanies(decision({ filters: [ID, DENTAL], unfiltered: true }), ROSTER);
+    expect(none).toEqual({ intro: "No companies match the filters I could apply (industry and state).", items: [], note: NOTE });
+  });
+
+  it("no valid filter at all → the All-companies reply, unchanged; without unfiltered the list is as before", () => {
+    expect(answerAllCompanies(decision({ filters: null, criteriaCount: 1, unfiltered: true }), ROSTER)).toEqual({
+      intro: ALL_MODE_REPLY,
+      items: [],
+    });
+    const plain = answerAllCompanies(decision({ filters: [DENTAL, CO] }), ROSTER);
+    expect(plain.intro).toBe("2 companies match.");
+    expect(plain).not.toHaveProperty("note");
+    // A re-sort of the previous list and the total count are unchanged.
+    expect(answerAllCompanies(decision({ filters: null, criteriaCount: 0, unfiltered: true }), ROSTER).intro).toBe(
+      `There are ${ROSTER.length} companies in the Data Room.`
+    );
   });
 });
 

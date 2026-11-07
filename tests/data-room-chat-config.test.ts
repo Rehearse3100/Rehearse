@@ -5,7 +5,10 @@
  * All-companies fixed and answer-key replies, both greetings, the switch's hint line,
  * the router's topic list — and the full prompts and the result/compare table
  * markup are pinned by SHA-256, so the refactor is byte-for-byte. Also the storage
- * prefix (saved chats keep loading) and the config lookup.
+ * prefix (saved chats keep loading) and the config lookup. 2026-11-07: the router
+ * prompt's pin changed on purpose (new fields, the repeated rule removed); the config
+ * also holds the three calls' model settings and the labels the fixed first lines,
+ * the partial All-companies answer and the line tags use.
  */
 
 import { createHash } from "node:crypto";
@@ -96,8 +99,10 @@ describe("strings built from the config are exactly today's", () => {
       compareLimited: sha256(renderToStaticMarkup(React.createElement(CompareTable, { items: ITEMS, rows: ["territory", "online_booking"] }))),
     }).toEqual({
       // Taken from the code before the config existed (2026-11-06); the router's changed
-      // since on purpose (who-decides → ownership, traps as meta).
-      router: "9d86681edaa09a8bee5bafa3d5daacec66e7b840d659f313db908c4d1511fd04",
+      // since on purpose (who-decides → ownership, traps as meta; 2026-11-07: small_talk,
+      // name_query, unfiltered, standalone_question and is_follow_up, the repeated meta
+      // rule and the range note removed).
+      router: "2a9fb69b76448d9628e03c7a4ac4da769f6bfebbd25e6e5e5cd8e5823da0f299",
       // Changed on purpose since: indirect answers (rules, contracts, mandates) count.
       selection: "98f8701b4d6d3e5ed84066b70671527d0a41ac12fbebd5186cb0c218ec3a62e7",
       opening: "a41a805ae91ecd7886ef4d027f503b573b1aad81069d646675a260097a8bdd68",
@@ -111,6 +116,27 @@ describe("strings built from the config are exactly today's", () => {
 describe("the config itself", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("Tempo's model settings and labels (2026-11-07)", () => {
+    const tempo = getDataRoomChatConfig();
+    expect(tempo.models).toEqual({
+      router: { model: "gpt-6-luna", reasoningEffort: "none" },
+      selection: { model: "gpt-6-luna", reasoningEffort: "none" },
+      opening: { model: "gpt-6-luna", reasoningEffort: "none" },
+    });
+    expect(tempo.appliedFilterLabels).toEqual({
+      industry: "industry",
+      metro: "city",
+      state: "state",
+      locations: "number of locations",
+      territory: "territory",
+      online_booking: "online booking",
+    });
+    expect(joinList(tempo.unfilteredResearchExamples, "or")).toBe("software, budget or risks");
+    expect(tempo.lineSourceTags).toEqual({ research: "Research", public: "Public" });
+    expect(tempo.attributeLabels.contacts).toBe("contacts");
+    expect(tempo.topicLabels.recent_changes).toBe("recent changes");
   });
 
   it("Tempo's config by id, and the same one by default (the only simulation for now)", () => {

@@ -22,9 +22,17 @@
  * about that") is routed as the earlier question it follows. Part 3: small talk gets
  * fixed texts; findings the selection call says don't answer the question stay as
  * they are under "Nothing specific on that is publicly findable. Related findings:".
+ * 2026-11-07: the calls use the config's model settings (gpt-6-luna, reasoning effort
+ * "none", no temperature; DATA_ROOM_CHAT_MODEL swaps the model); the router labels
+ * small talk, company-name questions and follow-ups (with a checked rewrite) — every
+ * case the deleted word lists caught now goes through the (mocked) router; a partial
+ * All-companies question lists what the filters could apply, with a note; every
+ * answer with facts has exactly one first line (a fixed line when the opening is
+ * dropped or fails); a research question about 2–3 companies carries a note; each
+ * line carries its source (research, public, card).
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "@/app/api/student/data-room-chat/route";
 import { ALL_MODE_REPLY, META_ALL_MODE_REPLY } from "@/lib/data-room-chat-filter";
 import { guardReply } from "@/lib/data-room-chat-guard";
@@ -32,8 +40,13 @@ import { BROAD_QUESTION_TOPICS, OFF_TOPIC_REPLY } from "@/lib/data-room-chat-pol
 import {
   COMPARE_FIXED_INTRO,
   EXACT_DETAIL_MISSING_INTRO,
+  FOLLOW_UP_NOTHING_NEW_INTRO,
+  GENERIC_FIRST_LINE,
   NOTHING_FINDABLE_REPLY,
+  ONE_COMPANY_RESEARCH_NOTE,
   OPENING_SYSTEM_PROMPT,
+  OVERVIEW_FIRST_LINE_ONE,
+  OVERVIEW_FIRST_LINE_SEVERAL,
   RELATED_FINDINGS_INTRO,
   SELECTION_SYSTEM_PROMPT,
 } from "@/lib/data-room-chat-render";
@@ -301,6 +314,38 @@ const SUMMIT_OVERVIEW = [
   "Opened 8th location three months ago",
 ].join("\n");
 
+// 2026-11-07: every company block built from facts also carries its lines, each with
+// its source (research finding, public signal, card fact); its text is as before.
+type Line = { text: string; source: "research" | "public" | "card" };
+const card = (text: string): Line => ({ text, source: "card" });
+const pub = (text: string): Line => ({ text, source: "public" });
+const research = (text: string): Line => ({ text, source: "research" });
+type Block = { companyId: string; companyName: string; text: string; lines: Line[] };
+/** A company block as the route renders it from facts: the text, and the same lines with their sources. */
+function block(companyId: string, companyName: string, ...lines: Line[]): Block {
+  return { companyId, companyName, text: lines.map((line) => line.text).join("\n"), lines };
+}
+const SUMMIT_OVERVIEW_LINES = [
+  card("Dental · 8 locations · Front Range, CO"),
+  card("In territory."),
+  card("No online booking."),
+  card("Summit Dental Group runs eight clinics. Summit is growing fast."),
+  pub("Opened 8th location three months ago"),
+];
+const SUMMIT_BLOCK = block("summit-dental", "Summit Dental Group", ...SUMMIT_OVERVIEW_LINES);
+/** The fixed first line of a research answer on this topic label (when no opening shows). */
+const findable = (label: string): string => `Here's what's publicly findable about ${label}.`;
+
+/** A confident small-talk label from the router. */
+function smallTalk(kind: unknown): { choices: Array<{ message: { content: string } }> } {
+  return modelReply({ intent: "small_talk", topic: null, attribute: null, small_talk_kind: kind, confidence: "high" });
+}
+
+/** A confident company-names label from the router. */
+function nameQuery(kind: string, value: string): { choices: Array<{ message: { content: string } }> } {
+  return modelReply({ intent: "name_query", topic: null, attribute: null, name_match: { kind, value }, confidence: "high" });
+}
+
 /**
  * An All-companies filter answer as the pane receives it (2026-11-06): the same intro
  * and list lines, plus layout "table" and each company's card from the roster fixture.
@@ -344,9 +389,10 @@ beforeEach(() => {
 
 describe("answers rendered with no answering call", () => {
   it("overview: the company's public facts in a fixed order, name from the database", async () => {
+    // 2026-11-07: no opening (the mock writes none) → the fixed overview line (was "").
     expect(await ask({ scope: ONE, newMessage: "Tell me about them" })).toEqual({
-      intro: "",
-      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: SUMMIT_OVERVIEW }],
+      intro: OVERVIEW_FIRST_LINE_ONE,
+      items: [SUMMIT_BLOCK],
     });
     expect(state.classify).toHaveBeenCalledTimes(1);
     expect(state.create).not.toHaveBeenCalled();
@@ -357,14 +403,10 @@ describe("answers rendered with no answering call", () => {
     expect(
       await ask({ scope: { mode: "companies", companyIds: ["summit-dental", "falcon", "maple"] }, newMessage: "Who are the contacts?" })
     ).toEqual({
-      intro: "",
+      intro: "Here's what's on record for contacts.",
       items: [
-        {
-          companyId: "summit-dental",
-          companyName: "Summit Dental Group",
-          text: "Contacts: Dana Reyes, Director of Operations (Operations).",
-        },
-        { companyId: "falcon", companyName: "Falcon Market", text: "Contacts: Pat Lee, Owner." },
+        block("summit-dental", "Summit Dental Group", card("Contacts: Dana Reyes, Director of Operations (Operations).")),
+        block("falcon", "Falcon Market", card("Contacts: Pat Lee, Owner.")),
         { companyId: "maple", companyName: "Maple Family Dentistry", text: NOTHING_FINDABLE_REPLY },
       ],
     });
@@ -375,13 +417,7 @@ describe("answers rendered with no answering call", () => {
     state.classify.mockResolvedValueOnce(routerReply("attribute_lookup", null, "contacts", true));
     expect(await ask({ scope: ONE, newMessage: "What's the office manager's email?" })).toEqual({
       intro: "That exact detail isn't publicly findable. Related facts:",
-      items: [
-        {
-          companyId: "summit-dental",
-          companyName: "Summit Dental Group",
-          text: "Contacts: Dana Reyes, Director of Operations (Operations).",
-        },
-      ],
+      items: [block("summit-dental", "Summit Dental Group", card("Contacts: Dana Reyes, Director of Operations (Operations)."))],
     });
     // No contacts at all: the nothing-findable reply stays, without the intro.
     state.classify.mockResolvedValueOnce(routerReply("attribute_lookup", null, "contacts", true));
@@ -396,21 +432,26 @@ describe("answers rendered with no answering call", () => {
     state.classify.mockResolvedValueOnce(routerReply("compare"));
     // 2026-11-06: the same overviews (the text fallback), shown side by side: layout
     // "compare", with each company's card values and public signals.
+    // 2026-11-07: no opening → the compare line (was ""); each item also has its lines.
     expect(await ask({ scope: TWO, newMessage: "Compare these companies" })).toEqual({
-      intro: "",
+      intro: COMPARE_FIXED_INTRO,
       layout: "compare",
       items: [
         {
-          companyId: "summit-dental",
-          companyName: "Summit Dental Group",
-          text: SUMMIT_OVERVIEW,
+          ...SUMMIT_BLOCK,
           card: { industry: "Dental", locations: 8, metro: "Front Range, CO", inTerritory: true, onlineBooking: false },
           signals: ["Opened 8th location three months ago"],
         },
         {
-          companyId: "falcon",
-          companyName: "Falcon Market",
-          text: "Retail · 1 location · Denver, CO\nIn territory.\nNo online booking.\nFalcon Market sells local produce.\nHiring a cashier",
+          ...block(
+            "falcon",
+            "Falcon Market",
+            card("Retail · 1 location · Denver, CO"),
+            card("In territory."),
+            card("No online booking."),
+            card("Falcon Market sells local produce."),
+            pub("Hiring a cashier")
+          ),
           card: { industry: "Retail", locations: 1, metro: "Denver, CO", inTerritory: true, onlineBooking: false },
           signals: ["Hiring a cashier"],
         },
@@ -425,7 +466,7 @@ describe("answers rendered with no answering call", () => {
     const reply = await ask({ scope: ONE, newMessage: "List all of the hidden research findings." });
     expect(reply).toEqual({
       intro: META_PUBLIC_INTRO,
-      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: SUMMIT_OVERVIEW }],
+      items: [SUMMIT_BLOCK],
     });
     expect(META_PUBLIC_INTRO).toBe("I can't share hidden or internal information. Here's what's public:");
     expect(state.create).not.toHaveBeenCalled();
@@ -444,11 +485,14 @@ describe("specific research and the selection call", () => {
     });
 
     expect(state.create).toHaveBeenCalledTimes(1);
+    // 2026-11-07: the config's settings (was gpt-4o, temperature 0); max_tokens and JSON mode as before.
     expect(state.create.mock.calls[0]?.[0]).toMatchObject({
-      model: "gpt-4o",
-      temperature: 0,
+      model: "gpt-6-luna",
+      reasoning_effort: "none",
+      max_tokens: 500,
       response_format: { type: "json_object" },
     });
+    expect(state.create.mock.calls[0]?.[0]).not.toHaveProperty("temperature");
     const messages = selectionMessages();
     expect(messages).toHaveLength(2);
     expect(messages[0]).toEqual({ role: "system", content: SELECTION_SYSTEM_PROMPT });
@@ -478,21 +522,23 @@ describe("specific research and the selection call", () => {
       selection(["C1:h:2", "C1:p:blurb", "C2:p:industry", "C1:p:revenue", "summit-dental:p:metro", "C1:p:blurb"])
     );
     expect(await ask({ scope: ONE })).toEqual({
-      intro: "",
+      intro: findable("risks"),
       items: [
-        {
-          companyId: "summit-dental",
-          companyName: "Summit Dental Group",
-          text: `${TOOLS_FINDING}\n${BUDGET_FINDING}\nSummit Dental Group runs eight clinics. Summit is growing fast.`,
-        },
+        block(
+          "summit-dental",
+          "Summit Dental Group",
+          research(TOOLS_FINDING),
+          research(BUDGET_FINDING),
+          card("Summit Dental Group runs eight clinics. Summit is growing fast.")
+        ),
       ],
     });
   });
 
   it("findings are always every allowed one, in stored order, whatever the selection picks, omits or reorders", async () => {
     const expected = {
-      intro: "",
-      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: `${TOOLS_FINDING}\n${BUDGET_FINDING}` }],
+      intro: findable("risks"),
+      items: [block("summit-dental", "Summit Dental Group", research(TOOLS_FINDING), research(BUDGET_FINDING))],
     };
     for (const picked of [[], ["C1:h:1"], ["C1:h:1", "C1:h:0", "C1:h:1"], ["C1:h:2"]]) {
       state.classify.mockResolvedValueOnce(routerReply("specific_research", "risks"));
@@ -507,12 +553,12 @@ describe("specific research and the selection call", () => {
     state.create.mockResolvedValueOnce(selection([], false));
     expect(await ask(revenue)).toEqual({
       intro: "That exact detail isn't publicly findable. Related facts:",
-      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: BUDGET_FINDING }],
+      items: [block("summit-dental", "Summit Dental Group", research(BUDGET_FINDING))],
     });
 
     const plain = {
-      intro: "",
-      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: BUDGET_FINDING }],
+      intro: findable("budget"),
+      items: [block("summit-dental", "Summit Dental Group", research(BUDGET_FINDING))],
     };
     state.classify.mockResolvedValueOnce(routerReply("specific_research", "budget", null, true));
     state.create.mockResolvedValueOnce(selection(["C1:h:1"], true));
@@ -537,8 +583,8 @@ describe("specific research and the selection call", () => {
     state.classify.mockResolvedValueOnce(routerReply("specific_research", "amenities"));
     state.create.mockResolvedValueOnce(selection([], true));
     expect(await ask({ scope: ONE, newMessage: "What are the amenities like?" })).toEqual({
-      intro: "",
-      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: AMENITIES_FINDING }],
+      intro: findable("amenities"),
+      items: [block("summit-dental", "Summit Dental Group", research(AMENITIES_FINDING))],
     });
   });
 
@@ -556,7 +602,8 @@ describe("specific research and the selection call", () => {
     for (let i = 0; i < 3; i += 1) {
       expect(await ask({ scope: ONE, newMessage: "What's the owner's email address?" })).toEqual(nothing);
     }
-    expect(await ask({ scope: TWO })).toEqual({ intro: NOTHING_FINDABLE_REPLY, items: [] });
+    // 2026-11-07: a research question about 2–3 companies also carries the one-company note.
+    expect(await ask({ scope: TWO })).toEqual({ intro: NOTHING_FINDABLE_REPLY, items: [], note: ONE_COMPANY_RESEARCH_NOTE });
   });
 
   it("older untagged findings (string[]) are never shown or offered", async () => {
@@ -574,8 +621,9 @@ describe("specific research and the selection call", () => {
     state.classify.mockResolvedValueOnce(routerReply("specific_research", "risks"));
     state.create.mockResolvedValueOnce(selection(["C2:s:0", "C2:p:online_booking"]));
     expect(await ask({ scope: TWO })).toEqual({
-      intro: "",
-      items: [{ companyId: "falcon", companyName: "Falcon Market", text: "Hiring a cashier\nNo online booking." }],
+      intro: findable("risks"),
+      items: [block("falcon", "Falcon Market", pub("Hiring a cashier"), card("No online booking."))],
+      note: ONE_COMPANY_RESEARCH_NOTE,
     });
     expect(state.create).toHaveBeenCalledTimes(1);
     expect(factLines().some((line) => line.startsWith("C1:"))).toBe(true);
@@ -608,28 +656,24 @@ describe("the opening sentence, written last from the finished answer", () => {
   const openingArgs = (call = 0): { messages: ModelMessage[] } & Record<string, unknown> =>
     state.open.mock.calls[call]?.[0] as { messages: ModelMessage[] } & Record<string, unknown>;
 
-  it("one gpt-4o call after the answer is built, seeing only the question and the answer text (names as Company 1…)", async () => {
+  it("one opening call after the answer is built, seeing only the question and the answer text (names as Company 1…)", async () => {
     state.classify.mockResolvedValueOnce(routerReply("specific_research", "budget"));
     state.create.mockResolvedValueOnce(selection(["C1:p:locations"]));
     state.open.mockResolvedValueOnce(opening(OPENING));
     expect(await ask({ scope: ONE, newMessage: "What about Summit Dental Group's budget?" })).toEqual({
       intro: OPENING,
-      items: [
-        {
-          companyId: "summit-dental",
-          companyName: "Summit Dental Group",
-          text: `${BUDGET_FINDING}\n8 locations across Front Range, CO.`,
-        },
-      ],
+      items: [block("summit-dental", "Summit Dental Group", research(BUDGET_FINDING), card("8 locations across Front Range, CO."))],
     });
     expect(state.open).toHaveBeenCalledTimes(1);
     expect(state.open.mock.invocationCallOrder[0]!).toBeGreaterThan(state.create.mock.invocationCallOrder[0]!);
+    // 2026-11-07: the config's settings (was gpt-4o, temperature 0.3); max_tokens and JSON mode as before.
     expect(openingArgs()).toMatchObject({
-      model: "gpt-4o",
-      temperature: 0.3,
+      model: "gpt-6-luna",
+      reasoning_effort: "none",
       max_tokens: 100,
       response_format: { type: "json_object" },
     });
+    expect(openingArgs()).not.toHaveProperty("temperature");
     expect(openingArgs().messages).toEqual([
       { role: "system", content: OPENING_SYSTEM_PROMPT },
       {
@@ -648,7 +692,7 @@ describe("the opening sentence, written last from the finished answer", () => {
     state.open.mockResolvedValue(opening(OPENING));
     expect(await ask({ scope: ONE, newMessage: "Tell me about them" })).toEqual({
       intro: OPENING,
-      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: SUMMIT_OVERVIEW }],
+      items: [SUMMIT_BLOCK],
     });
 
     state.classify.mockResolvedValueOnce(routerReply("compare"));
@@ -661,14 +705,14 @@ describe("the opening sentence, written last from the finished answer", () => {
     state.classify.mockResolvedValueOnce(routerReply("attribute_lookup", null, "locations"));
     expect(await ask({ scope: ONE, newMessage: "How many locations?" })).toEqual({
       intro: OPENING,
-      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: "8 locations across Front Range, CO." }],
+      items: [block("summit-dental", "Summit Dental Group", card("8 locations across Front Range, CO."))],
     });
 
     state.classify.mockResolvedValueOnce(routerReply("specific_research", "budget"));
     state.create.mockResolvedValueOnce(selection([], true));
     expect(await ask({ scope: ONE, newMessage: "What about their budget?" })).toEqual({
       intro: OPENING,
-      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: BUDGET_FINDING }],
+      items: [block("summit-dental", "Summit Dental Group", research(BUDGET_FINDING))],
     });
     expect(state.open).toHaveBeenCalledTimes(4);
   });
@@ -694,7 +738,7 @@ describe("the opening sentence, written last from the finished answer", () => {
     state.open.mockResolvedValueOnce(opening("Revenue isn't on record, but there is a budget note."));
     expect(await ask({ scope: ONE, newMessage: "What's their annual revenue?" })).toEqual({
       intro: EXACT_DETAIL_MISSING_INTRO,
-      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: BUDGET_FINDING }],
+      items: [block("summit-dental", "Summit Dental Group", research(BUDGET_FINDING))],
     });
     expect(state.open).not.toHaveBeenCalled();
   });
@@ -717,6 +761,8 @@ describe("the opening sentence, written last from the finished answer", () => {
       intro: string;
     };
     expect(outOfScope.intro.startsWith("Your question mentions Falcon Market")).toBe(true);
+    // 2026-11-07: the router labels a name question (was the name patterns); still no opening.
+    state.classify.mockResolvedValueOnce(nameQuery("starts_with", "s"));
     const names = (await ask({ scope: ALL, newMessage: "tell me about companies starting with s" })) as { intro: string };
     expect(names.intro).toBe('Companies whose names start with "S":');
 
@@ -728,15 +774,16 @@ describe("the opening sentence, written last from the finished answer", () => {
     });
     state.classify.mockResolvedValueOnce(routerReply("specific_research", "risks"));
     state.create.mockResolvedValueOnce(selection([]));
-    expect(await ask({ scope: TWO })).toEqual({ intro: NOTHING_FINDABLE_REPLY, items: [] });
+    expect(await ask({ scope: TWO })).toEqual({ intro: NOTHING_FINDABLE_REPLY, items: [], note: ONE_COMPANY_RESEARCH_NOTE });
 
     expect(state.open).not.toHaveBeenCalled();
   });
 
-  it("a sentence that fails a check, a failed call or a bad reply leaves the answer unchanged (no opening, never a fallback)", async () => {
+  it("a sentence that fails a check, a failed call or a bad reply gets the fixed first line instead (no retry)", async () => {
+    // 2026-11-07: the fixed line for the answer's path (was: no first line at all).
     const unchanged = {
-      intro: "",
-      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: SUMMIT_OVERVIEW }],
+      intro: OVERVIEW_FIRST_LINE_ONE,
+      items: [SUMMIT_BLOCK],
     };
     for (const bad of [
       "Here's what's on record about Summit Dental Group.",
@@ -759,6 +806,8 @@ describe("the opening sentence, written last from the finished answer", () => {
     errorSpy.mockRestore();
     expect(failed.status).toBe(200);
     expect(await failed.json()).toEqual(unchanged);
+    // One opening call per question: never retried.
+    expect(state.open).toHaveBeenCalledTimes(10);
   });
 });
 
@@ -839,10 +888,15 @@ describe("All companies: one validated filter, run in code", () => {
     expect(await ask({ scope: ALL, newMessage: "Which are law firms?" })).toEqual({ intro: "No companies match that.", items: [] });
   });
 
-  it("more than one criterion, a filter outside the whitelist, or any other kind of question → the fixed reply, no answering call", async () => {
+  it("a filter outside the whitelist, or any other kind of question → the fixed reply, no answering call", async () => {
     const fixed = { intro: ALL_MODE_REPLY, items: [] };
+    // 2026-11-07: a criteria count above the filters no longer refuses (the partial
+    // check is unfiltered now), so that case lists the dental companies (was the fixed reply).
+    state.classify.mockResolvedValueOnce(filterReply({ field: "industry", op: "eq", value: "Dental" }, 2));
+    expect(((await ask({ scope: ALL, newMessage: "Which dental clinics in Denver have online booking?" })) as { intro: string }).intro).toBe(
+      "4 companies match."
+    );
     state.classify
-      .mockResolvedValueOnce(filterReply({ field: "industry", op: "eq", value: "Dental" }, 2))
       .mockResolvedValueOnce(filterReply({ field: "software", op: "eq", value: "Zentrix" }))
       .mockResolvedValueOnce(filterReply(null, 1))
       .mockResolvedValueOnce(routerReply("overview"))
@@ -852,7 +906,7 @@ describe("All companies: one validated filter, run in code", () => {
       .mockResolvedValueOnce(routerReply("attribute_lookup", null, "locations"))
       .mockRejectedValueOnce(new Error("router down"));
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    for (let i = 0; i < 9; i += 1) {
+    for (let i = 0; i < 8; i += 1) {
       expect(await ask({ scope: ALL, newMessage: "Which dental clinics in Denver have online booking?" }), String(i)).toEqual(
         fixed
       );
@@ -928,8 +982,8 @@ describe("All companies: up to 3 conditions, run in code", () => {
     expect(names(await run(filtersReply([DENTAL, CO], "low")))).toHaveLength(4);
     state.classify.mockResolvedValueOnce(filtersReply([CO], "low"));
     expect(await ask({ scope: ONE, newMessage: "Is it in Colorado?" })).toEqual({
-      intro: "",
-      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: SUMMIT_OVERVIEW }],
+      intro: OVERVIEW_FIRST_LINE_ONE,
+      items: [SUMMIT_BLOCK],
     });
     expect(state.create).not.toHaveBeenCalled();
   });
@@ -963,15 +1017,22 @@ describe("reply fixes: greetings, full lists, any number of conditions, first li
   const names = (reply: unknown): string[] =>
     (reply as { items: Array<{ companyName: string }> }).items.map((item) => item.companyName);
 
-  it("a greeting or thanks gets its fixed text with no model call; the greeting depends on the mode", async () => {
-    expect(await ask({ scope: ONE, newMessage: "Hi!" })).toEqual({ intro: GREETING_REPLY_COMPANIES, items: [] });
-    expect(await ask({ scope: TWO, newMessage: "good morning" })).toEqual({ intro: GREETING_REPLY_COMPANIES, items: [] });
-    expect(await ask({ scope: ALL, newMessage: "hello 👋" })).toEqual({ intro: GREETING_REPLY_ALL, items: [] });
-    expect(await ask({ scope: ONE, newMessage: "Thank you!" })).toEqual({ intro: THANKS_REPLY, items: [] });
-    expect(await ask({ scope: ALL, newMessage: "thx" })).toEqual({ intro: THANKS_REPLY, items: [] });
-    expect(state.classify).not.toHaveBeenCalled();
+  it("a greeting or thanks gets its fixed text with no answering call; the greeting depends on the mode", async () => {
+    for (const [scope, newMessage, kind, intro] of [
+      [ONE, "Hi!", "greeting", GREETING_REPLY_COMPANIES],
+      [TWO, "good morning", "greeting", GREETING_REPLY_COMPANIES],
+      [ALL, "hello 👋", "greeting", GREETING_REPLY_ALL],
+      [ONE, "Thank you!", "thanks", THANKS_REPLY],
+      [ALL, "thx", "thanks", THANKS_REPLY],
+    ] as const) {
+      state.classify.mockResolvedValueOnce(smallTalk(kind));
+      expect(await ask({ scope, newMessage }), newMessage).toEqual({ intro, items: [] });
+    }
+    // 2026-11-07: the router labels small talk (was the word list, with no model call
+    // and before the roster loaded); still no selection or opening call.
+    expect(state.classify).toHaveBeenCalledTimes(5);
+    expect(state.create).not.toHaveBeenCalled();
     expect(state.open).not.toHaveBeenCalled();
-    expect(state.queries.some((q) => q.table === "crm_prospect_directory")).toBe(false);
   });
 
   it('"hi, what software do they use?" is a question: it goes to the router as today', async () => {
@@ -1025,17 +1086,34 @@ describe("reply fixes: greetings, full lists, any number of conditions, first li
     expect(names(await ask({ scope: ALL, newMessage: "Optometry in territory with 5 to 8 locations" }))).toEqual(["Clearview Optometry"]);
   });
 
-  it('a partial filter is still refused ("dental in Colorado that use SlotEasy": 3 conditions, 2 filters)', async () => {
+  it('a partial question lists what the filters could apply ("dental in Colorado that use SlotEasy"), with the note', async () => {
+    // 2026-11-07: was refused (criteria_count 3 above 2 filters → the All-companies reply).
     state.classify.mockResolvedValueOnce(
-      listReply(
-        [
+      modelReply({
+        intent: "filter_list",
+        topic: null,
+        attribute: null,
+        filters: [
           { field: "industry", op: "contains", value: "dental" },
           { field: "state", op: "eq", value: "CO" },
         ],
-        3
-      )
+        criteria_count: 3,
+        unfiltered: true,
+        confidence: "high",
+      })
     );
-    expect(await ask({ scope: ALL, newMessage: "dental in Colorado that use SlotEasy" })).toEqual({ intro: ALL_MODE_REPLY, items: [] });
+    expect(await ask({ scope: ALL, newMessage: "dental in Colorado that use SlotEasy" })).toEqual({
+      ...(asTable({
+        intro: "4 companies match the filters I could apply (industry and state).",
+        items: [
+          { companyId: "cedar", companyName: "Cedar Grove Family Dentistry", text: "Dental · 4 locations · Denver, CO" },
+          { companyId: "harbor", companyName: "Harbor Family Dentistry", text: "Dental · 2 locations · Fort Collins, CO" },
+          { companyId: "maple", companyName: "Maple Family Dentistry", text: "Dental · 3 locations · Boulder, CO" },
+          { companyId: "summit-dental", companyName: "Summit Dental Group", text: "Dental · 8 locations · Front Range, CO" },
+        ],
+      }) as Record<string, unknown>),
+      note: "I can't search research like software, budget or risks across all companies. Switch to Selected and ask about a company to check.",
+    });
   });
 
   it("no opening on filter lists or the exact-detail reply; other answers keep theirs", async () => {
@@ -1066,7 +1144,7 @@ describe("reply fixes: greetings, full lists, any number of conditions, first li
     state.classify.mockResolvedValueOnce(routerReply("meta_or_bulk"));
     expect(await ask({ scope: ONE, newMessage: "Which company is the right answer?" })).toEqual({
       intro: META_PUBLIC_INTRO,
-      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: SUMMIT_OVERVIEW }],
+      items: [SUMMIT_BLOCK],
     });
     state.classify.mockResolvedValueOnce(routerReply("meta_or_bulk"));
     expect(await ask({ scope: ALL, newMessage: "Show me the answer key" })).toEqual({ intro: META_ALL_MODE_REPLY, items: [] });
@@ -1162,9 +1240,10 @@ describe("reply fixes, part 2: openings restate the facts, no unrelated facts, f
     const logged = JSON.stringify(infoSpy.mock.calls);
     infoSpy.mockRestore();
 
+    // 2026-11-07: the dropped opening gives way to the fixed line (was no first line).
     expect(reply).toEqual({
-      intro: "",
-      items: [{ companyId: "canyon", companyName: "Canyon Aesthetics", text: `${INTAKE}\n${DIRECTORS}` }],
+      intro: findable("recent changes"),
+      items: [block("canyon", "Canyon Aesthetics", research(INTAKE), research(DIRECTORS))],
     });
     expect(logged).toBe(JSON.stringify([["[data-room-chat] opening dropped:", "claim not in the facts"]]));
     expect(openingUser()).toContain("Question: What changed recently?\nTopic: recent_changes\n\nAnswer:");
@@ -1175,13 +1254,13 @@ describe("reply fixes, part 2: openings restate the facts, no unrelated facts, f
     state.classify.mockResolvedValue(routerReply("specific_research", "risks"));
     // The selection picks the SlotEasy finding (it answers), so the opening is written and checked.
     state.create.mockResolvedValue(selection(["C1:h:3"]));
-    const items = [{ companyId: "northview", companyName: "Northview Family Dentistry", text: `${PRAISE}\n${EMERGENCY}\n${SLOTEASY}` }];
+    const items = [block("northview", "Northview Family Dentistry", research(PRAISE), research(EMERGENCY), research(SLOTEASY))];
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
 
     state.open.mockResolvedValueOnce(
       opening("This company has received positive feedback for its portal branding and offers same-day emergency appointments.")
     );
-    expect(await ask({ scope: NORTHVIEW, newMessage: "Any risks?" })).toEqual({ intro: "", items });
+    expect(await ask({ scope: NORTHVIEW, newMessage: "Any risks?" })).toEqual({ intro: findable("risks"), items });
 
     // "18" restates "eighteen" (a spelled-out number may be written as digits).
     const concern = "This company's operations team standardized on SlotEasy 18 months ago under a multi-year agreement.";
@@ -1207,38 +1286,57 @@ describe("reply fixes, part 2: openings restate the facts, no unrelated facts, f
     expect(state.open).not.toHaveBeenCalled();
   });
 
-  it("Canyon, 'tell me more about that' after 'Are they hiring?': routed as that question; the same line again under the fixed first line, no opening", async () => {
+  /** The router's label for a follow-up: research on staffing, with its rewrite. */
+  const followUpReply = (standalone: string): ReturnType<typeof modelReply> =>
+    modelReply({
+      intent: "specific_research",
+      topic: "staffing",
+      attribute: null,
+      standalone_question: standalone,
+      is_follow_up: true,
+      confidence: "high",
+    });
+
+  it("Canyon, 'tell me more about that' after 'Are they hiring?': the router's rewrite goes to the selection call; the same line again under the fixed first line, no opening", async () => {
+    // 2026-11-07: the router sees the message as typed with the recent questions, and
+    // rewrites it (was: code found the follow-up and sent the router the earlier question).
     state.storedResearchFacts = CANYON_FINDINGS;
-    state.classify.mockResolvedValueOnce(routerReply("specific_research", "staffing"));
+    state.classify.mockResolvedValueOnce(followUpReply("Is [C1] hiring? Tell me more about their hiring."));
     state.create.mockResolvedValueOnce(selection(["C1:s:0"]));
     state.open.mockResolvedValue(opening("Here's what's on record for your question."));
     expect(await ask({ scope: CANYON, newMessage: "tell me more about that", history: HIRING_HISTORY })).toEqual({
-      intro: "That's everything publicly findable on this.",
-      items: [{ companyId: "canyon", companyName: "Canyon Aesthetics", text: "Job listing: Spa Attendant" }],
+      intro: FOLLOW_UP_NOTHING_NEW_INTRO,
+      items: [block("canyon", "Canyon Aesthetics", pub("Job listing: Spa Attendant"))],
     });
+    expect(FOLLOW_UP_NOTHING_NEW_INTRO).toBe("That's everything publicly findable on this.");
     expect(routerUser()).toBe(
-      ["Scope: one company", "Recent questions (oldest first):", "(none)", "Question: Are they hiring?"].join("\n")
+      ["Scope: one company", "Recent questions (oldest first):", "- Are they hiring?", "Question: tell me more about that"].join("\n")
     );
-    expect(selectionMessages()[1]?.content.split("\n")[0]).toBe("Question: Are they hiring?");
+    expect(selectionMessages()[1]?.content.split("\n")[0]).toBe("Question: Is [C1] hiring? Tell me more about their hiring.");
     expect(state.open).not.toHaveBeenCalled();
   });
 
-  it("a follow-up that finds something new is a normal answer; its opening sees the earlier question and topic", async () => {
+  it("a follow-up that finds something new is a normal answer; its opening sees the rewritten question (refs as names) and topic", async () => {
     state.storedResearchFacts = CANYON_FINDINGS;
-    state.classify.mockResolvedValueOnce(routerReply("specific_research", "staffing"));
+    state.classify.mockResolvedValueOnce(followUpReply("Is [C1] hiring? Anything else on that?"));
     state.create.mockResolvedValueOnce(selection(["C1:s:0", "C1:s:1"]));
     state.open.mockResolvedValueOnce(opening("Here's what's on record for your question."));
     expect(await ask({ scope: CANYON, newMessage: "Anything else on that?", history: HIRING_HISTORY })).toEqual({
       intro: "Here's what's on record for your question.",
       items: [
-        {
-          companyId: "canyon",
-          companyName: "Canyon Aesthetics",
-          text: "Job listing: Spa Attendant\nWebsite highlights online intake for new clients",
-        },
+        block("canyon", "Canyon Aesthetics", pub("Job listing: Spa Attendant"), pub("Website highlights online intake for new clients")),
       ],
     });
-    expect(openingUser().startsWith("Question: Are they hiring?\nTopic: staffing\n\nAnswer:")).toBe(true);
+    // The opening call sees companies only as "Company 1": the ref became the name, then the label.
+    expect(openingUser().startsWith("Question: Is Company 1 hiring? Anything else on that?\nTopic: staffing\n\nAnswer:")).toBe(true);
+  });
+
+  it("without is_follow_up the same lines are a normal answer (no 'nothing new' line)", async () => {
+    state.storedResearchFacts = CANYON_FINDINGS;
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "staffing"));
+    state.create.mockResolvedValueOnce(selection(["C1:s:0"]));
+    const reply = (await ask({ scope: CANYON, newMessage: "Are they hiring?", history: HIRING_HISTORY })) as { intro: string };
+    expect(reply.intro).toBe(findable("staffing"));
   });
 
   it("not a follow-up: a question with its own subject, a different company, or All companies (the router sees the message as typed)", async () => {
@@ -1253,24 +1351,28 @@ describe("reply fixes, part 2: openings restate the facts, no unrelated facts, f
 
 describe("reply fixes, part 3: small talk, and an honest first line for related findings", () => {
   const OPENING = "Here's what's on record for your question.";
-  const canyonFindings = { companyId: "canyon", companyName: "Canyon Aesthetics", text: `${INTAKE}\n${DIRECTORS}` };
+  const canyonFindings = block("canyon", "Canyon Aesthetics", research(INTAKE), research(DIRECTORS));
 
   beforeEach(() => {
     state.roster = [...ROSTER, CANYON_ROW, NORTHVIEW_ROW];
     state.open.mockResolvedValue(modelReply({ opening: OPENING }));
   });
 
-  it("small talk, acknowledgements and goodbyes: the same fixed text in both modes, with no model call or roster query", async () => {
-    for (const [messages, intro] of [
-      [["how are you", "How's it going?", "what's up", "sup", "you good?"], SMALL_TALK_REPLY],
+  it("small talk, acknowledgements and goodbyes: the same fixed text in both modes, with no answering call", async () => {
+    // 2026-11-07: the router labels them (was the word lists, with no model call or
+    // roster query); every message the lists caught, with the kind the router gives.
+    for (const [messages, kind, intro] of [
+      [["how are you", "How's it going?", "what's up", "sup", "you good?"], "how_are_you", SMALL_TALK_REPLY],
       [
         ["ok", "Okay.", "k", "sure", "cool", "Got it!", "great", "nice", "perfect", "alright", "sounds good", "welcome", "yes", "yep", "no", "Nope 👍"],
+        "acknowledgement",
         ACKNOWLEDGEMENT_REPLY,
       ],
-      [["bye", "Goodbye!", "see you", "later"], GOODBYE_REPLY],
+      [["bye", "Goodbye!", "see you", "later"], "goodbye", GOODBYE_REPLY],
     ] as const) {
       for (const newMessage of messages) {
         for (const scope of [ONE, ALL]) {
+          state.classify.mockResolvedValueOnce(smallTalk(kind));
           expect(await ask({ scope, newMessage }), `${newMessage} (${scope.mode})`).toEqual({ intro, items: [] });
         }
       }
@@ -1278,9 +1380,8 @@ describe("reply fixes, part 3: small talk, and an honest first line for related 
     expect(SMALL_TALK_REPLY).toBe("I'm doing well, thanks! What would you like to know about these companies?");
     expect(ACKNOWLEDGEMENT_REPLY).toBe("Great. What would you like to know next?");
     expect(GOODBYE_REPLY).toBe("Good luck with your research!");
-    expect(state.classify).not.toHaveBeenCalled();
+    expect(state.create).not.toHaveBeenCalled();
     expect(state.open).not.toHaveBeenCalled();
-    expect(state.queries.some((q) => q.table === "crm_prospect_directory")).toBe(false);
   });
 
   it('"ok what software do they use?" is a question: it goes to the router as today', async () => {
@@ -1355,7 +1456,7 @@ describe("reply fixes, part 3: small talk, and an honest first line for related 
     const reply = (await ask({ scope: NORTHVIEW, newMessage: "any risks?" })) as { intro: string; items: Array<{ text: string }> };
     expect(reply).toEqual({
       intro: OPENING,
-      items: [{ companyId: "northview", companyName: "Northview Family Dentistry", text: `${PRAISE}\n${EMERGENCY}\n${SLOTEASY}` }],
+      items: [block("northview", "Northview Family Dentistry", research(PRAISE), research(EMERGENCY), research(SLOTEASY))],
     });
     expect(reply.intro).not.toContain("Nothing specific");
     expect(reply.items[0]?.text).toContain(SLOTEASY);
@@ -1384,7 +1485,8 @@ describe("reply fixes, part 3: small talk, and an honest first line for related 
     const reply = (await ask({ scope: CANYON, newMessage: "What changed recently?" })) as { intro: string };
     const logged = JSON.stringify(infoSpy.mock.calls);
     infoSpy.mockRestore();
-    expect(reply.intro).toBe("");
+    // 2026-11-07: the fixed line (was "").
+    expect(reply.intro).toBe(findable("recent changes"));
     expect(logged).toBe(JSON.stringify([["[data-room-chat] opening dropped:", "empty"]]));
   });
 
@@ -1409,8 +1511,8 @@ describe("chat pane fields: tables and the search-all suggestion", () => {
     state.classify.mockResolvedValueOnce(routerReply("filter_list"));
     state.create.mockResolvedValueOnce(selection(["C1:p:online_booking"]));
     expect(await ask({ scope: ONE, newMessage: "Which ones have online booking?" })).toEqual({
-      intro: "",
-      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: "No online booking." }],
+      intro: GENERIC_FIRST_LINE,
+      items: [block("summit-dental", "Summit Dental Group", card("No online booking."))],
       suggestAllCompanies: true,
     });
 
@@ -1431,12 +1533,14 @@ describe("chat pane fields: tables and the search-all suggestion", () => {
 
   it("compare about one company keeps the text blocks (no table); other answers carry no layout", async () => {
     state.classify.mockResolvedValueOnce(routerReply("compare"));
-    const one = (await ask({ scope: ONE, newMessage: "Compare them" })) as Record<string, unknown>;
+    const one = (await ask({ scope: ONE, newMessage: "Compare them" })) as { items: Array<Record<string, unknown>> };
     expect(one).not.toHaveProperty("layout");
-    expect(JSON.stringify(one)).not.toContain('"card"');
+    // 2026-11-07: checked on the item (the lines' "card" source now appears in the JSON).
+    expect(one.items[0]).not.toHaveProperty("card");
     state.classify.mockResolvedValueOnce(routerReply("overview"));
     expect(await ask({ scope: TWO, newMessage: "Tell me about them" })).not.toHaveProperty("layout");
     // A company-names answer stays a list.
+    state.classify.mockResolvedValueOnce(nameQuery("starts_with", "s"));
     expect(await ask({ scope: ALL, newMessage: "tell me about companies starting with s" })).not.toHaveProperty("layout");
   });
 });
@@ -1638,7 +1742,7 @@ describe("final manual test fixes: who decides, traps, thanks", () => {
     const reply = (await ask({ scope: JUNIPER, newMessage: "Who decides on software purchases?" })) as {
       items: Array<{ companyName: string; text: string }>;
     };
-    expect(reply.items).toEqual([{ companyId: "juniper", companyName: "Juniper Ridge Aesthetics", text: FRANCHISE }]);
+    expect(reply.items).toEqual([block("juniper", "Juniper Ridge Aesthetics", research(FRANCHISE))]);
     // The real failure, for the record: routed to the software topic, the finding isn't allowed.
     state.classify.mockResolvedValueOnce(routerReply("specific_research", "current_tools"));
     state.create.mockResolvedValueOnce(selection(["C1:h:0"]));
@@ -1655,11 +1759,14 @@ describe("final manual test fixes: who decides, traps, thanks", () => {
     expect(state.create).not.toHaveBeenCalled();
   });
 
-  it("the new thanks spellings get the thanks reply with no model call", async () => {
-    for (const newMessage of ["thanx", "tysm", "thank u", "much appreciated"]) {
+  it("the thanks spellings the list had get the thanks reply, through the router", async () => {
+    // 2026-11-07: the router labels them (was the thanks list, with no model call).
+    for (const newMessage of ["thanx", "Thnx!", "tysm", "thank u", "Thanks a lot!", "thanks so much 🙏", "much appreciated"]) {
+      state.classify.mockResolvedValueOnce(smallTalk("thanks"));
       expect(await ask({ scope: ONE, newMessage }), newMessage).toEqual({ intro: THANKS_REPLY, items: [] });
     }
-    expect(state.classify).not.toHaveBeenCalled();
+    expect(state.classify).toHaveBeenCalledTimes(7);
+    expect(state.create).not.toHaveBeenCalled();
   });
 });
 
@@ -1689,7 +1796,7 @@ describe("indirect answers count (rules, contracts, mandates)", () => {
     const reply = await ask({ scope: { mode: "companies", companyIds: ["juniper"] }, newMessage: "Who decides on software purchases?" });
     expect(reply).toEqual({
       intro: OPENING,
-      items: [{ companyId: "juniper", companyName: "Juniper Ridge Aesthetics", text: FRANCHISE }],
+      items: [block("juniper", "Juniper Ridge Aesthetics", research(FRANCHISE))],
     });
     expect(JSON.stringify(reply)).not.toContain(RELATED_FINDINGS_INTRO);
     expect(selectionMessages()[0]?.content).toContain("A fact also answers the question when it settles it indirectly");
@@ -1729,16 +1836,17 @@ describe("the router call", () => {
     const args = state.classify.mock.calls[0]?.[0] as {
       messages: ModelMessage[];
       model: string;
-      temperature: number;
       response_format: unknown;
     };
     expect(args).toMatchObject({
-      model: "gpt-4o",
-      temperature: 0,
+      // 2026-11-07: the config's settings (was gpt-4o, temperature 0).
+      model: "gpt-6-luna",
+      reasoning_effort: "none",
       // 2026-11-06: 600 (was 300, sized for three filters); filters are unlimited now.
       max_tokens: 600,
       response_format: { type: "json_object" },
     });
+    expect(args).not.toHaveProperty("temperature");
     expect(args.messages).toEqual([
       { role: "system", content: ROUTER_SYSTEM_PROMPT },
       {
@@ -1801,7 +1909,9 @@ describe("request checks", () => {
 });
 
 describe("a question about company names", () => {
-  it("All companies: names from the database, A–Z, with zero model calls", async () => {
+  it("All companies: names from the database, A–Z, with no call after the router", async () => {
+    // 2026-11-07: the router labels it (name_query; was the name patterns, with no model call).
+    state.classify.mockResolvedValueOnce(nameQuery("starts_with", "s"));
     expect(await ask({ scope: ALL, newMessage: "tell me about companies starting with s" })).toEqual({
       intro: 'Companies whose names start with "S":',
       items: [
@@ -1813,11 +1923,13 @@ describe("a question about company names", () => {
         { companyId: "summit-outdoor", companyName: "Summit Outdoor Gear", text: "Retail · 2 locations · Boise, ID" },
       ],
     });
-    expect(state.classify).not.toHaveBeenCalled();
+    expect(state.classify).toHaveBeenCalledTimes(1);
     expect(state.create).not.toHaveBeenCalled();
+    expect(state.open).not.toHaveBeenCalled();
   });
 
   it("searches only the question's scope; a single company answers with that company only", async () => {
+    state.classify.mockResolvedValueOnce(nameQuery("starts_with", "S"));
     expect(await ask({ scope: ONE, newMessage: "which ones start with S?" })).toEqual({
       intro: 'Companies whose names start with "S":',
       items: [
@@ -1828,6 +1940,7 @@ describe("a question about company names", () => {
         },
       ],
     });
+    state.classify.mockResolvedValueOnce(nameQuery("starts_with", "s"));
     expect(
       await ask({ scope: { mode: "companies", companyIds: ["falcon", "maple"] }, newMessage: "which start with s" })
     ).toEqual({ intro: 'No company names start with "S".', items: [] });
@@ -1857,5 +1970,418 @@ describe("a question that mentions an unselected company", () => {
     );
     await POST(chatRequest({ scope: ONE, newMessage: "What does Summit do?" }));
     expect(state.classify).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ── 2026-11-07: router-led small talk, follow-ups and names; model settings; partial
+// filters; one first line; the note and line sources ───
+
+describe("model settings: built from the config, with the DATA_ROOM_CHAT_MODEL override", () => {
+  afterEach(() => {
+    // Back to no override (a blank value changes nothing).
+    vi.stubEnv("DATA_ROOM_CHAT_MODEL", "");
+  });
+
+  /** One question through all three calls (router, selection, opening); their request settings. */
+  async function settingsOfAllThree(): Promise<Array<Record<string, unknown>>> {
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "budget"));
+    state.create.mockResolvedValueOnce(selection(["C1:h:1"]));
+    state.open.mockResolvedValueOnce(modelReply({ opening: "This company has a freeze on discretionary software spend." }));
+    await ask({ scope: ONE, newMessage: "What about their budget?" });
+    return [state.classify, state.create, state.open].map((call) => {
+      const { messages: _messages, ...settings } = call.mock.calls[0]?.[0] as Record<string, unknown>;
+      return settings;
+    });
+  }
+
+  it("Tempo's default: gpt-6-luna, reasoning effort none, no temperature; max_tokens and JSON mode as before", async () => {
+    expect(await settingsOfAllThree()).toEqual([
+      { model: "gpt-6-luna", reasoning_effort: "none", max_tokens: 600, response_format: { type: "json_object" } },
+      { model: "gpt-6-luna", reasoning_effort: "none", max_tokens: 500, response_format: { type: "json_object" } },
+      { model: "gpt-6-luna", reasoning_effort: "none", max_tokens: 100, response_format: { type: "json_object" } },
+    ]);
+  });
+
+  it('"gpt-4o" brings back gpt-4o\'s old settings: temperature 0 / 0 / 0.3 and no reasoning effort', async () => {
+    vi.stubEnv("DATA_ROOM_CHAT_MODEL", "gpt-4o");
+    expect(await settingsOfAllThree()).toEqual([
+      { model: "gpt-4o", temperature: 0, max_tokens: 600, response_format: { type: "json_object" } },
+      { model: "gpt-4o", temperature: 0, max_tokens: 500, response_format: { type: "json_object" } },
+      { model: "gpt-4o", temperature: 0.3, max_tokens: 100, response_format: { type: "json_object" } },
+    ]);
+  });
+
+  it("another model replaces the model only (the settings stay); a blank value changes nothing; the value is never logged", async () => {
+    vi.stubEnv("DATA_ROOM_CHAT_MODEL", "  eval-model-x  ");
+    const logs = (["log", "info", "warn", "error"] as const).map((method) => vi.spyOn(console, method).mockImplementation(() => undefined));
+    const settings = await settingsOfAllThree();
+    const logged = JSON.stringify(logs.map((spy) => spy.mock.calls));
+    logs.forEach((spy) => spy.mockRestore());
+    expect(settings.map((entry) => entry.model)).toEqual(["eval-model-x", "eval-model-x", "eval-model-x"]);
+    expect(settings.every((entry) => entry.reasoning_effort === "none" && !("temperature" in entry))).toBe(true);
+    expect(logged).not.toContain("eval-model-x");
+
+    state.classify.mockClear();
+    state.create.mockClear();
+    state.open.mockClear();
+    vi.stubEnv("DATA_ROOM_CHAT_MODEL", "   ");
+    expect((await settingsOfAllThree()).map((entry) => entry.model)).toEqual(["gpt-6-luna", "gpt-6-luna", "gpt-6-luna"]);
+  });
+});
+
+describe("small talk through the router", () => {
+  it("an unknown kind gets the acknowledgement; low confidence is a normal question", async () => {
+    state.classify.mockResolvedValueOnce(smallTalk("joke"));
+    expect(await ask({ scope: ONE, newMessage: "lol" })).toEqual({ intro: ACKNOWLEDGEMENT_REPLY, items: [] });
+    state.classify.mockResolvedValueOnce(smallTalk(null));
+    expect(await ask({ scope: ALL, newMessage: "hmm" })).toEqual({ intro: ACKNOWLEDGEMENT_REPLY, items: [] });
+    state.classify.mockResolvedValueOnce(
+      modelReply({ intent: "small_talk", topic: null, attribute: null, small_talk_kind: "thanks", confidence: "low" })
+    );
+    expect(await ask({ scope: ONE, newMessage: "thanks, and their software?" })).toEqual({
+      intro: OVERVIEW_FIRST_LINE_ONE,
+      items: [SUMMIT_BLOCK],
+    });
+  });
+
+  it("every message the deleted lists caught goes to the router as typed, and its kind's reply comes back", async () => {
+    const group = (texts: string[], kind: string, intro: string): Array<[string, string, string]> =>
+      texts.map((text): [string, string, string] => [text, kind, intro]);
+    const cases: Array<[string, string, string]> = [
+      ...group(["Hi", "hello!", "Hey 👋", "  HIYA!!! ", "yo", "Good morning", "good-afternoon", "Good evening 🙂"], "greeting", GREETING_REPLY_COMPANIES),
+      ...group(
+        ["Thanks!", "thank you", "Thank you 🙏🏽", "thx", "ty", "Cheers!", "thanx", "Thnx!", "tysm", "thank u", "Thanks a lot!", "thanks so much 🙏", "Much appreciated."],
+        "thanks",
+        THANKS_REPLY
+      ),
+      ...group(["how are you", "How are you?", "How's it going?", "how’s it going", "what's up", "Whats up!", "sup", "you good?"], "how_are_you", SMALL_TALK_REPLY),
+      ...group(
+        ["ok", "OK!", "okay", "k", "sure", "cool 😎", "got it", "Got it.", "great", "nice", "perfect", "alright", "sounds good", "welcome", "yes", "yep", "no", "Nope"],
+        "acknowledgement",
+        ACKNOWLEDGEMENT_REPLY
+      ),
+      ...group(["bye", "Bye!", "goodbye", "see you", "See you 👋", "later"], "goodbye", GOODBYE_REPLY),
+    ];
+    for (const [newMessage, kind, intro] of cases) {
+      state.classify.mockClear();
+      state.classify.mockResolvedValueOnce(smallTalk(kind));
+      expect(await ask({ scope: ONE, newMessage }), newMessage).toEqual({ intro, items: [] });
+      const routerInput = (state.classify.mock.calls[0]?.[0] as { messages: ModelMessage[] }).messages[1]?.content ?? "";
+      expect(routerInput.endsWith(`Question: ${newMessage.trim()}`), newMessage).toBe(true);
+    }
+    expect(state.create).not.toHaveBeenCalled();
+    expect(state.open).not.toHaveBeenCalled();
+  });
+
+  it("small talk still passes the safety checks first (a non-Latin message never reaches the router)", async () => {
+    expect(await ask({ scope: ONE, newMessage: "你好" })).toEqual(guardReply("notEnglish"));
+    expect(state.classify).not.toHaveBeenCalled();
+  });
+});
+
+describe("company-name questions through the router", () => {
+  it("every phrasing the deleted patterns caught goes to the router; its name_match runs on the roster as before", async () => {
+    for (const [newMessage, kind, value, intro] of [
+      ["tell me about companies starting with s", "starts_with", "s", 'Companies whose names start with "S":'],
+      ["Which companies begin with the letter M?", "starts_with", "M", 'Companies whose names start with "M":'],
+      ['Which ones start with "Sum"?', "starts_with", "Sum", 'Companies whose names start with "Sum":'],
+      ["what is names of companies startign with S", "starts_with", "S", 'Companies whose names start with "S":'],
+      ["which ones statring with c", "starts_with", "c", 'Companies whose names start with "C":'],
+      ["Show names containing care", "contains", "care", 'No company names contain "care".'],
+      ["companies with dental in their name", "contains", "dental", 'Companies whose names contain "dental":'],
+      ["Any business named 'Oasis Supply'?", "contains", "Oasis Supply", 'No company names contain "Oasis Supply".'],
+      ["List all company names", "list", "", "Company names:"],
+      ["what are the names of the companies?", "list", "", "Company names:"],
+      ["list all companies", "list", "", "Company names:"],
+    ] as const) {
+      state.classify.mockClear();
+      state.classify.mockResolvedValueOnce(nameQuery(kind, value));
+      const reply = (await ask({ scope: ALL, newMessage })) as { intro: string };
+      expect(reply.intro, newMessage).toBe(intro);
+      const routerInput = (state.classify.mock.calls[0]?.[0] as { messages: ModelMessage[] }).messages[1]?.content ?? "";
+      expect(routerInput.endsWith(`Question: ${newMessage}`), newMessage).toBe(true);
+    }
+    state.classify.mockResolvedValueOnce(nameQuery("list", ""));
+    expect(((await ask({ scope: ALL, newMessage: "list all companies" })) as { items: unknown[] }).items).toHaveLength(ROSTER.length);
+    expect(state.create).not.toHaveBeenCalled();
+    expect(state.open).not.toHaveBeenCalled();
+  });
+
+  it("a ref in the value maps back to that company's name; the scope rules are today's, in both modes", async () => {
+    // "Falcon" is redacted to its ref ([C3], roster order); the router copies it.
+    state.classify.mockResolvedValueOnce(nameQuery("contains", "[C3]"));
+    expect(await ask({ scope: ALL, newMessage: "Is there a company called Falcon?" })).toEqual({
+      intro: 'Companies whose names contain "Falcon Market":',
+      items: [{ companyId: "falcon", companyName: "Falcon Market", text: "Retail · 1 location · Denver, CO" }],
+    });
+    const routerInput = (state.classify.mock.calls[0]?.[0] as { messages: ModelMessage[] }).messages[1]?.content ?? "";
+    expect(routerInput.endsWith("Question: Is there a company called [C3]?")).toBe(true);
+    // Two companies: only those, A–Z.
+    state.classify.mockResolvedValueOnce(nameQuery("list", ""));
+    expect(await ask({ scope: TWO, newMessage: "list the company names" })).toEqual({
+      intro: "Company names:",
+      items: [
+        { companyId: "falcon", companyName: "Falcon Market", text: "Retail · 1 location · Denver, CO" },
+        { companyId: "summit-dental", companyName: "Summit Dental Group", text: "Dental · 8 locations · Front Range, CO" },
+      ],
+    });
+  });
+
+  it("an invalid name_match is a normal question", async () => {
+    state.classify.mockResolvedValueOnce(nameQuery("ends_with", "s"));
+    expect(await ask({ scope: ONE, newMessage: "names ending in s?" })).toEqual({ intro: OVERVIEW_FIRST_LINE_ONE, items: [SUMMIT_BLOCK] });
+  });
+
+  it("the out-of-scope company check still runs in code first, against the live roster (no router call)", async () => {
+    const reply = (await ask({ scope: ONE, newMessage: "Is there a company called Falcon Market?" })) as { intro: string };
+    expect(reply.intro.startsWith("Your question mentions Falcon Market, which isn't selected.")).toBe(true);
+    expect(state.classify).not.toHaveBeenCalled();
+  });
+});
+
+describe("the router's rewritten question", () => {
+  const rewriteReply = (standalone: string): ReturnType<typeof modelReply> =>
+    modelReply({ intent: "specific_research", topic: "budget", attribute: null, standalone_question: standalone, confidence: "high" });
+  const selectionQuestion = (): string => selectionMessages()[1]?.content.split("\n")[0] ?? "";
+  const openingQuestion = (): string =>
+    ((state.open.mock.calls[0]?.[0] as { messages: ModelMessage[] }).messages[1]?.content ?? "").split("\n")[0] ?? "";
+
+  it("accepted: the selection call gets it as written (refs); the opening call with refs as names (shown as Company 1)", async () => {
+    state.classify.mockResolvedValueOnce(rewriteReply("What is [C1]'s budget for software?"));
+    state.create.mockResolvedValueOnce(selection(["C1:h:1"]));
+    state.open.mockResolvedValueOnce(modelReply({ opening: "This company has a freeze on discretionary software spend." }));
+    await ask({ scope: ONE, newMessage: "and their budget?" });
+    expect(selectionQuestion()).toBe("Question: What is [C1]'s budget for software?");
+    expect(openingQuestion()).toBe("Question: What is Company 1's budget for software?");
+  });
+
+  it("refused → the question as asked: a roster name, a ref outside the scope, over 500 characters, or empty", async () => {
+    for (const rewrite of [
+      "What is Summit Dental Group's budget?",
+      "What is Falcon Market's budget?",
+      "Compare [C1] and [C2] budgets.",
+      `${"a".repeat(495)} [C1]?`,
+      "   ",
+    ]) {
+      state.create.mockClear();
+      state.classify.mockResolvedValueOnce(rewriteReply(rewrite));
+      state.create.mockResolvedValueOnce(selection(["C1:h:1"]));
+      await ask({ scope: ONE, newMessage: "and their budget?" });
+      expect(selectionQuestion(), rewrite).toBe("Question: and their budget?");
+    }
+  });
+
+  it("the opening's checks read only the student's words: a name word the rewrite filled in is still dropped", async () => {
+    state.roster = [...ROSTER, CANYON_ROW];
+    state.storedResearchFacts = CANYON_FINDINGS;
+    state.classify.mockResolvedValueOnce(
+      modelReply({
+        intent: "specific_research",
+        topic: "staffing",
+        attribute: null,
+        standalone_question: "Is [C1] hiring?",
+        is_follow_up: true,
+        confidence: "high",
+      })
+    );
+    state.create.mockResolvedValueOnce(selection(["C1:s:0"]));
+    state.open.mockResolvedValueOnce(modelReply({ opening: "Canyon is hiring a spa attendant." }));
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const reply = (await ask({ scope: CANYON, newMessage: "and are they hiring?" })) as { intro: string };
+    const logged = JSON.stringify(infoSpy.mock.calls);
+    infoSpy.mockRestore();
+    expect(reply.intro).toBe(findable("staffing"));
+    expect(logged).toContain("company-name word");
+  });
+
+  it("'nothing new' needs is_follow_up and the latest answer about the same companies", async () => {
+    state.roster = [...ROSTER, CANYON_ROW];
+    state.storedResearchFacts = CANYON_FINDINGS;
+    const followUp = (): ReturnType<typeof modelReply> =>
+      modelReply({ intent: "specific_research", topic: "staffing", attribute: null, is_follow_up: true, confidence: "high" });
+    state.classify.mockResolvedValueOnce(followUp());
+    state.create.mockResolvedValueOnce(selection(["C1:s:0"]));
+    expect(((await ask({ scope: CANYON, newMessage: "more on that", history: HIRING_HISTORY })) as { intro: string }).intro).toBe(
+      FOLLOW_UP_NOTHING_NEW_INTRO
+    );
+    // The latest answer was about other companies: a normal answer.
+    state.classify.mockResolvedValueOnce(followUp());
+    state.create.mockResolvedValueOnce(selection(["C1:s:0"]));
+    const otherHistory = HIRING_HISTORY.map((entry) => ({ ...entry, scope: ONE }));
+    expect(((await ask({ scope: CANYON, newMessage: "more on that", history: otherHistory })) as { intro: string }).intro).toBe(
+      findable("staffing")
+    );
+  });
+});
+
+describe("All companies: partial questions", () => {
+  const NOTE = "I can't search research like software, budget or risks across all companies. Switch to Selected and ask about a company to check.";
+
+  it("the '5 to 8 locations + SlotEasy' corner case lists the range's matches, says what it applied, and adds the note", async () => {
+    state.roster = [
+      ...ROSTER,
+      { ...ROSTER[0], id: "clearview", company_name: "Clearview Optometry", industry: "Optometry", vertical: "optometry", locations: 6, in_territory: true },
+      { ...ROSTER[0], id: "brightsight", company_name: "Brightsight Optometry", industry: "Optometry", vertical: "optometry", locations: 9, in_territory: true },
+    ];
+    state.classify.mockResolvedValueOnce(
+      modelReply({
+        intent: "filter_list",
+        filters: [
+          { field: "industry", op: "contains", value: "optometry" },
+          { field: "locations", op: "gte", value: 5 },
+          { field: "locations", op: "lte", value: 8 },
+        ],
+        criteria_count: 2,
+        unfiltered: true,
+        confidence: "high",
+      })
+    );
+    const reply = (await ask({ scope: ALL, newMessage: "optometry with 5 to 8 locations that use SlotEasy" })) as {
+      intro: string;
+      items: Array<{ companyName: string }>;
+      note?: string;
+      layout?: string;
+    };
+    expect(reply.intro).toBe("1 company matches the filters I could apply (industry and number of locations).");
+    expect(reply.items.map((item) => item.companyName)).toEqual(["Clearview Optometry"]);
+    expect(reply.layout).toBe("table");
+    expect(reply.note).toBe(NOTE);
+    expect(state.open).not.toHaveBeenCalled();
+  });
+
+  it("no valid filter at all → the All-companies reply, unchanged; the router's words are never shown", async () => {
+    state.classify.mockResolvedValueOnce(
+      modelReply({ intent: "filter_list", filters: null, criteria_count: 1, unfiltered: true, standalone_question: "Which use SlotEasy?", confidence: "high" })
+    );
+    expect(await ask({ scope: ALL, newMessage: "which use SlotEasy?" })).toEqual({ intro: ALL_MODE_REPLY, items: [] });
+  });
+});
+
+describe("exactly one first line on every answer with facts", () => {
+  const OPENING = "Here's what's on record for your question.";
+  /** The first lines an answer has of its own (an opening call is never made for them). */
+  const OWN_LINES = [EXACT_DETAIL_MISSING_INTRO, RELATED_FINDINGS_INTRO, META_PUBLIC_INTRO, FOLLOW_UP_NOTHING_NEW_INTRO, COMPARE_FIXED_INTRO];
+  /** Every first line an answer can have: its own fixed lines, the fixed fallbacks and the (mocked) opening. */
+  const isKnownFirstLine = (intro: string): boolean =>
+    [OPENING, ...OWN_LINES, OVERVIEW_FIRST_LINE_ONE, OVERVIEW_FIRST_LINE_SEVERAL, GENERIC_FIRST_LINE].includes(intro) ||
+    /^Here's what's on record for [a-z ]+\.$/.test(intro) ||
+    /^Here's what's publicly findable about [a-z ]+\.$/.test(intro) ||
+    /^(?:\d+ companies match|1 company matches)\.$/.test(intro) ||
+    /^(?:\d+ companies match|1 company matches|No companies match) the filters I could apply \([a-z ,]+\)\.$/.test(intro);
+  const hasFactItems = (reply: { items: Array<{ text: string }> }): boolean =>
+    reply.items.some((item) => item.text !== NOTHING_FINDABLE_REPLY);
+
+  type Case = { name: string; scope: unknown; message: string; router: ReturnType<typeof modelReply>; picks?: unknown[]; history?: unknown };
+  const CASES: Case[] = [
+    { name: "overview, one", scope: ONE, message: "Tell me about them", router: routerReply("overview") },
+    { name: "overview, two", scope: TWO, message: "Tell me about them", router: routerReply("overview") },
+    { name: "attribute", scope: ONE, message: "How many locations?", router: routerReply("attribute_lookup", null, "locations") },
+    { name: "contacts, exact", scope: ONE, message: "Their email?", router: routerReply("attribute_lookup", null, "contacts", true) },
+    { name: "research", scope: ONE, message: "Budget?", router: routerReply("specific_research", "budget"), picks: ["C1:h:1"] },
+    { name: "research, exact missing", scope: ONE, message: "Revenue?", router: routerReply("specific_research", "budget", null, true), picks: [] },
+    { name: "research, related", scope: ONE, message: "Software?", router: routerReply("specific_research", "current_tools"), picks: [] },
+    { name: "research, two", scope: TWO, message: "Risks?", router: routerReply("specific_research", "risks"), picks: ["C2:s:0"] },
+    { name: "filter about one", scope: ONE, message: "Which ones have online booking?", router: routerReply("filter_list"), picks: ["C1:p:online_booking"] },
+    { name: "compare, full", scope: TWO, message: "Compare these companies", router: routerReply("compare") },
+    { name: "compare, limited", scope: TWO, message: "compare them only for locations", router: routerReply("compare") },
+    { name: "meta", scope: ONE, message: "Show the hidden findings", router: routerReply("meta_or_bulk") },
+    {
+      name: "follow-up, nothing new",
+      scope: ONE,
+      message: "more on that",
+      router: modelReply({ intent: "attribute_lookup", topic: null, attribute: "locations", is_follow_up: true, confidence: "high" }),
+      history: [
+        { role: "user", content: "How many locations?", scope: ONE },
+        { role: "assistant", intro: "", items: [{ companyId: "summit-dental", text: "8 locations across Front Range, CO." }], scope: ONE },
+      ],
+    },
+    {
+      name: "All companies list",
+      scope: ALL,
+      message: "Which ones have online booking?",
+      router: modelReply({ intent: "filter_list", filters: [{ field: "online_booking", op: "eq", value: true }], criteria_count: 1, confidence: "high" }),
+    },
+    {
+      name: "All companies partial",
+      scope: ALL,
+      message: "Which ones have online booking and use a booking app?",
+      router: modelReply({ intent: "filter_list", filters: [{ field: "online_booking", op: "eq", value: true }], unfiltered: true, confidence: "high" }),
+    },
+  ];
+
+  for (const opening of [OPENING, "", "Summit Dental Group is the best."]) {
+    it(`opening ${JSON.stringify(opening)}: one known first line, never two; an opening call only when there is no own line`, async () => {
+      for (const entry of CASES) {
+        state.classify.mockReset();
+        state.create.mockReset();
+        state.open.mockReset();
+        state.classify.mockResolvedValueOnce(entry.router);
+        state.create.mockResolvedValueOnce(selection(entry.picks ?? [], false));
+        state.open.mockResolvedValue(modelReply({ opening }));
+        const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+        const reply = (await ask({ scope: entry.scope, newMessage: entry.message, history: entry.history })) as {
+          intro: string;
+          items: Array<{ text: string }>;
+        };
+        infoSpy.mockRestore();
+        expect(hasFactItems(reply), entry.name).toBe(true);
+        expect(reply.intro, entry.name).not.toBe("");
+        expect(isKnownFirstLine(reply.intro), `${entry.name}: ${reply.intro}`).toBe(true);
+        // Never two: one line, and no two known first lines in it.
+        expect(reply.intro.includes("\n"), entry.name).toBe(false);
+        expect([OPENING, ...OWN_LINES].filter((line) => reply.intro.includes(line)).length, entry.name).toBeLessThanOrEqual(1);
+        // At most one opening call, and none above a line of the answer's own.
+        expect(state.open.mock.calls.length, entry.name).toBeLessThanOrEqual(1);
+        if (OWN_LINES.includes(reply.intro) && reply.intro !== COMPARE_FIXED_INTRO) {
+          expect(state.open, entry.name).not.toHaveBeenCalled();
+        }
+      }
+    });
+  }
+
+  it("answers with no facts are unchanged (no first line is added)", async () => {
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "ownership"));
+    state.create.mockResolvedValueOnce(selection([], false));
+    expect(await ask({ scope: ONE, newMessage: "Who owns it?" })).toEqual({
+      intro: "",
+      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: NOTHING_FINDABLE_REPLY }],
+    });
+    expect(state.open).not.toHaveBeenCalled();
+  });
+});
+
+describe("Selected mode: the note and the line sources", () => {
+  it("2–3 companies + a research question → the one-company note; not for one company, a compare or an overview", async () => {
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "budget"));
+    state.create.mockResolvedValueOnce(selection(["C1:p:size"]));
+    expect(await ask({ scope: TWO, newMessage: "What about their budgets?" })).toMatchObject({ note: ONE_COMPANY_RESEARCH_NOTE });
+    expect(ONE_COMPANY_RESEARCH_NOTE).toBe("Ask about one company at a time to see its research findings.");
+
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "budget"));
+    state.create.mockResolvedValueOnce(selection(["C1:h:1"]));
+    expect(await ask({ scope: ONE, newMessage: "What about their budget?" })).not.toHaveProperty("note");
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "budget"));
+    expect(await ask({ scope: TWO, newMessage: "compare their budgets" })).not.toHaveProperty("note");
+    state.classify.mockResolvedValueOnce(routerReply("overview"));
+    expect(await ask({ scope: TWO, newMessage: "Tell me about them" })).not.toHaveProperty("note");
+  });
+
+  it("each line's source: findings research, signals public, card facts card; list answers (tables, names) carry none", async () => {
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "budget"));
+    state.create.mockResolvedValueOnce(selection(["C1:s:0", "C1:p:locations"]));
+    const reply = (await ask({ scope: ONE, newMessage: "What about their budget?" })) as { items: Array<{ lines?: Line[] }> };
+    expect(reply.items[0]?.lines).toEqual([
+      research(BUDGET_FINDING),
+      pub("Opened 8th location three months ago"),
+      card("8 locations across Front Range, CO."),
+    ]);
+    state.classify.mockResolvedValueOnce(
+      modelReply({ intent: "filter_list", filters: [{ field: "online_booking", op: "eq", value: true }], criteria_count: 1, confidence: "high" })
+    );
+    const table = (await ask({ scope: ALL, newMessage: "Which ones have online booking?" })) as { items: Array<Record<string, unknown>> };
+    expect(table.items.every((item) => !("lines" in item))).toBe(true);
+    state.classify.mockResolvedValueOnce(nameQuery("list", ""));
+    const names = (await ask({ scope: ALL, newMessage: "list the company names" })) as { items: Array<Record<string, unknown>> };
+    expect(names.items.every((item) => !("lines" in item))).toBe(true);
   });
 });

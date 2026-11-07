@@ -10,13 +10,17 @@
  * for (by locations or name; never by fit), under a count line and with no opening
  * sentence (as a table: layout "table", each item with its card values). A request
  * for the previous list again in another order keeps that list's companies (all of
- * its conditions), re-sorted. A "how many companies are there?" question (no conditions) gets
- * the roster total; an answer-key or rule-breaking question its own reply; any other
- * All-companies question one fixed reply. Used by lib/data-room-chat-router.ts
- * (filter validation) and POST /api/student/data-room-chat.
+ * its conditions), re-sorted. A question that also asks for something no filter can
+ * express (the router's unfiltered: software, budget, risks…) still gets the list for
+ * the conditions it could apply, under a count line naming them (from the config's
+ * labels) and a fixed note that research can't be searched across all companies. A
+ * "how many companies are there?" question (no conditions) gets the roster total; an
+ * answer-key or rule-breaking question its own reply; any other All-companies
+ * question one fixed reply. Used by lib/data-room-chat-router.ts (filter validation)
+ * and POST /api/student/data-room-chat.
  */
 
-import { filterFieldsPhrase, getDataRoomChatConfig, type DataRoomChatConfig } from "@/lib/data-room-chat-config";
+import { filterFieldsPhrase, getDataRoomChatConfig, joinList, type DataRoomChatConfig } from "@/lib/data-room-chat-config";
 import type { RouterDecision } from "@/lib/data-room-chat-router";
 import { formatRosterListLine, type NameQueryCompany, type ScopedAnswer } from "@/lib/data-room-chat-scope";
 
@@ -43,6 +47,32 @@ export const NO_FILTER_MATCHES_REPLY = "No companies match that.";
 /** The intro of every filter answer with matches: "{n} companies match." ("1 company matches."). */
 export function matchCountIntro(count: number): string {
   return count === 1 ? "1 company matches." : `${count} companies match.`;
+}
+
+/**
+ * The count line of an answer that applied only some of what the question asked
+ * (unfiltered): "{n} companies match the filters I could apply (industry and state)."
+ * ("1 company matches …", "No companies match …"), the fields in plain words from
+ * the config (appliedFilterLabels), each once, in filter-field order.
+ */
+export function partialMatchCountIntro(
+  count: number,
+  filters: readonly RosterFilter[],
+  config: DataRoomChatConfig = getDataRoomChatConfig()
+): string {
+  const fields = joinList(
+    FILTER_FIELDS.filter((field) => filters.some((filter) => filter.field === field)).map(
+      (field) => config.appliedFilterLabels[field]
+    ),
+    "and"
+  );
+  const subject = count === 0 ? "No companies match" : count === 1 ? "1 company matches" : `${count} companies match`;
+  return `${subject} the filters I could apply (${fields}).`;
+}
+
+/** The note under a partial All-companies answer: research can't be searched across every company. */
+export function unfilteredNote(config: DataRoomChatConfig = getDataRoomChatConfig()): string {
+  return `I can't search research like ${joinList(config.unfilteredResearchExamples, "or")} across all companies. Switch to Selected and ask about a company to check.`;
 }
 
 /** The answer to "how many companies are there?": the roster total. */
@@ -364,14 +394,15 @@ function listAnswer(companies: readonly FilterCompany[], sort?: RosterSort | nul
 
 /**
  * The answer to an All-companies question:
- * - a filter_list question with valid conditions runs over the roster. A criteria
- *   count above the number of conditions means the question asked for something the
- *   filters can't express, so it is refused (a missing count is fine);
+ * - a filter_list question with valid conditions runs over the roster. When it also
+ *   asks for something no filter can express (unfiltered), the list is the same, under
+ *   partialMatchCountIntro and with unfilteredNote as its note;
  * - a filter_list question with no conditions at all (criteria count 0, "how many
  *   companies are there?") gets the roster total;
  * - an answer-key or rule-breaking question (meta_or_bulk) gets the answer-key reply;
- * - everything else gets the fixed reply (both worded from the simulation's config,
- *   lib/data-room-chat-config.ts; Tempo's: META_ALL_MODE_REPLY, ALL_MODE_REPLY).
+ * - everything else, including a question with no valid condition, gets the fixed
+ *   reply (all worded from the simulation's config, lib/data-room-chat-config.ts;
+ *   Tempo's: META_ALL_MODE_REPLY, ALL_MODE_REPLY).
  */
 export function answerAllCompanies(
   decision: RouterDecision,
@@ -379,7 +410,7 @@ export function answerAllCompanies(
   previousListIds: readonly string[] = [],
   config: DataRoomChatConfig = getDataRoomChatConfig()
 ): ScopedAnswer {
-  const { intent, filters, criteriaCount, sort } = decision;
+  const { intent, filters, criteriaCount, sort, unfiltered } = decision;
   if (intent === "meta_or_bulk") {
     return { intro: metaAllModeReply(config), items: [] };
   }
@@ -396,10 +427,17 @@ export function answerAllCompanies(
   if (intent === "filter_list" && filters === null && criteriaCount === 0) {
     return { intro: totalCountReply(companies.length), items: [] };
   }
-  const isComplete =
-    filters !== null && filters.length > 0 && (criteriaCount === null || criteriaCount <= filters.length);
-  if (intent === "filter_list" && filters && isComplete) {
-    return answerFilter(filters, companies, sort);
+  if (intent === "filter_list" && filters && filters.length > 0) {
+    const answer = answerFilter(filters, companies, sort);
+    if (!unfiltered) {
+      return answer;
+    }
+    // Only part of the question could be filtered: the same list, saying what was applied.
+    return {
+      ...answer,
+      intro: partialMatchCountIntro(answer.items.length, filters, config),
+      note: unfilteredNote(config),
+    };
   }
   return { intro: allModeReply(config), items: [] };
 }

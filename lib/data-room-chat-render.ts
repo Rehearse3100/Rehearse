@@ -10,19 +10,24 @@
  * to add, and says whether any fact states the exact detail asked for (the selection
  * call's messages and reply parsing live here). Code keeps the ids that are in the
  * set it was given, and the renderers turn facts into the { intro, items } answer.
- * The only model-written text is a one-sentence opening, written last by a separate
- * call that sees only the question, its topic and the finished answer text
- * (companies as "Company 1", "Company 2"…; its messages are built here), checked
- * here (checkOpening: it may only restate what the facts shown say) and placed above
- * the facts of an answer with no first line of its own (withOpening). A follow-up
- * that brings back only facts already shown gets a fixed first line instead
- * (withNothingNewIntro), and so do findings the selection call says don't answer
- * the question (withRelatedFindingsIntro, read with isNoFactAnswersReply). A compare
- * answer about 2–3 companies also carries card values and signals for a side-by-side
- * table (withCompareLayout), and only the rows the question names ("only for
- * locations", compareRowsFor). Used by POST /api/student/data-room-chat.
+ * Each rendered line keeps its source (research finding, public signal or card
+ * fact) for the pane's tags. The only model-written text is a one-sentence opening,
+ * written last by a separate call that sees only the question, its topic and the
+ * finished answer text (companies as "Company 1", "Company 2"…; its messages are
+ * built here), checked here (checkOpening: it may only restate what the facts shown
+ * say). Every answer with facts gets exactly one first line, decided by one function
+ * (withFirstLine): its own fixed line if it has one, else the checked opening, else
+ * a fixed line built by code from the answer path and the config's labels
+ * (fallbackFirstLine). A follow-up that brings back only facts already shown gets a
+ * fixed first line (withNothingNewIntro), and so do findings the selection call says
+ * don't answer the question (withRelatedFindingsIntro, read with
+ * isNoFactAnswersReply). A compare answer about 2–3 companies also carries card
+ * values and signals for a side-by-side table (withCompareLayout), and only the rows
+ * the question names ("only for locations", compareRowsFor). Used by POST
+ * /api/student/data-room-chat.
  */
 
+import { getDataRoomChatConfig, type DataRoomChatConfig } from "@/lib/data-room-chat-config";
 import type { CompanyAllowance } from "@/lib/data-room-chat-policy";
 import type { RouterAttribute, RouterDecision } from "@/lib/data-room-chat-router";
 import {
@@ -31,9 +36,12 @@ import {
   textContainsCompanyName,
   toWords,
   type AnswerCard,
+  type AnswerLine,
+  type AnswerLineSource,
   type CompareRowKey,
   type FirstWordReplacement,
   type ScopedAnswer,
+  type ScopedAnswerItem,
   type ScopeIndex,
 } from "@/lib/data-room-chat-scope";
 import type { QuestionTopic, ResearchFinding } from "@/lib/data-room-research-topics";
@@ -49,6 +57,16 @@ export const EXACT_DETAIL_MISSING_INTRO = "That exact detail isn't publicly find
  * opening can mention a detail the table doesn't show.
  */
 export const COMPARE_FIXED_INTRO = "Which one to pursue is your call; the facts below can help you compare.";
+
+/** The fixed first line of an overview of one company, when no opening sentence is shown. */
+export const OVERVIEW_FIRST_LINE_ONE = "Here's the public overview of this company.";
+/** The fixed first line of an overview of two or three companies, when no opening sentence is shown. */
+export const OVERVIEW_FIRST_LINE_SEVERAL = "Here's the public overview of these companies.";
+/** The fixed first line of a selected-facts answer with no topic or card detail (a filter question about 1–3 companies). */
+export const GENERIC_FIRST_LINE = "Here's what's on record for your question.";
+
+/** The note under a research question about 2–3 companies: findings are only shared one company at a time. */
+export const ONE_COMPANY_RESEARCH_NOTE = "Ask about one company at a time to see its research findings.";
 
 /** The intro when a follow-up ("tell me more") brings back only facts the last answer already showed. */
 export const FOLLOW_UP_NOTHING_NEW_INTRO = "That's everything publicly findable on this.";
@@ -120,6 +138,14 @@ export type CompanyFacts = {
 
 function fact(companyId: string, kind: FactKind, key: string, display: string): Fact {
   return { id: `${companyId}:${kind}:${key}`, companyId, kind, key, display };
+}
+
+/** Each fact kind's line source: a hidden finding is research, a signal public, an attribute a card fact. */
+const LINE_SOURCES: Readonly<Record<FactKind, AnswerLineSource>> = { h: "research", s: "public", p: "card" };
+
+/** A fact as one answer line: its display sentence and its source (LINE_SOURCES). */
+export function factLine(entry: Fact): AnswerLine {
+  return { text: entry.display, source: LINE_SOURCES[entry.kind] };
 }
 
 /** Ends a sentence built from stored values with a period (stored sentences are left as written). */
@@ -259,42 +285,45 @@ export function answerPathFor(decision: RouterDecision): AnswerPath {
 
 /**
  * The overview in a fixed order: the headline (industry · locations · metro),
- * territory, online booking, blurb, public signals.
+ * territory, online booking, blurb (card facts), then the public signals.
  */
-export function overviewLines(facts: CompanyFacts): string[] {
+export function overviewLines(facts: CompanyFacts): AnswerLine[] {
   const { territory, online_booking: onlineBooking, blurb } = facts.attributes;
   return [
-    ...(facts.headline ? [facts.headline] : []),
-    ...[territory, onlineBooking, blurb, ...facts.signals].flatMap((entry) => (entry ? [entry.display] : [])),
+    ...(facts.headline ? [{ text: facts.headline, source: "card" as const }] : []),
+    ...[territory, onlineBooking, blurb, ...facts.signals].flatMap((entry) => (entry ? [factLine(entry)] : [])),
   ];
 }
 
-/** The attribute's display sentence, or nothing when the company has no value for it. */
-export function attributeLines(facts: CompanyFacts, attribute: PublicAttribute): string[] {
+/** The attribute's display sentence (a card fact), or nothing when the company has no value for it. */
+export function attributeLines(facts: CompanyFacts, attribute: PublicAttribute): AnswerLine[] {
   const entry = facts.attributes[attribute];
-  return entry ? [entry.display] : [];
+  return entry ? [factLine(entry)] : [];
 }
 
-/** One company's block: the name from the database as header, then one line per fact. */
-export type CompanyBlock = { companyId: string; companyName: string; lines: readonly string[] };
+/** One company's block: the name from the database as header, then one line per fact (with its source). */
+export type CompanyBlock = { companyId: string; companyName: string; lines: readonly AnswerLine[] };
 
 /**
- * Renders the answer. keepEmpty: every block is shown, an empty one as the
- * nothing-findable reply. Otherwise empty blocks are left out, and if none is left
- * the intro is the nothing-findable reply. No lead-in sentences.
+ * Renders the answer. Each item's text is its lines joined (as before), and lines
+ * keeps each one's source. keepEmpty: every block is shown, an empty one as the
+ * nothing-findable reply (no lines). Otherwise empty blocks are left out, and if none
+ * is left the intro is the nothing-findable reply. No lead-in sentences.
  */
 export function renderAnswer(blocks: readonly CompanyBlock[], keepEmpty: boolean): ScopedAnswer {
-  const items = blocks.flatMap((block) =>
-    block.lines.length > 0 || keepEmpty
-      ? [
-          {
-            companyId: block.companyId,
-            companyName: block.companyName,
-            text: block.lines.length > 0 ? block.lines.join("\n") : NOTHING_FINDABLE_REPLY,
-          },
-        ]
-      : []
-  );
+  const items = blocks.flatMap((block): ScopedAnswerItem[] => {
+    if (block.lines.length > 0) {
+      return [
+        {
+          companyId: block.companyId,
+          companyName: block.companyName,
+          text: block.lines.map((line) => line.text).join("\n"),
+          lines: block.lines.map((line) => ({ text: line.text, source: line.source })),
+        },
+      ];
+    }
+    return keepEmpty ? [{ companyId: block.companyId, companyName: block.companyName, text: NOTHING_FINDABLE_REPLY }] : [];
+  });
   return items.length > 0 ? { intro: "", items } : { intro: NOTHING_FINDABLE_REPLY, items: [] };
 }
 
@@ -734,24 +763,60 @@ export function checkOpening(
 }
 
 /**
- * True when the answer gets an opening sentence: it shows facts and has no first
- * line of its own. An answer that already starts with a fixed line (a filter list's
- * "{n} companies match.", the exact-detail line, the "nothing hidden" line, the
- * related-findings line, the follow-up's "That's everything publicly findable on
- * this.") or shows no facts (the
- * nothing-findable reply, any fixed reply) gets none, so its first line is never
- * doubled.
+ * True when the answer still needs its first line (so the opening call is made): it
+ * shows facts and has no first line of its own. An answer that already starts with a
+ * fixed line (a filter list's "{n} companies match.", the exact-detail line, the
+ * "nothing hidden" line, the related-findings line, the follow-up's "That's
+ * everything publicly findable on this.", a limited compare's line) or shows no facts
+ * (the nothing-findable reply, any fixed reply) needs none, so its first line is
+ * never doubled.
  */
 export function needsOpening(answer: ScopedAnswer): boolean {
   return hasFacts(answer) && answer.intro === "";
 }
 
-/** Puts the checked opening above the facts of an answer that needs one (needsOpening). */
-export function withOpening(answer: ScopedAnswer, opening: string | null): ScopedAnswer {
-  if (!opening || !needsOpening(answer)) {
+/**
+ * The one place an answer's first line is decided: an answer with no facts, or with
+ * its own first line already, is returned as it is; otherwise the checked opening
+ * (when there is one) or else the fixed fallback line becomes its intro. So every
+ * answer with facts ends with exactly one first line, and none gets two.
+ */
+export function withFirstLine(answer: ScopedAnswer, opening: string | null, fallback: string): ScopedAnswer {
+  if (!needsOpening(answer)) {
     return answer;
   }
-  return { ...answer, intro: opening };
+  return { ...answer, intro: opening || fallback };
+}
+
+/**
+ * The fixed first line for an answer whose opening was dropped or failed, built by
+ * code from the answer path (answerPathFor) and the config's labels:
+ * - attribute lookup: "Here's what's on record for {attribute label}.";
+ * - selected facts: "Here's what's publicly findable about {topic label}." (with no
+ *   topic, the card detail's line, else GENERIC_FIRST_LINE);
+ * - a side-by-side compare (layout "compare"): COMPARE_FIXED_INTRO;
+ * - an overview: OVERVIEW_FIRST_LINE_ONE (one company) or OVERVIEW_FIRST_LINE_SEVERAL.
+ */
+export function fallbackFirstLine(
+  decision: RouterDecision,
+  answer: ScopedAnswer,
+  config: DataRoomChatConfig = getDataRoomChatConfig()
+): string {
+  const cardLine = (attribute: RouterAttribute): string => `Here's what's on record for ${config.attributeLabels[attribute]}.`;
+  const path = answerPathFor(decision);
+  if (path.kind === "attribute") {
+    return cardLine(path.attribute);
+  }
+  if (path.kind === "select") {
+    if (decision.topic) {
+      return `Here's what's publicly findable about ${config.topicLabels[decision.topic]}.`;
+    }
+    return decision.attribute ? cardLine(decision.attribute) : GENERIC_FIRST_LINE;
+  }
+  if (answer.layout === "compare") {
+    return COMPARE_FIXED_INTRO;
+  }
+  return answer.items.length > 1 ? OVERVIEW_FIRST_LINE_SEVERAL : OVERVIEW_FIRST_LINE_ONE;
 }
 
 // ── Selection call ───

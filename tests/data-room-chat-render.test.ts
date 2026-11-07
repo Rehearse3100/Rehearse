@@ -8,10 +8,14 @@
  * prompt; every drop rule, including claim words the facts don't state and the drop
  * reason; where it shows), the follow-up's "nothing new" line, and the selection
  * call's messages (allowed findings and public facts), prompt (only facts that answer)
- * and reply parsing (only given ids survive, in order; exact_answer).
+ * and reply parsing (only given ids survive, in order; exact_answer). 2026-11-07:
+ * each line keeps its source (research, public or card), and one function decides
+ * the first line (withFirstLine: its own, else the opening, else the fixed line for
+ * the answer's path, fallbackFirstLine).
  */
 
 import { describe, expect, it } from "vitest";
+import { getDataRoomChatConfig } from "@/lib/data-room-chat-config";
 import { ALL_MODE_REPLY, NO_FILTER_MATCHES_REPLY } from "@/lib/data-room-chat-filter";
 import { OFF_TOPIC_REPLY } from "@/lib/data-room-chat-policy";
 import {
@@ -23,14 +27,21 @@ import {
   buildOpeningMessages,
   buildSelectionMessages,
   checkOpening,
+  COMPARE_FIXED_INTRO,
   EXACT_DETAIL_MISSING_INTRO,
+  factLine,
+  fallbackFirstLine,
   FOLLOW_UP_NOTHING_NEW_INTRO,
+  GENERIC_FIRST_LINE,
   hasFacts,
   isNoFactAnswersReply,
   needsOpening,
   NOTHING_FINDABLE_REPLY,
+  ONE_COMPANY_RESEARCH_NOTE,
   OPENING_SYSTEM_PROMPT,
   openingRejection,
+  OVERVIEW_FIRST_LINE_ONE,
+  OVERVIEW_FIRST_LINE_SEVERAL,
   overviewLines,
   parseOpening,
   parseSelection,
@@ -40,12 +51,13 @@ import {
   SELECTION_SYSTEM_PROMPT,
   toSelectableFacts,
   withExactDetailIntro,
+  withFirstLine,
   withNothingNewIntro,
-  withOpening,
   withRelatedFindingsIntro,
   type CompanyFactSource,
 } from "@/lib/data-room-chat-render";
-import { buildScopeIndex, type ScopedAnswer } from "@/lib/data-room-chat-scope";
+import type { RouterDecision } from "@/lib/data-room-chat-router";
+import { buildScopeIndex, type AnswerLine, type ScopedAnswer } from "@/lib/data-room-chat-scope";
 import type { ResearchFinding } from "@/lib/data-room-research-topics";
 
 const TOOLS: ResearchFinding = { text: "Signed a multi-year agreement with a scheduling vendor last year.", topics: ["current_tools"] };
@@ -152,39 +164,51 @@ describe("answer paths", () => {
 });
 
 describe("rendering", () => {
+  // 2026-11-07: each line comes with its source (card facts, public signals; research
+  // findings below); the text is the same as before.
+  const card = (text: string): AnswerLine => ({ text, source: "card" });
+  const pub = (text: string): AnswerLine => ({ text, source: "public" });
+
   it("overview: headline, territory, online booking, blurb, signals in a fixed order", () => {
     expect(overviewLines(summit)).toEqual([
-      "Dental Group · 8 locations · Front Range, CO",
-      "In territory.",
-      "No online booking.",
-      "Summit Dental Group runs eight clinics.",
-      "Opened 8th location three months ago",
-      "Hiring two hygienists",
+      card("Dental Group · 8 locations · Front Range, CO"),
+      card("In territory."),
+      card("No online booking."),
+      card("Summit Dental Group runs eight clinics."),
+      pub("Opened 8th location three months ago"),
+      pub("Hiring two hygienists"),
     ]);
-    expect(overviewLines(sparse)).toEqual(["Retail · 1 location"]);
+    expect(overviewLines(sparse)).toEqual([card("Retail · 1 location")]);
   });
 
   it("attribute: that attribute's sentence, or nothing when it has no value", () => {
-    expect(attributeLines(summit, "online_booking")).toEqual(["No online booking."]);
+    expect(attributeLines(summit, "online_booking")).toEqual([card("No online booking.")]);
     expect(attributeLines(sparse, "contacts")).toEqual([]);
+  });
+
+  it("each fact's line source: a finding is research, a signal public, an attribute a card fact", () => {
+    const facts = buildCompanyFacts({ ...SUMMIT, findings: [TOOLS] });
+    expect(factLine(facts.hidden[0]!)).toEqual({ text: TOOLS.text, source: "research" });
+    expect(factLine(facts.signals[0]!)).toEqual(pub("Opened 8th location three months ago"));
+    expect(factLine(facts.attributes.locations!)).toEqual(card("8 locations across Front Range, CO."));
   });
 
   it("renders one block per company (header from the given name) with one line per fact", () => {
     const blocks = [
-      { companyId: "summit", companyName: "Summit Dental Group", lines: ["In territory.", "No online booking."] },
+      { companyId: "summit", companyName: "Summit Dental Group", lines: [card("In territory."), pub("No online booking.")] },
       { companyId: "sparse", companyName: "Sparse Shop", lines: [] },
     ];
+    const summitItem = {
+      companyId: "summit",
+      companyName: "Summit Dental Group",
+      text: "In territory.\nNo online booking.",
+      lines: [card("In territory."), pub("No online booking.")],
+    };
     expect(renderAnswer(blocks, true)).toEqual({
       intro: "",
-      items: [
-        { companyId: "summit", companyName: "Summit Dental Group", text: "In territory.\nNo online booking." },
-        { companyId: "sparse", companyName: "Sparse Shop", text: NOTHING_FINDABLE_REPLY },
-      ],
+      items: [summitItem, { companyId: "sparse", companyName: "Sparse Shop", text: NOTHING_FINDABLE_REPLY }],
     });
-    expect(renderAnswer(blocks, false)).toEqual({
-      intro: "",
-      items: [{ companyId: "summit", companyName: "Summit Dental Group", text: "In territory.\nNo online booking." }],
-    });
+    expect(renderAnswer(blocks, false)).toEqual({ intro: "", items: [summitItem] });
     expect(renderAnswer([{ ...blocks[1]! }], false)).toEqual({ intro: NOTHING_FINDABLE_REPLY, items: [] });
     expect(NOTHING_FINDABLE_REPLY).toBe("Nothing about that is publicly findable for this company.");
   });
@@ -370,16 +394,20 @@ describe("the opening sentence (written from the finished answer)", () => {
 
   it("shows above the facts; never on an answer with its own first line (a count line, the exact-detail line, the nothing-hidden line)", () => {
     const facts = { intro: "", items: [{ companyId: "a", companyName: "A", text: "In territory." }] };
+    const fallback = "Here's the public overview of this company.";
     expect(needsOpening(facts)).toBe(true);
-    expect(withOpening(facts, "Here's what's on record.")).toEqual({ ...facts, intro: "Here's what's on record." });
+    expect(withFirstLine(facts, "Here's what's on record.", fallback)).toEqual({ ...facts, intro: "Here's what's on record." });
     const list = { intro: "2 companies match.", items: facts.items };
     const exact = { intro: EXACT_DETAIL_MISSING_INTRO, items: [{ companyId: "a", companyName: "A", text: BUDGET.text }] };
     const meta = { intro: "I can't share hidden or internal information. Here's what's public:", items: facts.items };
     for (const answer of [list, exact, meta]) {
       expect(needsOpening(answer), answer.intro).toBe(false);
-      expect(withOpening(answer, "Here's who matches."), answer.intro).toEqual(answer);
+      expect(withFirstLine(answer, "Here's who matches.", fallback), answer.intro).toEqual(answer);
     }
-    expect(withOpening(facts, null)).toEqual(facts);
+    // 2026-11-07: no opening (a failed call or a dropped sentence) → the fixed line
+    // (was: the answer unchanged, with no first line).
+    expect(withFirstLine(facts, null, fallback)).toEqual({ ...facts, intro: fallback });
+    expect(withFirstLine(facts, "", fallback)).toEqual({ ...facts, intro: fallback });
   });
 
   it("never on an answer with no facts: the nothing-findable reply or a fixed reply", () => {
@@ -392,9 +420,76 @@ describe("the opening sentence (written from the finished answer)", () => {
       { intro: NO_FILTER_MATCHES_REPLY, items: [] },
     ]) {
       expect(hasFacts(answer), answer.intro).toBe(false);
-      expect(withOpening(answer, opening), answer.intro).toEqual(answer);
+      expect(withFirstLine(answer, opening, "Here's the public overview of this company."), answer.intro).toEqual(answer);
     }
     expect(hasFacts(ANSWER)).toBe(true);
+  });
+});
+
+describe("the fixed first line when no opening shows (2026-11-07)", () => {
+  const decide = (overrides: Partial<RouterDecision>): RouterDecision => ({
+    intent: "overview",
+    topic: null,
+    attribute: null,
+    filters: null,
+    criteriaCount: null,
+    exactValue: false,
+    ...overrides,
+  });
+  const one: ScopedAnswer = { intro: "", items: [{ companyId: "a", companyName: "A", text: "In territory." }] };
+  const two: ScopedAnswer = { intro: "", items: [...one.items, { companyId: "b", companyName: "B", text: "Out of territory." }] };
+
+  it("overview: this company / these companies", () => {
+    expect(fallbackFirstLine(decide({}), one)).toBe("Here's the public overview of this company.");
+    expect(fallbackFirstLine(decide({}), two)).toBe("Here's the public overview of these companies.");
+    expect([OVERVIEW_FIRST_LINE_ONE, OVERVIEW_FIRST_LINE_SEVERAL]).toEqual([
+      "Here's the public overview of this company.",
+      "Here's the public overview of these companies.",
+    ]);
+    // An attribute lookup without an attribute, and a compare about one company, are overviews.
+    expect(fallbackFirstLine(decide({ intent: "attribute_lookup" }), one)).toBe(OVERVIEW_FIRST_LINE_ONE);
+    expect(fallbackFirstLine(decide({ intent: "compare" }), one)).toBe(OVERVIEW_FIRST_LINE_ONE);
+  });
+
+  it("card detail, research topic (labels from the config), and a full compare", () => {
+    expect(fallbackFirstLine(decide({ intent: "attribute_lookup", attribute: "contacts" }), one)).toBe(
+      "Here's what's on record for contacts."
+    );
+    expect(fallbackFirstLine(decide({ intent: "attribute_lookup", attribute: "locations" }), two)).toBe(
+      "Here's what's on record for number of locations."
+    );
+    expect(fallbackFirstLine(decide({ intent: "specific_research", topic: "current_tools" }), one)).toBe(
+      "Here's what's publicly findable about software and tools."
+    );
+    expect(fallbackFirstLine(decide({ intent: "specific_research", topic: "recent_changes" }), one)).toBe(
+      "Here's what's publicly findable about recent changes."
+    );
+    expect(fallbackFirstLine(decide({ intent: "compare" }), { ...two, layout: "compare" })).toBe(COMPARE_FIXED_INTRO);
+    // A filter question about 1–3 companies: its card detail, else the generic line.
+    expect(fallbackFirstLine(decide({ intent: "filter_list", attribute: "online_booking" }), one)).toBe(
+      "Here's what's on record for online booking."
+    );
+    expect(fallbackFirstLine(decide({ intent: "filter_list" }), one)).toBe(GENERIC_FIRST_LINE);
+    expect(GENERIC_FIRST_LINE).toBe("Here's what's on record for your question.");
+  });
+
+  it("every label comes from the config: another simulation's labels change the lines", () => {
+    const tempo = getDataRoomChatConfig();
+    const other = {
+      ...tempo,
+      attributeLabels: { ...tempo.attributeLabels, contacts: "people to call" },
+      topicLabels: { ...tempo.topicLabels, budget: "spending" },
+    };
+    expect(fallbackFirstLine(decide({ intent: "attribute_lookup", attribute: "contacts" }), one, other)).toBe(
+      "Here's what's on record for people to call."
+    );
+    expect(fallbackFirstLine(decide({ intent: "specific_research", topic: "budget" }), one, other)).toBe(
+      "Here's what's publicly findable about spending."
+    );
+  });
+
+  it("the note for research about several companies is fixed text", () => {
+    expect(ONE_COMPANY_RESEARCH_NOTE).toBe("Ask about one company at a time to see its research findings.");
   });
 });
 

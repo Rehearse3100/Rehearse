@@ -6,12 +6,16 @@
  * sticky header); the compare table (a label column, one column per company); the
  * "Search all companies" pill; the "Selected | All companies" switch (a radiogroup
  * whose pill slides), its hint line, the keys it answers and the placeholder by mode.
+ * 2026-11-07: "Research" and "Public" tags before research findings and public
+ * signals, card facts untagged, the note in small text under the answer, and old
+ * saved replies (no sources, no note) exactly as before.
  */
 
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
+  AnswerLines,
   answerLayoutOf,
   CompareTable,
   DataRoomChatAnswer,
@@ -28,6 +32,7 @@ import {
   scopeSwitchTarget,
   SELECTED_PLACEHOLDER,
 } from "@/components/tempo/stages/ProspectingDataRoomChat";
+import { getDataRoomChatConfig } from "@/lib/data-room-chat-config";
 import type { ScopedAnswerItem } from "@/lib/data-room-chat-scope";
 
 // vitest.config.ts has no JSX setting, so esbuild emits classic React.createElement
@@ -278,5 +283,75 @@ describe("the 'Selected | All companies' switch", () => {
     expect(SELECTED_PLACEHOLDER).toBe("Ask about this company…");
     expect(chatPlaceholder(true)).toBe(ALL_COMPANIES_PLACEHOLDER);
     expect(ALL_COMPANIES_PLACEHOLDER).toBe("Filter all companies…");
+  });
+});
+
+describe("line tags and the note (2026-11-07)", () => {
+  const TAGGED: ScopedAnswerItem = {
+    companyId: "summit",
+    companyName: "Summit Dental Group",
+    text: "Finance memo cites a freeze.\nHiring two hygienists\n8 locations across Front Range, CO.",
+    lines: [
+      { text: "Finance memo cites a freeze.", source: "research" },
+      { text: "Hiring two hygienists", source: "public" },
+      { text: "8 locations across Front Range, CO.", source: "card" },
+    ],
+  };
+
+  it("a small 'Research' tag before a finding and 'Public' before a signal; card facts get none", () => {
+    const markup = html(React.createElement(AnswerLines, { item: TAGGED }));
+    expect(markup.match(/data-source="research"[^>]*>Research</g)).toHaveLength(1);
+    expect(markup.match(/data-source="public"[^>]*>Public</g)).toHaveLength(1);
+    expect(markup).not.toContain('data-source="card"');
+    // Each line in order, the tag just before its text.
+    expect(markup.indexOf(">Research</span>Finance memo cites a freeze.")).toBeGreaterThan(-1);
+    expect(markup.indexOf(">Public</span>Hiring two hygienists")).toBeGreaterThan(-1);
+    expect(markup).toContain("<p class=\"whitespace-pre-wrap\">8 locations across Front Range, CO.</p>");
+    // Coloured pills, not grey text.
+    expect(markup).toContain("bg-secondary-fixed text-on-secondary-fixed");
+    expect(markup).toContain("bg-tertiary-fixed text-on-tertiary-fixed");
+  });
+
+  it("card facts only, or no sources (an old saved reply): the text exactly as before", () => {
+    const oldText = html(React.createElement("p", { className: "text-on-surface-variant whitespace-pre-wrap" }, TAGGED.text));
+    const { lines: _lines, ...saved } = TAGGED;
+    expect(html(React.createElement(AnswerLines, { item: saved }))).toBe(oldText);
+    const cardOnly: ScopedAnswerItem = { ...TAGGED, lines: (TAGGED.lines ?? []).map((line) => ({ ...line, source: "card" as const })) };
+    expect(html(React.createElement(AnswerLines, { item: cardOnly }))).toBe(oldText);
+  });
+
+  it("the note shows under the answer in small muted text; none without one", () => {
+    const answer: ChatAnswer = {
+      intro: "Here's what's publicly findable about budget.",
+      items: [TAGGED],
+      note: "Ask about one company at a time to see its research findings.",
+    };
+    const markup = html(React.createElement(DataRoomChatAnswer, { answer }));
+    expect(markup.endsWith('<p class="text-[12px] leading-snug text-on-surface-variant">Ask about one company at a time to see its research findings.</p>')).toBe(
+      true
+    );
+    const { note: _note, ...without } = answer;
+    expect(html(React.createElement(DataRoomChatAnswer, { answer: without }))).not.toContain("leading-snug");
+  });
+
+  it("a table answer's note sits under the table", () => {
+    const answer: ChatAnswer = {
+      intro: "1 company matches the filters I could apply (state).",
+      layout: "table",
+      items: [row(1)],
+      note: "I can't search research like software, budget or risks across all companies. Switch to Selected and ask about a company to check.",
+    };
+    const markup = html(React.createElement(DataRoomChatAnswer, { answer }));
+    // (The markup escapes the apostrophe in "can't".)
+    expect(markup.indexOf("search research like software")).toBeGreaterThan(markup.indexOf("</table>"));
+    expect(markup.indexOf("</table>")).toBeGreaterThan(-1);
+  });
+
+  it("the tag labels come from the config", () => {
+    const tempo = getDataRoomChatConfig();
+    const other = { ...tempo, lineSourceTags: { research: "Findings", public: "Signals" } };
+    const markup = html(React.createElement(AnswerLines, { item: TAGGED, config: other }));
+    expect(markup).toContain(">Findings<");
+    expect(markup).toContain(">Signals<");
   });
 });

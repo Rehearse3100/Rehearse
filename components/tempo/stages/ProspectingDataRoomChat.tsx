@@ -12,7 +12,10 @@
  * and every question goes out as typed with scope all (it never leaves the mode).
  * The server receives company ids only and returns per-company blocks; names shown
  * come from the server reply. Replies render as text blocks, a result table or a
- * compare table (DataRoomChatAnswer.tsx); a filter question about one company offers
+ * compare table (DataRoomChatAnswer.tsx), with a "Research" or "Public" tag before
+ * research findings and public signals (each line's source, when the reply has it) and
+ * an optional note in small text under the answer; replies saved before either
+ * existed show as before. A filter question about one company offers
  * "Search all companies", which asks it again in All companies mode. The input takes at
  * most 500 characters, with an "N / 500" counter past 400 (lib/data-room-chat-guard.ts).
  */
@@ -25,6 +28,7 @@ import type { DataRoomCompany } from "@/app/api/student/data-room/route";
 import { answerLayoutOf, DataRoomChatAnswer, SearchAllCompaniesButton } from "@/components/tempo/stages/DataRoomChatAnswer";
 import { DATA_ROOM_CHAT_COUNTER_FROM, DATA_ROOM_CHAT_MAX_CHARS } from "@/lib/data-room-chat-guard";
 import {
+  ANSWER_LINE_SOURCES,
   buildScopeIndex,
   COMPARE_ROW_KEYS,
   insertPickedName,
@@ -35,6 +39,7 @@ import {
   wordFragmentBeforeCaret,
   type AnswerCard,
   type AnswerLayout,
+  type AnswerLine,
   type ChatScope,
   type CompareRowKey,
   type LastQuestion,
@@ -68,7 +73,7 @@ type DropdownPanel = {
   highlighted: number;
 };
 
-/** One company's block in a reply; card and signals only come with table and compare replies. */
+/** One company's block in a reply; lines (with each line's source) on answers built from facts; card and signals only with table and compare replies. */
 type AnswerItem = ScopedAnswerItem;
 
 export type UserMessage = {
@@ -98,6 +103,8 @@ export type AssistantMessage = {
   suggestAllCompanies?: boolean;
   /** "Search all companies" was used on this reply, so it isn't offered again. */
   isSearchAllUsed?: boolean;
+  /** A fixed line shown in small text under the answer; missing on most replies and on older saved ones. */
+  note?: string;
   /** Request failures are shown but never sent back as history. */
   isError?: boolean;
 };
@@ -110,6 +117,7 @@ type ChatReply = {
   layout?: unknown;
   compareRows?: unknown;
   suggestAllCompanies?: unknown;
+  note?: unknown;
   error?: unknown;
 };
 
@@ -244,9 +252,27 @@ function parseAnswerCard(value: unknown): AnswerCard | undefined {
   return { industry, locations: locations as number | null, metro: metro as string | null, inTerritory, onlineBooking };
 }
 
+/** The lines with their sources, or undefined unless every one is { text, source } with a known source. */
+function parseAnswerLines(value: unknown): AnswerLine[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) {
+    return undefined;
+  }
+  const lines: AnswerLine[] = [];
+  for (const entry of value) {
+    const { text, source } = (entry && typeof entry === "object" ? entry : {}) as Record<string, unknown>;
+    const knownSource = ANSWER_LINE_SOURCES.find((candidate) => candidate === source);
+    if (typeof text !== "string" || !knownSource) {
+      return undefined;
+    }
+    lines.push({ text: sanitizeAiResearchReply(text), source: knownSource });
+  }
+  return lines;
+}
+
 /**
  * Server reply → answer items (names are the server's, never typed by the model),
- * with the card values and signals tables use when they are well formed.
+ * with each line's source and the card values and signals tables use, when they are
+ * well formed.
  */
 export function parseAnswerItems(value: unknown): AnswerItem[] {
   if (!Array.isArray(value)) {
@@ -256,10 +282,11 @@ export function parseAnswerItems(value: unknown): AnswerItem[] {
     if (!item || typeof item !== "object") {
       return [];
     }
-    const { companyId, companyName, text, card, signals } = item as Record<string, unknown>;
+    const { companyId, companyName, text, lines, card, signals } = item as Record<string, unknown>;
     if (typeof companyId !== "string" || typeof companyName !== "string" || typeof text !== "string") {
       return [];
     }
+    const parsedLines = parseAnswerLines(lines);
     const parsedCard = parseAnswerCard(card);
     const parsedSignals =
       Array.isArray(signals) && signals.every((signal) => typeof signal === "string")
@@ -270,6 +297,7 @@ export function parseAnswerItems(value: unknown): AnswerItem[] {
         companyId,
         companyName,
         text: sanitizeAiResearchReply(text),
+        ...(parsedLines ? { lines: parsedLines } : {}),
         ...(parsedCard ? { card: parsedCard } : {}),
         ...(parsedSignals ? { signals: parsedSignals } : {}),
       },
@@ -786,6 +814,7 @@ export function ProspectingDataRoomChat({
           ...(layout ? { layout } : {}),
           ...(compareRows ? { compareRows } : {}),
           ...(body.suggestAllCompanies === true ? { suggestAllCompanies: true } : {}),
+          ...(typeof body.note === "string" && body.note.trim() ? { note: sanitizeAiResearchReply(body.note) } : {}),
         },
       ]);
     } catch (err) {

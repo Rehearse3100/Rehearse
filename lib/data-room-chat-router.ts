@@ -3,27 +3,40 @@
  * Question router for the Data Room assistant (pure). Builds the classifier call's
  * messages: the student's question, their last 3 questions (both already
  * name-redacted) and the scope kind — never any facts or company data — and parses
- * its JSON reply, failing closed to "overview". For All-companies filter questions
- * the reply also carries the filters (as many as the question asks for) and how many
- * conditions the question asks for (a locations range is one; validated by
- * lib/data-room-chat-filter.ts); in All companies mode valid
- * filters are used even when the router is unsure. The reply also says whether the
- * question is in English (parseRouterEnglish; a message with two common English
- * function words counts as English whatever it says, hasEnglishFunctionWords) and, for
- * a list, the order it asks for (sort: locations or name). "Compare …", "side by
- * side" and "vs" are read in code (isCompareRequest). Follow-ups ("tell me more", "more
- * about that") about the same 1–3 companies are recognised in code
- * (isFollowUpQuestion) and routed as the earlier question they follow
- * (parseFollowUpContext reads it, and the lines its answer showed, from the
- * client-sent history). POST /api/student/data-room-chat
- * makes the gpt-4o call; lib/data-room-chat-policy.ts turns the decision into the
- * allowed facts and lib/data-room-chat-render.ts into the answer path.
+ * its JSON reply, failing closed to "overview". The system prompt is the same for
+ * every question of a simulation (anything per question is in the user message), and
+ * long enough for OpenAI's automatic prompt caching. For All-companies filter
+ * questions the reply also carries the filters (as many as the question asks for;
+ * validated by lib/data-room-chat-filter.ts), whether the question also asks for
+ * something no filter can express (unfiltered), and how many conditions it asks for
+ * (0 marks the total-count question); in All companies mode valid filters are used
+ * even when the router is unsure. The router also labels small talk (small_talk, with
+ * its kind) and questions about company names (name_query, with name_match), and
+ * rewrites each question to stand on its own (standalone_question, checked here by
+ * acceptedStandaloneQuestion) and says whether it is a follow-up (is_follow_up). The
+ * reply also says whether the question is in English (parseRouterEnglish; a message
+ * with two common English function words counts as English whatever it says,
+ * hasEnglishFunctionWords) and, for a list, the order it asks for (sort: locations or
+ * name). "Compare …", "side by side" and "vs" are read in code (isCompareRequest).
+ * For a follow-up, parseFollowUpContext reads the lines the latest answer about the
+ * same companies showed (for "nothing new"). POST /api/student/data-room-chat makes
+ * the call (lib/data-room-chat-models.ts builds it from the config's model
+ * settings); lib/data-room-chat-policy.ts turns the decision into the allowed facts
+ * and lib/data-room-chat-render.ts into the answer path.
  */
 
 import { getDataRoomChatConfig, type DataRoomChatConfig } from "@/lib/data-room-chat-config";
 import { parseRosterFilters, parseRosterSort, type RosterFilter, type RosterSort } from "@/lib/data-room-chat-filter";
+import { isTooLong } from "@/lib/data-room-chat-guard";
 import { QUESTION_TOPICS, type QuestionTopic } from "@/lib/data-room-research-topics";
-import { parseChatScope, type ChatScope } from "@/lib/data-room-chat-scope";
+import {
+  detectCompanies,
+  parseChatScope,
+  type ChatScope,
+  type GreetingKind,
+  type NameQuery,
+  type ScopeIndex,
+} from "@/lib/data-room-chat-scope";
 
 // ── Decision shape ───
 
@@ -33,7 +46,9 @@ export const ROUTER_INTENTS = [
   "specific_research",
   "compare",
   "filter_list",
+  "name_query",
   "meta_or_bulk",
+  "small_talk",
   "off_topic",
   "inappropriate",
 ] as const;
@@ -52,6 +67,14 @@ export const ROUTER_ATTRIBUTES = [
 
 export type RouterAttribute = (typeof ROUTER_ATTRIBUTES)[number];
 
+/** What a small_talk message is (the route answers each with its fixed reply). */
+export const SMALL_TALK_KINDS = ["greeting", "thanks", "how_are_you", "acknowledgement", "goodbye"] as const;
+export type SmallTalkKind = (typeof SMALL_TALK_KINDS)[number];
+
+/** A name_query's condition: names that start with or contain the value, or every name ("list", value ""). */
+export const NAME_MATCH_KINDS = ["starts_with", "contains", "list"] as const;
+export type NameMatch = { kind: (typeof NAME_MATCH_KINDS)[number]; value: string };
+
 export type RouterDecision = {
   intent: RouterIntent;
   topic: QuestionTopic | null;
@@ -64,6 +87,16 @@ export type RouterDecision = {
   exactValue: boolean;
   /** The order a list question asks for (by locations or name); omitted when it asks for none (A–Z). */
   sort?: RosterSort;
+  /** All companies: the question also asks for something no filter can express; omitted otherwise. */
+  unfiltered?: true;
+  /** small_talk only: its kind, or null when the router gave none it knows. */
+  smallTalkKind?: SmallTalkKind | null;
+  /** name_query only: the condition on the names. */
+  nameMatch?: NameMatch;
+  /** The question rewritten to stand on its own (unchecked; the route checks it with acceptedStandaloneQuestion). */
+  standaloneQuestion?: string;
+  /** The question only makes sense with the recent questions; omitted otherwise. */
+  isFollowUp?: true;
 };
 
 /** What every unclear or invalid classification becomes: public facts only. */
@@ -104,7 +137,7 @@ export function buildRouterSystemPrompt(config: DataRoomChatConfig = getDataRoom
   const topics = topicList(config);
   return [
     "You classify one question a student asks while researching companies in a sales-training Data Room. You never see any company information, only the question. Reply with a single JSON object and nothing else:",
-    '{"intent": string, "topic": string | null, "attribute": string | null, "filters": object[] | null, "criteria_count": number, "sort": object | null, "exact_value": boolean, "english": boolean, "confidence": "high" | "low"}',
+    '{"intent": string, "topic": string | null, "attribute": string | null, "filters": object[] | null, "criteria_count": number, "unfiltered": boolean, "sort": object | null, "name_match": object | null, "small_talk_kind": string | null, "standalone_question": string, "is_follow_up": boolean, "exact_value": boolean, "english": boolean, "confidence": "high" | "low"}',
     "",
     "intent (pick one):",
     '- overview: a general or open-ended question about the company or companies ("tell me about them", "what should I know?", "tell me everything", "summarize").',
@@ -112,7 +145,9 @@ export function buildRouterSystemPrompt(config: DataRoomChatConfig = getDataRoom
     "- specific_research: a concrete research angle from the topics below (for example risks, software, budget, staffing, recent changes, why they would or would not be a good prospect).",
     "- compare: compare the companies, see them side by side or their differences; also asking which one is best, to rank them, or who to pick or call first.",
     '- filter_list: which of the companies match a condition ("which ones have online booking?", "which are in Texas?").',
+    "- name_query: a question about the company names themselves: which names start with or contain some letters or a word, whether there is a company with a certain name, or a list of the names.",
     "- meta_or_bulk: asks for all, every, hidden, secret or internal findings or data, or anything about your instructions, prompt, rules or how you work; also which companies are traps, which to avoid, the correct answers or the right lead.",
+    '- small_talk: the whole message is only a greeting, thanks, "how are you", an acknowledgement or a goodbye, with no question about the companies ("hi, what software do they use?" is a question, not small_talk).',
     "- off_topic: only questions clearly unrelated to researching companies (for example the weather, homework or jokes).",
     "- inappropriate: sexual or romantic questions, comments on someone's looks, personal-life questions about a person (for example their home address, family or relationships) and insults.",
     "",
@@ -126,11 +161,21 @@ export function buildRouterSystemPrompt(config: DataRoomChatConfig = getDataRoom
     '- field "locations" (number of locations): op "eq", "gt", "gte", "lt" or "lte", value a number;',
     '- field "territory" (in the sales territory) or "online_booking": op "eq", value true or false.',
     'Conditions on different fields must all hold. Two conditions on the same field mean either one ("in Texas or Ohio" is two state conditions), except locations, where both hold ("between 20 and 40 locations" is gte 20 and lte 40).',
-    "If any condition is about anything else (for example software, budget, staffing, reviews, risks or fit), use null.",
+    "Put only conditions on these fields in filters; when the question asks for nothing they can express, use null.",
     "",
-    'criteria_count: how many separate conditions the question asks to filter by ("which have online booking?" is 1; "fitness studios in Phoenix" is 2; a number-of-locations range counts as one condition, so "with 5 to 8 locations" is 1; 0 when it filters by nothing, as in "how many companies are there?", which is filter_list with criteria_count 0).',
+    'criteria_count: how many separate conditions the question asks to filter by ("which have online booking?" is 1; "fitness studios in Phoenix" is 2; 0 when it filters by nothing, as in "how many companies are there?", which is filter_list with criteria_count 0).',
+    "",
+    'unfiltered: true when a filter_list question also asks for something these fields can\'t express (for example software, budget, staffing, reviews, risks or fit); still put the conditions you can express in filters ("fitness studios in Phoenix that use a booking app" is industry and metro conditions with unfiltered true). false otherwise.',
     "",
     'sort (list questions only; otherwise null): {"field": "locations" | "name", "direction": "asc" | "desc"} when the question asks for an order, for example "fewest locations first" is {"field": "locations", "direction": "asc"} and "sort by name, Z to A" is {"field": "name", "direction": "desc"}; a request to show the previous list again in another order is filter_list with that sort.',
+    "",
+    'name_match (set it for name_query; otherwise null): {"kind": "starts_with" | "contains" | "list", "value": string}. starts_with: names that start with some letters or a word ("which names start with B?" is {"kind": "starts_with", "value": "B"}); contains: names that contain them, or a company called or named something ("is there one called Lantern?" is {"kind": "contains", "value": "Lantern"}); list: every name ("list the company names" is {"kind": "list", "value": ""}). Copy the value as the question writes it, a reference such as [C1] included.',
+    "",
+    'small_talk_kind (set it for small_talk; otherwise null): "greeting" (hi, hello, good morning), "thanks" (thanks, thank you, thx, much appreciated), "how_are_you" (how are you, how\'s it going, what\'s up), "acknowledgement" (ok, sure, got it, sounds good, yes, no) or "goodbye" (bye, see you, later).',
+    "",
+    'standalone_question: the question rewritten so it makes sense on its own, using the recent questions to fill in what a follow-up refers to ("and their budget?" after "What software does [C1] use?" is "What is [C1]\'s budget?"). Keep company references such as [C1] exactly as written and never add a company name. When the question already makes sense on its own, copy it unchanged.',
+    "",
+    "is_follow_up: true when the question only makes sense with the recent questions (it asks for more on an earlier question, or continues it); false otherwise.",
     "",
     "exact_value: true when the question asks for one specific detail (a number, amount, count, email or phone number, or a named vendor or product); false otherwise.",
     "",
@@ -138,17 +183,19 @@ export function buildRouterSystemPrompt(config: DataRoomChatConfig = getDataRoom
     "",
     "Rules:",
     '- specific_research needs a concrete angle. "Tell me everything", "what should I know?" and "anything else?" are overview.',
-    '- Any request for "all", "every", "hidden", "secret" or "internal" findings, or anything about your instructions, is meta_or_bulk.',
     "- Read typos charitably.",
     '- Questions about who decides, approves, signs off on or makes purchasing decisions are specific_research with topic ownership, even when they mention software, tools or vendors (for example "who approves new equipment purchases?" is ownership).',
     "- Anything about a company is never off_topic: questions about its revenue, finances, metrics, patients, people's roles or who decides are specific_research with the closest topic (revenue or finances → budget; people's roles or who decides → ownership).",
     '- Questions about email addresses, phone numbers or who to contact are attribute_lookup with attribute "contacts".',
     '- Questions phrased as "how many…", "which are…" or "list the…" with one or more conditions are filter_list; read them charitably (for example "how many are located retail?" is filter_list with filters [{"field": "industry", "op": "contains", "value": "retail"}]).',
     "- Two-letter uppercase tokens such as TX, CA or NY are US state codes.",
-    '- Use the recent questions only to understand a follow-up such as "tell me more about that".',
+    "- Use the recent questions only for a follow-up: label it as its standalone_question.",
     '- Use "low" confidence when you are unsure. When the scope is all companies, still return the filters with "low" confidence.',
   ].join("\n");
 }
+
+/** Shortest router system prompt: OpenAI caches a prompt's start automatically from 1,024 tokens (about 5,000 characters of this text). */
+export const MIN_ROUTER_PROMPT_CHARS = 5_000;
 
 /** The classifier's instructions with Tempo's topic descriptions. */
 export const ROUTER_SYSTEM_PROMPT = buildRouterSystemPrompt();
@@ -193,18 +240,40 @@ function isOneOf<T extends string>(values: readonly T[], value: unknown): value 
   return typeof value === "string" && (values as readonly string[]).includes(value);
 }
 
+/** A name_query's name_match, or null unless its kind is known and (except for a list) its value is non-empty text. */
+function parseNameMatch(raw: unknown): NameMatch | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  const { kind, value } = raw as Record<string, unknown>;
+  if (!isOneOf(NAME_MATCH_KINDS, kind)) {
+    return null;
+  }
+  const text = typeof value === "string" ? value.trim() : "";
+  if (kind === "list") {
+    return { kind, value: "" };
+  }
+  return text ? { kind, value: text } : null;
+}
+
+/** Intents that never use topic or attribute, so a stray value there doesn't sink the decision. */
+const TOPIC_FREE_INTENTS: readonly RouterIntent[] = ["filter_list", "name_query", "small_talk"];
+
 /**
  * Parses the classifier's reply, failing closed to OVERVIEW_DECISION on invalid
- * JSON, unknown values, low or missing confidence, or specific_research without a
- * topic. With scopeKind "all", a filter_list reply with valid filters is kept
- * whatever its confidence (code checks every condition). For filter_list an unknown
- * topic or attribute just becomes null. Filters come from "filters" (or a single
- * "filter", read as a one-item list; no limit on how many); any condition the
- * whitelist can't read makes them null (an All-companies question then gets the
- * fixed reply); a criteria count that isn't a whole number of 0 or more (as a number or
- * numeric string) becomes null. exact_value is true only when it is exactly true. A
- * valid "sort" (locations or name, asc or desc; parseRosterSort) is kept as sort;
- * anything else leaves it out (A–Z).
+ * JSON, unknown values, low or missing confidence, specific_research without a
+ * topic, or name_query without a valid name_match. With scopeKind "all", a
+ * filter_list reply with valid filters is kept whatever its confidence (code checks
+ * every condition). For filter_list, name_query and small_talk an unknown topic or
+ * attribute just becomes null. Filters come from "filters" (or a single "filter",
+ * read as a one-item list; no limit on how many); any condition the whitelist can't
+ * read makes them null (an All-companies question then gets the fixed reply); a
+ * criteria count that isn't a whole number of 0 or more (as a number or numeric
+ * string) becomes null. exact_value, unfiltered and is_follow_up are true only when
+ * exactly true. A valid "sort" (locations or name, asc or desc; parseRosterSort) is
+ * kept as sort; anything else leaves it out (A–Z). small_talk keeps its kind (null
+ * when unknown); name_query its name_match (parseNameMatch). standalone_question is
+ * kept as trimmed text when it is a non-empty string (the route checks it).
  */
 export function parseRouterReply(raw: string | null | undefined, scopeKind?: ScopeKind): RouterDecision {
   let parsed: unknown;
@@ -223,7 +292,12 @@ export function parseRouterReply(raw: string | null | undefined, scopeKind?: Sco
     filters: rawFilters,
     filter: rawFilter,
     criteria_count: criteriaCount,
+    unfiltered,
     sort: rawSort,
+    name_match: rawNameMatch,
+    small_talk_kind: smallTalkKind,
+    standalone_question: standaloneQuestion,
+    is_follow_up: isFollowUp,
     exact_value: exactValue,
     confidence,
   } = parsed as Record<string, unknown>;
@@ -232,8 +306,8 @@ export function parseRouterReply(raw: string | null | undefined, scopeKind?: Sco
   // All companies only: valid filters (or a valid sort) are used even when the router is unsure.
   const isTrusted =
     confidence === "high" || (scopeKind === "all" && intent === "filter_list" && (filters !== null || sort !== null));
-  // filter_list never uses topic or attribute, so a stray value there doesn't sink the filters.
-  const isStrict = intent !== "filter_list";
+  // filter_list, name_query and small_talk never use topic or attribute, so a stray value there doesn't sink them.
+  const isStrict = !isOneOf(TOPIC_FREE_INTENTS, intent);
   if (
     !isOneOf(ROUTER_INTENTS, intent) ||
     !isTrusted ||
@@ -242,7 +316,12 @@ export function parseRouterReply(raw: string | null | undefined, scopeKind?: Sco
   ) {
     return OVERVIEW_DECISION;
   }
+  const nameMatch = intent === "name_query" ? parseNameMatch(rawNameMatch) : null;
+  if (intent === "name_query" && !nameMatch) {
+    return OVERVIEW_DECISION;
+  }
   const count = typeof criteriaCount === "string" && criteriaCount.trim() !== "" ? Number(criteriaCount) : criteriaCount;
+  const standalone = typeof standaloneQuestion === "string" ? standaloneQuestion.trim() : "";
   const decision: RouterDecision = {
     intent,
     topic: isOneOf(QUESTION_TOPICS, topic) ? topic : null,
@@ -251,10 +330,75 @@ export function parseRouterReply(raw: string | null | undefined, scopeKind?: Sco
     criteriaCount: Number.isInteger(count) && (count as number) >= 0 ? (count as number) : null,
     exactValue: exactValue === true,
     ...(sort ? { sort } : {}),
+    ...(unfiltered === true ? { unfiltered: true as const } : {}),
+    ...(intent === "small_talk" ? { smallTalkKind: isOneOf(SMALL_TALK_KINDS, smallTalkKind) ? smallTalkKind : null } : {}),
+    ...(nameMatch ? { nameMatch } : {}),
+    ...(standalone ? { standaloneQuestion: standalone } : {}),
+    ...(isFollowUp === true ? { isFollowUp: true as const } : {}),
   };
   return decision.intent === "specific_research" && decision.topic === null
     ? OVERVIEW_DECISION
     : decision;
+}
+
+// ── Small talk, name questions and the rewritten question ───
+
+/** Each small-talk kind's fixed reply (lib/data-room-chat-scope.ts greetingReply). */
+const SMALL_TALK_GREETING_KINDS: Readonly<Record<SmallTalkKind, GreetingKind>> = {
+  greeting: "greeting",
+  thanks: "thanks",
+  how_are_you: "smallTalk",
+  acknowledgement: "acknowledgement",
+  goodbye: "goodbye",
+};
+
+/** The fixed reply a small_talk message gets: its kind's, or the acknowledgement for a kind the router didn't give. */
+export function greetingKindOf(kind: SmallTalkKind | null | undefined): GreetingKind {
+  return kind ? SMALL_TALK_GREETING_KINDS[kind] : "acknowledgement";
+}
+
+/** A ref the router wrote ("[C1]", or "C1" without brackets): its number. */
+const REF_IN_TEXT = /\[C(\d+)\]|\bC(\d+)\b/g;
+
+/**
+ * The text with each ref ([C1], C1…) replaced by the name it stands for (names[0] for
+ * C1, in scope order); a ref with no name is left as written.
+ */
+export function replaceRefs(text: string, names: readonly string[]): string {
+  return text.replace(REF_IN_TEXT, (match: string, bracketed?: string, bare?: string) => names[Number(bracketed ?? bare) - 1] ?? match);
+}
+
+/**
+ * A name_query's condition as the company-list answer reads it (lib/data-room-chat-scope.ts
+ * answerNameQuery): starts_with → startsWith, contains → contains, list → list; a ref
+ * in the value ([C1]) becomes that company's name (names in scope order).
+ */
+export function toNameQuery(match: NameMatch, names: readonly string[]): NameQuery {
+  const kind: NameQuery["kind"] = match.kind === "starts_with" ? "startsWith" : match.kind === "contains" ? "contains" : "list";
+  return { kind, value: kind === "list" ? "" : replaceRefs(match.value, names).trim() };
+}
+
+/**
+ * The router's rewritten question when it passes every check, else null (the route
+ * then uses the question as asked): non-empty, at most 500 characters (the message
+ * cap), no roster company name in it (a full name or an identifying first word,
+ * detectCompanies), and every ref ([C1]…) one of the scope's (1 to refCount).
+ */
+export function acceptedStandaloneQuestion(
+  rewrite: string | null | undefined,
+  index: ScopeIndex,
+  refCount: number
+): string | null {
+  const text = typeof rewrite === "string" ? rewrite.trim() : "";
+  if (!text || isTooLong(text)) {
+    return null;
+  }
+  const detection = detectCompanies(index, text);
+  if (detection.companyIds.length > 0 || detection.ambiguous) {
+    return null;
+  }
+  const refs = Array.from(text.matchAll(REF_IN_TEXT), (match) => Number(match[1] ?? match[2]));
+  return refs.every((ref) => Number.isInteger(ref) && ref >= 1 && ref <= refCount) ? text : null;
 }
 
 /**
@@ -382,58 +526,18 @@ export function isWhichOnesQuestion(text: string): boolean {
   return WHICH_ONES_QUESTION.test(text);
 }
 
-// ── Follow-ups ───
+// ── Follow-ups: what the latest answer showed ───
 
-/** A follow-up refers back with one of these (never "them": that is the companies themselves). */
-const BACK_REFERENCE = "(?:that|this|it|those|these)";
-
-/**
- * Whole-message follow-up phrasings, after lowercasing, dropping punctuation, a
- * lead-in ("ok", "can you"…) and a closing "please".
- */
-const FOLLOW_UP_PATTERNS: readonly RegExp[] = [
-  new RegExp(`^(?:(?:tell|show|give) me|say|share) (?:a (?:bit|little) )?more(?: (?:about|on) ${BACK_REFERENCE})?$`),
-  new RegExp(`^more(?: details?| info| information)?(?: (?:about|on) ${BACK_REFERENCE})?$`),
-  new RegExp(`^(?:anything|something|what) (?:else|more) (?:about|on) ${BACK_REFERENCE}$`),
-  new RegExp(`^(?:go on|keep going|elaborate(?: on ${BACK_REFERENCE})?|expand on ${BACK_REFERENCE})$`),
-];
-const FOLLOW_UP_LEAD_IN =
-  /^(?:(?:ok|okay|cool|great|nice|thanks|thank you|and|so|sure|yes|yeah|please|can you|could you|would you)\s+)+/;
-const FOLLOW_UP_CLOSING = /\s+please$/;
-
-/** The same caps parseHistoryQuestions uses for client-sent history. */
+/** The same cap parseHistoryQuestions uses for client-sent history. */
 const FOLLOW_UP_MAX_HISTORY_ENTRIES = 100;
-const FOLLOW_UP_MAX_TEXT_LENGTH = 8_000;
 
-/**
- * True when the whole message only asks for more on the previous answer ("tell me
- * more", "more about that", "anything else on that?", "can you elaborate?"). A
- * message with its own subject ("tell me more about their budget") or about the
- * companies themselves ("tell me more about them") is not a follow-up.
- */
-export function isFollowUpQuestion(text: string): boolean {
-  const normalized = text
-    .toLowerCase()
-    .replace(/['’]/g, "")
-    .replace(/[^a-z]+/g, " ")
-    .trim()
-    .replace(FOLLOW_UP_LEAD_IN, "")
-    .replace(FOLLOW_UP_CLOSING, "")
-    .trim();
-  return FOLLOW_UP_PATTERNS.some((pattern) => pattern.test(normalized));
-}
-
-/** What a follow-up is about, read from the client-sent history. */
+/** What a follow-up's "nothing new" check compares with, read from the client-sent history. */
 export type FollowUpContext = {
-  /** The latest earlier question that isn't itself a follow-up: the follow-up is routed and answered as this. */
-  question: string;
-  /** The questions before it, oldest first (the router's recent questions). */
-  earlierQuestions: string[];
-  /** The lines the latest answer already showed, by company id (empty when there is none). */
+  /** The lines the latest answer showed, by company id (empty when it showed none). */
   shownLines: Map<string, Set<string>>;
 };
 
-type HistoryTurn = { question: string; scope: ChatScope | null; lines: Map<string, Set<string>> | null };
+type HistoryTurn = { scope: ChatScope | null; lines: Map<string, Set<string>> | null };
 
 function isSameCompanies(a: ChatScope | null, b: ChatScope): boolean {
   if (a?.mode !== "companies" || b.mode !== "companies" || a.companyIds.length !== b.companyIds.length) {
@@ -465,47 +569,31 @@ function parseShownLines(items: unknown[]): Map<string, Set<string>> {
 }
 
 /**
- * The context of a follow-up about the given 1–3 companies, from the client-sent
- * history ({ role: "user", content, scope } and { role: "assistant", items, scope }).
- * Walks back from the latest question over earlier follow-ups to the question they
- * follow; every question on the way must be about the same companies. Null when
- * there is no such question, a question on the way is about other companies (or
- * has no scope), or the scope is All companies. The history is client-sent: it only
- * picks the question to route and the lines to compare, never text that is shown.
+ * For a follow-up (the router's is_follow_up) about the given 1–3 companies: the
+ * lines the latest answer showed, from the client-sent history ({ role: "user",
+ * content, scope } and { role: "assistant", items, scope }). Null when the latest
+ * question is about other companies (or has no scope), there is none, or the scope
+ * is All companies; its lines are empty when it has no answer (a failed request).
+ * The history is client-sent: it only gives the lines to compare, never text that is
+ * shown.
  */
 export function parseFollowUpContext(history: unknown, scope: ChatScope): FollowUpContext | null {
   if (!Array.isArray(history) || scope.mode !== "companies") {
     return null;
   }
-  const turns: HistoryTurn[] = [];
+  let latest: HistoryTurn | null = null;
   for (const entry of history.slice(-FOLLOW_UP_MAX_HISTORY_ENTRIES)) {
     if (!entry || typeof entry !== "object") {
       continue;
     }
     const { role, content, scope: entryScope, items } = entry as Record<string, unknown>;
     if (role === "user" && typeof content === "string") {
-      turns.push({ question: content.slice(0, FOLLOW_UP_MAX_TEXT_LENGTH), scope: parseChatScope(entryScope), lines: null });
-    } else if (role === "assistant" && Array.isArray(items) && turns.length > 0) {
-      const turn = turns[turns.length - 1];
-      if (turn) {
-        turn.lines = parseShownLines(items);
-      }
+      latest = { scope: parseChatScope(entryScope), lines: null };
+    } else if (role === "assistant" && Array.isArray(items) && latest) {
+      latest.lines = parseShownLines(items);
     }
   }
-  let latestLines: Map<string, Set<string>> | null = null;
-  for (let i = turns.length - 1; i >= 0; i -= 1) {
-    const turn = turns[i];
-    if (!turn || !isSameCompanies(turn.scope, scope)) {
-      return null;
-    }
-    latestLines = latestLines ?? turn.lines;
-    if (!isFollowUpQuestion(turn.question)) {
-      return {
-        question: turn.question,
-        earlierQuestions: turns.slice(0, i).map((earlier) => earlier.question),
-        shownLines: latestLines ?? new Map<string, Set<string>>(),
-      };
-    }
-  }
-  return null;
+  return latest && isSameCompanies(latest.scope, scope)
+    ? { shownLines: latest.lines ?? new Map<string, Set<string>>() }
+    : null;
 }

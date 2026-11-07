@@ -5,9 +5,11 @@
  * from the roster itself), type-to-pick suggestions, company detection in the
  * question text, and the scope priority used on send. Server side: scope and
  * history parsing, ref labels ([C1]…), name redaction for model input, the
- * out-of-scope mention reply, questions about company names answered from the
- * roster (every match, no cap), greetings, thanks and small talk answered with fixed texts, and
- * the "nothing hidden" first line. Used by ProspectingDataRoomChat (client) and POST
+ * out-of-scope mention reply, questions about company names (the router recognises
+ * them, name_query) answered from the roster (every match, no cap), the fixed texts
+ * for greetings, thanks and small talk (the router recognises them, small_talk), the
+ * "nothing hidden" first line, and the reply's shape (with each line's source and an
+ * optional note). Used by ProspectingDataRoomChat (client) and POST
  * /api/student/data-room-chat (server).
  */
 
@@ -651,93 +653,12 @@ export function redactCompanyMentions(
 
 // ── Server: questions about company names ───
 
-/** A question about company NAMES, answered by the server from the database. */
+/** A question about company NAMES (the router's name_query), answered by the server from the database. */
 export type NameQuery = {
   kind: "startsWith" | "contains" | "list";
   /** The letters or word asked about ("" for a list). */
   value: string;
 };
-
-// The value asked about: a quoted phrase, or one word that ends the sentence (so
-// "start with on Mondays" or "start with a trial" are not name questions).
-const NAME_VALUE = `(?:["“]([^"”]{1,40})["”]|'([^']{1,40})'|([a-z0-9][a-z0-9&-]{0,29}))`;
-const VALUE_END = `(?=\\s*(?:[?.!,;:]|$))`;
-const LETTER_OR_WORD = `(?:the\\s+)?(?:letters?\\s+|word\\s+)?`;
-
-// A starts-with verb, typos included: any word starting "sta" or "beg", 5–9 letters,
-// followed by "with" (start, starting, startign, begins, beginning …).
-const STARTS_WITH_PATTERN = new RegExp(
-  `\\b((?:sta|beg)[a-z]{2,6})\\s+with\\s+${LETTER_OR_WORD}${NAME_VALUE}${VALUE_END}`,
-  "i"
-);
-const CORRECT_STARTS_WITH_VERB = /^(?:start(?:s|ing)?|begin(?:s|ning)?)$/i;
-// A typo'd verb counts only in a name context or for a letter or two, so ordinary
-// questions like "Are they staffed with nurses?" are never name questions.
-const NAME_CONTEXT = /\b(?:names?|compan(?:y|ies)|business(?:es)?)\b/i;
-const MAX_TYPO_VALUE_LENGTH_WITHOUT_CONTEXT = 2;
-const NAMES_CONTAINING_PATTERN = new RegExp(
-  `\\bnames?\\s+(?:with|containing|that\\s+contains?|contains?|including|that\\s+includes?|having)\\s+${LETTER_OR_WORD}${NAME_VALUE}${VALUE_END}`,
-  "i"
-);
-const IN_THE_NAME_PATTERN = new RegExp(
-  `\\bwith\\s+${LETTER_OR_WORD}${NAME_VALUE}\\s+in\\s+(?:the|their|its)\\s+names?\\b`,
-  "i"
-);
-// "called X" / "named X" only after a company word, so "the named contact" isn't one.
-const CALLED_PATTERN = new RegExp(
-  `\\b(?:compan(?:y|ies)|ones?|business(?:es)?|anything|anyone|something|any)\\s+(?:that\\s+(?:is|are)\\s+|which\\s+(?:is|are)\\s+)?(?:called|named)\\s+${NAME_VALUE}${VALUE_END}`,
-  "i"
-);
-const LIST_PATTERNS = [
-  /\b(?:list|show|give|tell|what\s+are)\b[^?.!]{0,40}?\b(?:compan(?:y|ies)|business(?:es)?)['’]?\s*names\b/i,
-  /\bnames\s+of\s+(?:all\s+)?(?:the\s+)?(?:compan(?:y|ies)|business(?:es)?)\b/i,
-  /\b(?:list|show)\s+(?:me\s+)?(?:all\s+)?(?:of\s+)?(?:the\s+)?(?:compan(?:y|ies)|business(?:es)?)\s*(?:[?.!]|$)/i,
-];
-
-/** The NAME_VALUE groups (quoted, single-quoted, bare) start at `firstGroup`. */
-function matchedValue(match: RegExpMatchArray | null, firstGroup = 1): string | null {
-  const value = match
-    ? match[firstGroup] ?? match[firstGroup + 1] ?? match[firstGroup + 2]
-    : undefined;
-  return value && value.trim().length > 0 ? value.trim() : null;
-}
-
-/** The starts-with value, if the text asks which names start with something. */
-function startsWithValue(text: string): string | null {
-  const match = text.match(STARTS_WITH_PATTERN);
-  const value = matchedValue(match, 2);
-  if (!match || !value) {
-    return null;
-  }
-  const isTypo = !CORRECT_STARTS_WITH_VERB.test(match[1] ?? "");
-  return !isTypo || NAME_CONTEXT.test(text) || value.length <= MAX_TYPO_VALUE_LENGTH_WITHOUT_CONTEXT
-    ? value
-    : null;
-}
-
-/**
- * Recognizes a question about company NAMES (deterministic, no AI), checked in
- * this order so starts-with and contains beat a list:
- * "start(s/ing) with X" / "begin(s/ning) with X" (typos too, e.g. "startign with")
- * → startsWith; "names with / containing X", "with X in the name", "a company
- * called / named X" → contains; "list (all) company names", "names of all
- * companies", "list all companies" → list. Returns null for anything else (e.g.
- * "tell me about them").
- */
-export function parseNameQuery(text: string): NameQuery | null {
-  const startsWith = startsWithValue(text);
-  if (startsWith) {
-    return { kind: "startsWith", value: startsWith };
-  }
-  const contains =
-    matchedValue(text.match(NAMES_CONTAINING_PATTERN)) ??
-    matchedValue(text.match(IN_THE_NAME_PATTERN)) ??
-    matchedValue(text.match(CALLED_PATTERN));
-  if (contains) {
-    return { kind: "contains", value: contains };
-  }
-  return LIST_PATTERNS.some((pattern) => pattern.test(text)) ? { kind: "list", value: "" } : null;
-}
 
 /** Roster fields a name answer shows (all from the database). */
 export type NameQueryCompany = {
@@ -828,76 +749,8 @@ export const GOODBYE_REPLY = "Good luck with your research!";
 /** First line of the public overview given for an answer-key or rule-breaking question (meta_or_bulk) about open companies. */
 export const META_PUBLIC_INTRO = "I can't share hidden or internal information. Here's what's public:";
 
-/** Whole-message greetings, thanks and small talk, compared with case, spaces, punctuation and emoji removed. */
-const GREETINGS: ReadonlySet<string> = new Set(["hi", "hello", "hey", "hiya", "yo", "goodmorning", "goodafternoon", "goodevening"]);
-const THANKS: ReadonlySet<string> = new Set([
-  "thanks",
-  "thankyou",
-  "thx",
-  "ty",
-  "cheers",
-  "thanx",
-  "thnx",
-  "tysm",
-  "thanku",
-  "thanksalot",
-  "thankssomuch",
-  "muchappreciated",
-]);
-const SMALL_TALK: ReadonlySet<string> = new Set(["howareyou", "howsitgoing", "whatsup", "sup", "yougood"]);
-const ACKNOWLEDGEMENTS: ReadonlySet<string> = new Set([
-  "ok",
-  "okay",
-  "k",
-  "sure",
-  "cool",
-  "gotit",
-  "great",
-  "nice",
-  "perfect",
-  "alright",
-  "soundsgood",
-  "welcome",
-  "yes",
-  "yep",
-  "no",
-  "nope",
-]);
-const GOODBYES: ReadonlySet<string> = new Set(["bye", "goodbye", "seeyou", "later"]);
-
-/** Spaces, punctuation, symbols (emoji included) and the invisible marks emoji carry. */
-const NOT_A_WORD_CHARACTER = new RegExp("[\\s\\p{Z}\\p{P}\\p{S}\\p{Mn}\\p{Cf}]", "gu");
-
-/** A whole message that is only a greeting, thanks or small talk. */
+/** A whole message that is only a greeting, thanks or small talk (from the router's small_talk_kind). */
 export type GreetingKind = "greeting" | "thanks" | "smallTalk" | "acknowledgement" | "goodbye";
-
-/**
- * The kind of greeting when the whole message, ignoring case, spaces, punctuation
- * and emoji, is just one: "greeting" (hi, hello, hey, hiya, yo, good
- * morning/afternoon/evening), "thanks" (thanks, thank you, thx, ty, cheers, thanx,
- * thnx, tysm, thank u, thanks a lot, thanks so much, much appreciated),
- * "smallTalk" (how are you, how's it going, what's up, sup, you good),
- * "acknowledgement" (ok, okay, k, sure, cool, got it, great, nice, perfect, alright,
- * sounds good, welcome, yes, yep, no, nope) or "goodbye" (bye, goodbye, see you,
- * later). Null for anything else, so "hi, what software do they use?" or "ok what
- * software do they use?" goes through as a question.
- */
-export function parseGreeting(text: string): GreetingKind | null {
-  const bare = text.toLowerCase().replace(NOT_A_WORD_CHARACTER, "");
-  if (GREETINGS.has(bare)) {
-    return "greeting";
-  }
-  if (THANKS.has(bare)) {
-    return "thanks";
-  }
-  if (SMALL_TALK.has(bare)) {
-    return "smallTalk";
-  }
-  if (ACKNOWLEDGEMENTS.has(bare)) {
-    return "acknowledgement";
-  }
-  return GOODBYES.has(bare) ? "goodbye" : null;
-}
 
 /** The fixed reply to a greeting, thanks or small talk: only the greeting text depends on the mode (and the simulation's config). */
 export function greetingReply(
@@ -934,15 +787,24 @@ export type AnswerLayout = "list" | "table" | "compare";
 export const COMPARE_ROW_KEYS = ["industry", "locations", "city", "territory", "online_booking", "signals"] as const;
 export type CompareRowKey = (typeof COMPARE_ROW_KEYS)[number];
 
+/** Where one line of an answer comes from: a research finding, a public signal, or the company card (industry, locations…). */
+export const ANSWER_LINE_SOURCES = ["research", "public", "card"] as const;
+export type AnswerLineSource = (typeof ANSWER_LINE_SOURCES)[number];
+
+/** One line of a company block with its source (the pane tags research findings and public signals). */
+export type AnswerLine = { text: string; source: AnswerLineSource };
+
 /**
  * One company's block. text is always the full answer as lines (the fallback the
- * pane shows when it doesn't use a table); card and signals are only on table and
- * compare answers.
+ * pane shows when it doesn't use a table, and what old saved replies have); lines is
+ * the same lines with each one's source, on answers built from a company's facts;
+ * card and signals are only on table and compare answers.
  */
 export type ScopedAnswerItem = {
   companyId: string;
   companyName: string;
   text: string;
+  lines?: AnswerLine[];
   card?: AnswerCard;
   /** Public signals, for a compare column. */
   signals?: string[];
@@ -950,9 +812,10 @@ export type ScopedAnswerItem = {
 
 /**
  * The route's reply: an optional intro and one block per company (names from the
- * database). layout and the item fields are optional, so replies saved before they
- * existed still read as text blocks. suggestAllCompanies: a filter question about
- * one company, where the pane offers "Search all companies".
+ * database). layout, note and the item fields are optional, so replies saved before
+ * they existed still read as text blocks. suggestAllCompanies: a filter question
+ * about one company, where the pane offers "Search all companies". note: one fixed
+ * line the pane shows in small text under the answer.
  */
 export type ScopedAnswer = {
   intro: string;
@@ -961,4 +824,5 @@ export type ScopedAnswer = {
   /** A compare limited to some details ("only for locations"): just those rows; omitted → every row. */
   compareRows?: CompareRowKey[];
   suggestAllCompanies?: boolean;
+  note?: string;
 };

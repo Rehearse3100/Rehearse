@@ -4,7 +4,11 @@
  * (ProspectingDataRoomChat): the intro line, then the companies as text blocks
  * (the default, and every reply saved before tables existed), a result table (an
  * All-companies filter list, layout "table") or a side-by-side compare table (layout
- * "compare"). Tables only use the card values the server sends with each item
+ * "compare"), then the reply's note, if any, in small muted text. In a text block, a
+ * company whose lines carry their sources shows a small "Research" tag before each
+ * research finding and "Public" before each public signal (card facts get none); a
+ * block without sources, or with card facts only, shows its text as before. Tables
+ * only use the card values the server sends with each item
  * (lib/data-room-chat-scope.ts AnswerCard); a reply without them falls back to the
  * text blocks. Also the "Search all companies" pill offered under a filter question
  * about one company. Column, row and tag labels come from the simulation's chat
@@ -16,7 +20,7 @@
 import { useEffect, useRef, useState } from "react";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import { getDataRoomChatConfig, type DataRoomChatConfig } from "@/lib/data-room-chat-config";
-import type { AnswerCard, AnswerLayout, CompareRowKey, ScopedAnswerItem } from "@/lib/data-room-chat-scope";
+import type { AnswerCard, AnswerLayout, AnswerLine, CompareRowKey, ScopedAnswerItem } from "@/lib/data-room-chat-scope";
 
 /** A result table with this many rows or more scrolls inside the reply (sticky header). */
 export const TABLE_SCROLL_FROM_ROWS = 11;
@@ -32,6 +36,8 @@ export type ChatAnswer = {
   layout?: AnswerLayout;
   /** A compare limited to some details: only these rows (missing or empty → every row). */
   compareRows?: readonly CompareRowKey[];
+  /** One fixed line under the answer (small, muted); missing on most replies. */
+  note?: string;
   isError?: boolean;
 };
 
@@ -286,12 +292,57 @@ export function CompareTable({
   );
 }
 
+// ── Text blocks with source tags ───
+
+/** Each tagged source's pill colours: research blue, public gold (card facts have no tag). */
+const SOURCE_TAG_CLASSES: Readonly<Record<Exclude<AnswerLine["source"], "card">, string>> = {
+  research: "bg-secondary-fixed text-on-secondary-fixed",
+  public: "bg-tertiary-fixed text-on-tertiary-fixed",
+};
+
+/**
+ * One company's lines in a text block: with a "Research" or "Public" tag before each
+ * research finding or public signal when its lines carry them; otherwise (old saved
+ * replies, card facts only) its text exactly as before.
+ */
+export function AnswerLines({
+  item,
+  config = getDataRoomChatConfig(),
+}: {
+  item: ScopedAnswerItem;
+  /** The simulation's tag labels; Tempo's by default. */
+  config?: DataRoomChatConfig;
+}): React.ReactElement {
+  const lines = item.lines ?? [];
+  if (!lines.some((line) => line.source !== "card")) {
+    return <p className="text-on-surface-variant whitespace-pre-wrap">{item.text}</p>;
+  }
+  return (
+    <div className="text-on-surface-variant space-y-0.5">
+      {lines.map((line, i) => (
+        <p key={i} className="whitespace-pre-wrap">
+          {line.source !== "card" ? (
+            <span
+              data-source={line.source}
+              className={`mr-1.5 inline-block align-[1px] px-1.5 rounded-full text-[10px] font-semibold uppercase tracking-wide leading-[16px] ${SOURCE_TAG_CLASSES[line.source]}`}
+            >
+              {config.lineSourceTags[line.source]}
+            </span>
+          ) : null}
+          {line.text}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 // ── The reply body ───
 
 /**
  * One reply's body: the intro, then the companies as text blocks (exactly as before
- * tables existed), a result table or a compare table (answerLayoutOf). Rendered
- * inside the reply bubble, whose spacing separates the parts.
+ * tables existed, with source tags when the lines carry them), a result table or a
+ * compare table (answerLayoutOf), then the note, if any. Rendered inside the reply
+ * bubble, whose spacing separates the parts.
  */
 export function DataRoomChatAnswer({
   answer,
@@ -321,10 +372,11 @@ export function DataRoomChatAnswer({
         ? answer.items.map((item) => (
             <div key={item.companyId}>
               <p className="text-[12px] font-semibold text-on-surface mb-1">{item.companyName}</p>
-              <p className="text-on-surface-variant whitespace-pre-wrap">{item.text}</p>
+              <AnswerLines item={item} config={config} />
             </div>
           ))
         : null}
+      {answer.note ? <p className="text-[12px] leading-snug text-on-surface-variant">{answer.note}</p> : null}
     </>
   );
 }

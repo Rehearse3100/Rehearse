@@ -4,53 +4,63 @@
  * code from stored facts; the model never writes a fact. The only model-written text
  * is a one-sentence opening, written last by its own call from the question, its
  * topic and the finished answer text only (companies as "Company 1", "Company 2"…),
- * checked by code (it may only restate what the facts shown say) and shown above the
- * facts — never on a nothing-findable or fixed reply, nor on an answer with its own
- * first line (an All-companies list's count line, the exact-detail line, the
- * "nothing hidden" line, the follow-up line); if it fails or is dropped, the
- * answer goes out unchanged. A follow-up ("tell me more", "more about that") about
- * the same 1–3 companies is routed and answered as the earlier question it follows;
- * when that brings back only lines already shown, the answer starts with "That's
- * everything publicly findable on this." The client sends a
- * scope (1–3 company ids, or all companies) and the question; facts are loaded
- * server-side. Before anything else, every question passes the safety checks
- * (lib/data-room-chat-guard.ts), each refusal a fixed reply: over 500 characters;
- * the attempt's message limits (not in tester mode; fail open); then it is counted;
- * OpenAI moderation (self-harm or other flags; errors carry on); mostly non-Latin
- * letters; and the router's own "not English" verdict where it runs. A message that
- * is only a greeting, thanks or small talk then gets a fixed reply (no model call).
- * Flow: unselected-company mention or company-names question → server
- * reply; otherwise a router call (lib/data-room-chat-router.ts; sees only the
- * redacted question, recent questions and scope kind) labels the question; an
- * "inappropriate" label gets the moderation reply; a "not English" label is ignored
- * when the message holds two common English function words (typos). A "compare …",
- * "side by side" or "vs" question about 2–3 companies is a compare (only the rows it
- * names, if any; a limited compare starts with the fixed compare line instead of an
- * opening). All companies: no model picks or
- * reads company data — the question's validated conditions (no limit) run over the
- * roster in code and every match is listed under the count line; a count question
- * with no conditions gets the roster total; an answer-key question its own reply;
- * anything else a fixed reply (lib/data-room-chat-filter.ts); a list can be sorted
- * by locations or name, and "give this again, by locations" re-sorts the previous
- * list's companies (all its conditions kept). An answer-key question
- * about open companies gets the public overview under "I can't share hidden or
- * internal information. Here's what's public:".
- * One to three companies: the code-side policy (lib/data-room-chat-policy.ts)
- * decides which facts are allowed; overview, compare and attribute questions are
- * rendered with no further model call; specific research and filter questions show
- * every finding the policy allowed (stored order) plus the public facts one
- * selection call picks — it sees the allowed findings and the public facts, returns
- * fact ids (checked against the facts it was given; it can't add or remove a
- * finding) and whether one states the exact detail asked. When the router says the
- * question asks for one exact detail and no fact states it, the answer starts with
- * "That exact detail isn't publicly findable. Related facts:" (also above a contacts
- * line, which never holds emails or phone numbers). When findings are shown but the
- * selection call replies that no fact answers a narrow question, they stay as they
- * are under "Nothing specific on that is publicly findable. Related findings:" (no
- * opening); never on a broad topic (risks, fit, recent changes). Everything is rendered from the
- * stored text (lib/data-room-chat-render.ts). Company names in answers come from the
- * database; the model sees companies only as refs ([C1]…). The simulation's wording
- * (filterable fields, greeting topics, router topics) comes from
+ * checked by code (it may only restate what the facts shown say). Every answer with
+ * facts gets exactly one first line (withFirstLine): its own fixed line when it has
+ * one (an All-companies list's count line, the exact-detail line, the "nothing
+ * hidden" line, the related-findings line, the follow-up line, a limited compare's
+ * line), else the checked opening, else — when the call fails or a check drops the
+ * sentence — a fixed line built by code (fallbackFirstLine; no retry). The three
+ * model calls (router, selection, opening) are built from the simulation's model
+ * settings (lib/data-room-chat-config.ts models, lib/data-room-chat-models.ts); the
+ * optional server variable DATA_ROOM_CHAT_MODEL replaces the model for all three
+ * (never logged). The client sends a scope (1–3 company ids, or all companies) and
+ * the question; facts are loaded server-side. Before anything else, every question
+ * passes the safety checks (lib/data-room-chat-guard.ts), each refusal a fixed reply:
+ * over 500 characters; the attempt's message limits (not in tester mode; fail open);
+ * then it is counted; OpenAI moderation (self-harm or other flags; errors carry on);
+ * mostly non-Latin letters; and the router's own "not English" verdict. Flow: an
+ * unselected-company mention → a server reply (code, against the live roster);
+ * otherwise a router call (lib/data-room-chat-router.ts; sees only the redacted
+ * question, recent questions and scope kind) labels the question; an "inappropriate"
+ * label gets the moderation reply; a "not English" label is ignored when the message
+ * holds two common English function words (typos). Small talk (greeting, thanks, how
+ * are you, acknowledgement, goodbye) gets its fixed reply, and a question about
+ * company names is answered from the roster (the question's scope, every match A–Z),
+ * in both modes. The router also rewrites the question to stand on its own; when
+ * the rewrite passes the checks (acceptedStandaloneQuestion) the selection and
+ * opening calls get it instead of the question as asked, and a follow-up
+ * (is_follow_up) about the same 1–3 companies that brings back only lines the last
+ * answer showed starts with "That's everything publicly findable on this." A
+ * "compare …", "side by side" or "vs" question about 2–3 companies is a compare
+ * (only the rows it names, if any; a limited compare starts with the fixed compare
+ * line). All companies: no model picks or reads company data — the question's
+ * validated conditions (no limit) run over the roster in code and every match is
+ * listed under the count line; a question that also asks for something no filter can
+ * express gets the list for what could be applied, a count line naming those fields
+ * and a fixed note; a count question with no conditions gets the roster total; an
+ * answer-key question its own reply; anything else a fixed reply
+ * (lib/data-room-chat-filter.ts); a list can be sorted by locations or name, and
+ * "give this again, by locations" re-sorts the previous list's companies (all its
+ * conditions kept). An answer-key question about open companies gets the public
+ * overview under "I can't share hidden or internal information. Here's what's
+ * public:". One to three companies: the code-side policy
+ * (lib/data-room-chat-policy.ts) decides which facts are allowed; overview, compare
+ * and attribute questions are rendered with no further model call; specific
+ * research and filter questions show every finding the policy allowed (stored order)
+ * plus the public facts one selection call picks — it sees the allowed findings and
+ * the public facts, returns fact ids (checked against the facts it was given; it
+ * can't add or remove a finding) and whether one states the exact detail asked. When
+ * the router says the question asks for one exact detail and no fact states it, the
+ * answer starts with "That exact detail isn't publicly findable. Related facts:"
+ * (also above a contacts line, which never holds emails or phone numbers). When
+ * findings are shown but the selection call replies that no fact answers a narrow
+ * question, they stay as they are under "Nothing specific on that is publicly
+ * findable. Related findings:"; never on a broad topic (risks, fit, recent changes).
+ * A research question about 2–3 companies adds the note "Ask about one company at a
+ * time to see its research findings.". Everything is rendered from the stored text
+ * (lib/data-room-chat-render.ts), each line with its source (research, public or
+ * card) for the pane's tags. Company names in answers come from the database; the
+ * model sees companies only as refs ([C1]…). The simulation's wording comes from
  * lib/data-room-chat-config.ts (getDataRoomChatConfig). For the pane's tables, an
  * All-companies list also carries each company's card values (layout "table") and a
  * compare answer card values and signals (layout "compare"); a filter question about
@@ -61,13 +71,18 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { requireStudentApi } from "@/lib/api-auth";
-import { getDataRoomChatConfig } from "@/lib/data-room-chat-config";
+import {
+  getDataRoomChatConfig,
+  type DataRoomChatConfig,
+  type DataRoomChatModelSetting,
+} from "@/lib/data-room-chat-config";
 import {
   answerAllCompanies,
   parsePreviousListIds,
   refersToPreviousList,
   type FilterCompany,
 } from "@/lib/data-room-chat-filter";
+import { chatRequestSettings, resolveChatModels } from "@/lib/data-room-chat-models";
 import { allowedFacts, BROAD_QUESTION_TOPICS } from "@/lib/data-room-chat-policy";
 import {
   allowedFindings,
@@ -79,9 +94,12 @@ import {
   buildSelectionMessages,
   checkOpening,
   compareRowsFor,
+  factLine,
+  fallbackFirstLine,
   hasFacts,
   isNoFactAnswersReply,
   needsOpening,
+  ONE_COMPANY_RESEARCH_NOTE,
   openingRejection,
   overviewLines,
   parseOpening,
@@ -89,9 +107,9 @@ import {
   renderAnswer,
   toSelectableFacts,
   withExactDetailIntro,
+  withFirstLine,
   withNothingNewIntro,
   withCompareLayout,
-  withOpening,
   withRelatedFindingsIntro,
   type CompanyBlock,
   type CompanyFacts,
@@ -108,20 +126,22 @@ import {
   recordUsage,
 } from "@/lib/data-room-chat-guard";
 import {
+  acceptedStandaloneQuestion,
   buildRouterMessages,
+  greetingKindOf,
   hasEnglishFunctionWords,
   isCompareRequest,
-  isFollowUpQuestion,
   isWhichOnesQuestion,
   OVERVIEW_DECISION,
   parseFollowUpContext,
   parseRouterEnglish,
   parseRouterReply,
+  replaceRefs,
   scopeKindOf,
+  toNameQuery,
   type RouterDecision,
   type ScopeKind,
 } from "@/lib/data-room-chat-router";
-import type { QuestionTopic } from "@/lib/data-room-research-topics";
 import {
   answerNameQuery,
   buildOutOfScopeMessage,
@@ -132,11 +152,11 @@ import {
   greetingReply,
   META_PUBLIC_INTRO,
   parseChatScope,
-  parseGreeting,
   parseHistoryQuestions,
-  parseNameQuery,
   redactCompanyMentions,
+  type ChatScope,
   type FirstWordReplacement,
+  type NameQueryCompany,
   type ScopeIndex,
   type ScopedAnswer,
 } from "@/lib/data-room-chat-scope";
@@ -172,18 +192,15 @@ type ScopedCompany = { id: string; name: string; source: CompanyFactSource; fact
 const ROSTER_COLUMNS =
   "id, company_name, industry, vertical, locations, metro, in_territory, size_note, online_booking, blurb, public_signals";
 
-const ROUTER_TEMPERATURE = 0;
 /**
  * Room for the router's whole JSON reply: the decision, any number of All-companies
- * filters, a sort, and the english / exact_value / confidence fields. Too little cuts
- * the JSON off, and a cut-off reply silently falls back to the overview.
+ * filters, a sort, the rewritten question, and the english / exact_value /
+ * confidence fields. Too little cuts the JSON off, and a cut-off reply silently
+ * falls back to the overview.
  */
 const ROUTER_MAX_TOKENS = 600;
-const SELECTION_TEMPERATURE = 0;
 /** Room for every fact id of up to three companies. */
 const SELECTION_MAX_TOKENS = 500;
-/** A little variety in the opening's wording; the facts never come from it. */
-const OPENING_TEMPERATURE = 0.3;
 /** Room for one sentence of at most 30 words, in JSON. */
 const OPENING_MAX_TOKENS = 100;
 
@@ -272,21 +289,45 @@ function redactFactText(text: string, index: ScopeIndex, company: ScopedCompany)
 }
 
 /**
- * The router call (gpt-4o, temperature 0, JSON). It sees only the redacted question,
+ * The fixed answer to small talk (its kind's reply) or to a question about company
+ * names (from the roster: the question's scope, every match A–Z; a ref in the value
+ * becomes that company's name), or null for any other decision. No model call.
+ */
+function smallTalkOrNamesAnswer(
+  decision: RouterDecision,
+  scope: ChatScope,
+  config: DataRoomChatConfig,
+  scopedCompanies: readonly NameQueryCompany[]
+): ScopedAnswer | null {
+  if (decision.intent === "small_talk") {
+    return greetingReply(greetingKindOf(decision.smallTalkKind), scope, config);
+  }
+  if (decision.intent === "name_query" && decision.nameMatch) {
+    return answerNameQuery(
+      toNameQuery(
+        decision.nameMatch,
+        scopedCompanies.map((company) => company.name)
+      ),
+      scopedCompanies
+    );
+  }
+  return null;
+}
+
+/**
+ * The router call (its model settings, JSON). It sees only the redacted question,
  * recent questions and scope kind. Any failure counts as an overview (public facts
  * only) in English. english is false only when the router says so with high confidence.
  */
 async function classifyQuestion(
   openai: OpenAI,
   messages: OpenAI.Chat.ChatCompletionMessageParam[],
-  scopeKind: ScopeKind
+  scopeKind: ScopeKind,
+  setting: DataRoomChatModelSetting
 ): Promise<{ decision: RouterDecision; english: boolean }> {
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      temperature: ROUTER_TEMPERATURE,
-      max_tokens: ROUTER_MAX_TOKENS,
-      response_format: { type: "json_object" },
+      ...chatRequestSettings(setting, ROUTER_MAX_TOKENS),
       messages,
     });
     const content = response.choices[0]?.message?.content;
@@ -298,24 +339,23 @@ async function classifyQuestion(
 }
 
 /**
- * One selection call (gpt-4o, temperature 0, JSON): the redacted question and the
- * allowed facts in; fact ids and whether one states the exact detail out (only ids
- * among the given facts are kept), plus whether its reply was the prompt's "no fact
- * answers the question" reply (isNoFactAnswersReply; false when there was no call).
+ * One selection call (its model settings, JSON): the redacted question (the checked
+ * rewrite when there is one) and the allowed facts in; fact ids and whether one
+ * states the exact detail out (only ids among the given facts are kept), plus whether
+ * its reply was the prompt's "no fact answers the question" reply
+ * (isNoFactAnswersReply; false when there was no call).
  */
 async function selectFacts(
   openai: OpenAI,
   question: string,
-  facts: SelectableFact[]
+  facts: SelectableFact[],
+  setting: DataRoomChatModelSetting
 ): Promise<Selection & { saysNoFactAnswers: boolean }> {
   if (facts.length === 0) {
     return { facts: [], exactAnswer: false, saysNoFactAnswers: false };
   }
   const response = await openai.chat.completions.create({
-    model: "gpt-4o",
-    temperature: SELECTION_TEMPERATURE,
-    max_tokens: SELECTION_MAX_TOKENS,
-    response_format: { type: "json_object" },
+    ...chatRequestSettings(setting, SELECTION_MAX_TOKENS),
     messages: buildSelectionMessages(question, facts),
   });
   const content = response.choices[0]?.message?.content;
@@ -323,42 +363,45 @@ async function selectFacts(
 }
 
 /**
- * The opening call (gpt-4o, temperature 0.3, JSON), made once the answer is final
- * and only when it shows facts and has no first line of its own (needsOpening; not
- * above the exact-detail, "nothing hidden" or follow-up line): it sees the question,
- * its topic and the answer text the student will see (companies as "Company 1"…).
- * Its sentence goes above the answer if it passes the checks; a failed call or a
- * dropped sentence leaves the answer unchanged (a dropped or missing sentence logs
- * which check it failed, or "empty", never the sentence).
+ * The answer's first line, decided once it is final (withFirstLine): an answer with
+ * no facts or with its own first line goes out as it is, with no call. Otherwise one
+ * opening call (its model settings, JSON) sees the question (question.prompt: the
+ * checked rewrite, refs as names, or the message as typed), its topic and the answer
+ * text the student will see (companies as "Company 1"…); its sentence goes above the
+ * answer if it passes the checks, which read only the student's own words
+ * (question.asked), so a name the rewrite filled in never counts as one the student
+ * used. A failed call or a dropped sentence gets the fixed line for the answer's path
+ * instead (fallbackFirstLine; no retry); a dropped or missing sentence logs which
+ * check it failed, or "empty", never the sentence.
  */
-async function withWrittenOpening(
+async function withAnswerFirstLine(
   openai: OpenAI,
-  question: string,
-  topic: QuestionTopic | null,
+  question: { prompt: string; asked: string },
+  decision: RouterDecision,
   answer: ScopedAnswer,
-  index: ScopeIndex
+  index: ScopeIndex,
+  setting: DataRoomChatModelSetting,
+  config: DataRoomChatConfig
 ): Promise<ScopedAnswer> {
   if (!needsOpening(answer)) {
     return answer;
   }
+  const fallback = fallbackFirstLine(decision, answer, config);
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      temperature: OPENING_TEMPERATURE,
-      max_tokens: OPENING_MAX_TOKENS,
-      response_format: { type: "json_object" },
-      messages: buildOpeningMessages(question, answer, index, topic),
+      ...chatRequestSettings(setting, OPENING_MAX_TOKENS),
+      messages: buildOpeningMessages(question.prompt, answer, index, decision.topic),
     });
     const opening = parseOpening(response.choices[0]?.message?.content);
     // Every missing opening leaves a reason in the log ("empty": the reply held no sentence).
-    const rejection = openingRejection(opening, question, answer, index);
+    const rejection = openingRejection(opening, question.asked, answer, index);
     if (rejection) {
       console.info("[data-room-chat] opening dropped:", rejection);
     }
-    return withOpening(answer, checkOpening(opening, question, answer, index));
+    return withFirstLine(answer, checkOpening(opening, question.asked, answer, index), fallback);
   } catch (error) {
     console.error("[data-room-chat] opening:", error);
-    return answer;
+    return withFirstLine(answer, null, fallback);
   }
 }
 
@@ -443,13 +486,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     const simulationId = String(attempt.simulation_id);
     // The simulation's wording for fixed replies and the router's topics.
     const chatConfig = getDataRoomChatConfig(simulationId);
-
-    // A message that is only a greeting, thanks or small talk gets a fixed reply, before the
-    // router (no model call); "hi, what software do they use?" goes on as a question.
-    const greeting = parseGreeting(newMessage);
-    if (greeting) {
-      return NextResponse.json(greetingReply(greeting, scope, chatConfig));
-    }
+    // The three calls' model settings; DATA_ROOM_CHAT_MODEL (optional, never logged)
+    // swaps the model of all three for the private eval.
+    const models = resolveChatModels(chatConfig.models, process.env.DATA_ROOM_CHAT_MODEL);
 
     // The whole roster: scope check, name redaction, and (for All companies) the facts.
     const { data: rosterRows, error: rosterError } = await supabase
@@ -497,45 +536,24 @@ export async function POST(request: Request): Promise<NextResponse> {
       }
     }
 
-    // Questions about company NAMES are answered from the database (the question's
-    // scope only); the model is not called, so names never come from it.
-    const nameQuery = parseNameQuery(newMessage);
-    if (nameQuery) {
-      const reply = answerNameQuery(
-        nameQuery,
-        scopedIds.flatMap((id) => {
-          const row = rosterById.get(id);
-          return row ? [toListCompany(row)] : [];
-        })
-      );
-      return NextResponse.json(reply);
-    }
-
     const singleCompanyId =
       scope.mode === "companies" && scope.companyIds.length === 1 ? scope.companyIds[0] : null;
     const refLabels = buildRefLabels(scopedIds);
+    // The companies in scope, in ref order (C1 first): name questions search these, and
+    // a ref the router wrote maps back to its name.
+    const scopedCompanies = scopedIds.flatMap((id) => {
+      const row = rosterById.get(id);
+      return row ? [toListCompany(row)] : [];
+    });
 
-    // A follow-up ("tell me more", "more about that") about the same 1–3 companies is
-    // routed and answered as the earlier question it follows: its own words carry no
-    // subject, so the router, the selection call and the opening see that question.
-    // An earlier question over the length cap is not reused.
-    const followUpContext =
-      scope.mode === "companies" && isFollowUpQuestion(newMessage)
-        ? parseFollowUpContext(body.history, scope)
-        : null;
-    const followUp = followUpContext && !isTooLong(followUpContext.question) ? followUpContext : null;
-
-    const openingQuestion = (followUp?.question ?? newMessage).slice(0, 8_000);
-    const question = redactStudentText(openingQuestion, index, refLabels);
+    const question = redactStudentText(newMessage, index, refLabels);
 
     // The router never sees facts or company data.
     const scopeKind = scopeKindOf(scope);
     const routerMessages = buildRouterMessages(
       {
         question,
-        recentQuestions: (followUp ? followUp.earlierQuestions : parseHistoryQuestions(body.history)).map((text) =>
-          redactStudentText(text, index, refLabels)
-        ),
+        recentQuestions: parseHistoryQuestions(body.history).map((text) => redactStudentText(text, index, refLabels)),
         scopeKind,
       },
       chatConfig
@@ -546,13 +564,18 @@ export async function POST(request: Request): Promise<NextResponse> {
     // no conditions gets the roster total; anything else a fixed reply. No opening
     // call: every All-companies answer has its own first line.
     if (scope.mode === "all") {
-      const { decision, english } = await classifyQuestion(openai, routerMessages, scopeKind);
+      const { decision, english } = await classifyQuestion(openai, routerMessages, scopeKind, models.router);
       // Two common English function words make it English whatever the router says (typos).
       if (!english && !hasEnglishFunctionWords(newMessage)) {
         return NextResponse.json(guardReply("notEnglish"));
       }
       if (decision.intent === "inappropriate") {
         return NextResponse.json(guardReply("flagged"));
+      }
+      // Small talk: its fixed reply. Company names: answered from the roster.
+      const fixed = smallTalkOrNamesAnswer(decision, scope, chatConfig, scopedCompanies);
+      if (fixed) {
+        return NextResponse.json(fixed);
       }
       // "Give this again, by locations": the previous list's companies (every one of
       // its conditions), re-sorted; only when the question points back at that list.
@@ -562,7 +585,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     // One to three companies: the router runs alongside the data loads.
     const [{ decision: routed, english }, researchResult, contactsResult] = await Promise.all([
-      classifyQuestion(openai, routerMessages, scopeKind),
+      classifyQuestion(openai, routerMessages, scopeKind, models.router),
       singleCompanyId
         ? supabase
             .from("crm_prospect_directory")
@@ -587,6 +610,30 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (routed.intent === "inappropriate") {
       return NextResponse.json(guardReply("flagged"));
     }
+    // Small talk: its fixed reply. Company names: answered from the roster (these companies).
+    const fixed = smallTalkOrNamesAnswer(routed, scope, chatConfig, scopedCompanies);
+    if (fixed) {
+      return NextResponse.json(fixed);
+    }
+
+    // The router's rewrite of the question, when it passes the checks (non-empty, at
+    // most 500 characters, no roster name, only this scope's refs): the selection call
+    // gets it as written (refs, no names) and the opening call and the code-side
+    // readers (compare words, compare rows) with its refs as names (the opening's own
+    // checks still read only the message as typed). Otherwise, or when it is the
+    // question unchanged, the question as asked.
+    const standalone = acceptedStandaloneQuestion(routed.standaloneQuestion, index, scopedIds.length);
+    const isRewritten = standalone !== null && standalone !== question;
+    const selectionQuestion = isRewritten ? standalone : question;
+    const openingQuestion = isRewritten
+      ? replaceRefs(
+          standalone,
+          scopedCompanies.map((company) => company.name)
+        )
+      : newMessage;
+    // A follow-up about the same companies: the lines the latest answer showed, for "nothing new".
+    const followUp = routed.isFollowUp ? parseFollowUpContext(body.history, scope) : null;
+
     // "Compare …", "side by side", "vs" about 2–3 companies is a compare, whatever
     // label the router chose (never over an answer-key, off-topic or refused question).
     const decision: RouterDecision =
@@ -659,7 +706,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       };
       return [{ id, name: String(row.company_name ?? ""), source, facts: buildCompanyFacts(source) }];
     });
-    const block = (company: ScopedCompany, lines: readonly string[]): CompanyBlock => ({
+    const block = (company: ScopedCompany, lines: CompanyBlock["lines"]): CompanyBlock => ({
       companyId: company.id,
       companyName: company.name,
       lines,
@@ -693,14 +740,12 @@ export async function POST(request: Request): Promise<NextResponse> {
         // Every finding the policy allowed (stored order, whatever the model picked),
         // then the public lines the selection call adds; nothing from either → the
         // nothing-findable reply.
-        const selection = await selectFacts(openai, question, companies.flatMap(selectable));
+        const selection = await selectFacts(openai, selectionQuestion, companies.flatMap(selectable), models.selection);
         answer = renderAnswer(
           companies.map((company) =>
             block(company, [
-              ...allowedFindings(company.facts, allowed.companies[company.id]).map((entry) => entry.display),
-              ...selection.facts
-                .filter((entry) => entry.companyId === company.id && entry.kind !== "h")
-                .map((entry) => entry.display),
+              ...allowedFindings(company.facts, allowed.companies[company.id]).map(factLine),
+              ...selection.facts.filter((entry) => entry.companyId === company.id && entry.kind !== "h").map(factLine),
             ])
           ),
           singleCompanyId !== null
@@ -746,16 +791,29 @@ export async function POST(request: Request): Promise<NextResponse> {
       answer = withNothingNewIntro(answer, followUp.shownLines);
     }
 
-    // Written last, from the finished answer; above the facts if it passes the checks
-    // (every path whose answer has no first line of its own).
-    const finished = await withWrittenOpening(openai, openingQuestion, decision.topic, answer, index);
+    // Exactly one first line on an answer with facts: its own, else the opening
+    // (written last, from the finished answer, checked), else the fixed line.
+    const finished = await withAnswerFirstLine(
+      openai,
+      { prompt: openingQuestion, asked: newMessage },
+      decision,
+      answer,
+      index,
+      models.opening,
+      chatConfig
+    );
+    // A research question about 2–3 companies: findings are shared one company at a time.
+    const noted: ScopedAnswer =
+      scope.companyIds.length >= 2 && decision.intent === "specific_research"
+        ? { ...finished, note: ONE_COMPANY_RESEARCH_NOTE }
+        : finished;
     // A filter question about one company, or one starting "which ones / which of
     // them / which companies": the answer as it is, and the pane offers "Search all
     // companies" under it.
     return NextResponse.json(
       singleCompanyId !== null && (decision.intent === "filter_list" || isWhichOnesQuestion(newMessage))
-        ? { ...finished, suggestAllCompanies: true }
-        : finished
+        ? { ...noted, suggestAllCompanies: true }
+        : noted
     );
   } catch (error) {
     console.error("[data-room-chat] unexpected:", error);
