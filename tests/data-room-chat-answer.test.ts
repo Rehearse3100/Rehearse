@@ -309,18 +309,36 @@ describe("line tags and the note (2026-11-07)", () => {
     // Each line in order, the tag just before its text.
     expect(markup.indexOf(">Research</span>Finance memo cites a freeze.")).toBeGreaterThan(-1);
     expect(markup.indexOf(">Public</span>Hiring two hygienists")).toBeGreaterThan(-1);
-    expect(markup).toContain("<p class=\"whitespace-pre-wrap\">8 locations across Front Range, CO.</p>");
+    // 2026-11-08: each line is a bullet (was a plain paragraph); a card fact's has no tag.
+    expect(markup).toContain('<span class="min-w-0 whitespace-pre-wrap">8 locations across Front Range, CO.</span>');
     // Coloured pills, not grey text.
     expect(markup).toContain("bg-secondary-fixed text-on-secondary-fixed");
     expect(markup).toContain("bg-tertiary-fixed text-on-tertiary-fixed");
   });
 
-  it("card facts only, or no sources (an old saved reply): the text exactly as before", () => {
+  it("no lines (an old saved reply, the nothing-findable message): the text exactly as before", () => {
     const oldText = html(React.createElement("p", { className: "text-on-surface-variant whitespace-pre-wrap" }, TAGGED.text));
     const { lines: _lines, ...saved } = TAGGED;
     expect(html(React.createElement(AnswerLines, { item: saved }))).toBe(oldText);
+    const nothing: ScopedAnswerItem = { companyId: "a", companyName: "A", text: "Nothing about that is publicly findable for this company." };
+    expect(html(React.createElement(AnswerLines, { item: nothing }))).toBe(
+      '<p class="text-on-surface-variant whitespace-pre-wrap">Nothing about that is publicly findable for this company.</p>'
+    );
+  });
+
+  it("a block with lines is a bulleted list: one bullet per fact, in order, card facts too (2026-11-08)", () => {
+    // 2026-11-08: card facts only used to show as the plain text paragraph; now bullets too.
     const cardOnly: ScopedAnswerItem = { ...TAGGED, lines: (TAGGED.lines ?? []).map((line) => ({ ...line, source: "card" as const })) };
-    expect(html(React.createElement(AnswerLines, { item: cardOnly }))).toBe(oldText);
+    const markup = html(React.createElement(AnswerLines, { item: cardOnly }));
+    expect(markup.startsWith('<ul class="text-on-surface-variant space-y-1">')).toBe(true);
+    expect(markup.match(/<li class="flex items-start gap-2">/g)).toHaveLength(3);
+    expect(markup.match(/<span aria-hidden="true" class="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-secondary"><\/span>/g)).toHaveLength(3);
+    expect(markup).not.toContain("data-source");
+    const texts = Array.from(markup.matchAll(/<span class="min-w-0 whitespace-pre-wrap">([^<]*)<\/span>/g), (match) => match[1]);
+    expect(texts).toEqual(["Finance memo cites a freeze.", "Hiring two hygienists", "8 locations across Front Range, CO."]);
+    // In the reply body, under the company's name.
+    const body = html(React.createElement(DataRoomChatAnswer, { answer: { intro: "x", items: [TAGGED] } }));
+    expect(body).toContain('<p class="text-[12px] font-semibold text-on-surface mb-1">Summit Dental Group</p><ul class="text-on-surface-variant space-y-1">');
   });
 
   it("the note shows under the answer in small muted text; none without one", () => {

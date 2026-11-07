@@ -5,9 +5,10 @@
  * (the default, and every reply saved before tables existed), a result table (an
  * All-companies filter list, layout "table") or a side-by-side compare table (layout
  * "compare"), then the reply's note, if any, in small muted text. In a text block, a
- * company whose lines carry their sources shows a small "Research" tag before each
- * research finding and "Public" before each public signal (card facts get none); a
- * block without sources, or with card facts only, shows its text as before. Tables
+ * company whose lines carry their sources shows them as a bulleted list, with a small
+ * "Research" tag before each research finding and "Public" before each public signal
+ * (card facts get none); a block without lines (the nothing-findable message, replies
+ * saved before lines existed) shows its text as before. Tables
  * only use the card values the server sends with each item
  * (lib/data-room-chat-scope.ts AnswerCard); a reply without them falls back to the
  * text blocks. Every company name (the table's Company cell, each compare column
@@ -421,9 +422,10 @@ const SOURCE_TAG_CLASSES: Readonly<Record<Exclude<AnswerLine["source"], "card">,
 };
 
 /**
- * One company's lines in a text block: with a "Research" or "Public" tag before each
- * research finding or public signal when its lines carry them; otherwise (old saved
- * replies, card facts only) its text exactly as before.
+ * One company's lines in a text block, as a bulleted list: one bullet (a small blue
+ * dot) per fact, with a "Research" or "Public" tag before each research finding or
+ * public signal (card facts get none). A block without lines (the nothing-findable
+ * message, and replies saved before lines existed) shows its text exactly as before.
  */
 export function AnswerLines({
   item,
@@ -434,25 +436,29 @@ export function AnswerLines({
   config?: DataRoomChatConfig;
 }): React.ReactElement {
   const lines = item.lines ?? [];
-  if (!lines.some((line) => line.source !== "card")) {
+  if (lines.length === 0) {
     return <p className="text-on-surface-variant whitespace-pre-wrap">{item.text}</p>;
   }
   return (
-    <div className="text-on-surface-variant space-y-0.5">
+    <ul className="text-on-surface-variant space-y-1">
       {lines.map((line, i) => (
-        <p key={i} className="whitespace-pre-wrap">
-          {line.source !== "card" ? (
-            <span
-              data-source={line.source}
-              className={`mr-1.5 inline-block align-[1px] px-1.5 rounded-full text-[10px] font-semibold uppercase tracking-wide leading-[16px] ${SOURCE_TAG_CLASSES[line.source]}`}
-            >
-              {config.lineSourceTags[line.source]}
-            </span>
-          ) : null}
-          {line.text}
-        </p>
+        <li key={i} className="flex items-start gap-2">
+          {/* The dot sits on the first line of text (14px type, relaxed leading). */}
+          <span aria-hidden="true" className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-secondary" />
+          <span className="min-w-0 whitespace-pre-wrap">
+            {line.source !== "card" ? (
+              <span
+                data-source={line.source}
+                className={`mr-1.5 inline-block align-[1px] px-1.5 rounded-full text-[10px] font-semibold uppercase tracking-wide leading-[16px] ${SOURCE_TAG_CLASSES[line.source]}`}
+              >
+                {config.lineSourceTags[line.source]}
+              </span>
+            ) : null}
+            {line.text}
+          </span>
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }
 
