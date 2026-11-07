@@ -815,6 +815,12 @@ export const SMALL_TALK_REPLY = "I'm doing well, thanks! What would you like to 
 export const ACKNOWLEDGEMENT_REPLY = "Great. What would you like to know next?";
 /** A goodbye (both modes). */
 export const GOODBYE_REPLY = "Good luck with your research!";
+/**
+ * The reply to a question about a company by a name that isn't in the Data Room (the
+ * router's unknown_company): fixed text, no facts, never the name the student typed.
+ */
+export const UNKNOWN_COMPANY_REPLY =
+  "I can't find that company in the Data Room. Check the company list, or ask about the selected company.";
 /** First line of the public overview given for an answer-key or rule-breaking question (meta_or_bulk) about open companies. */
 export const META_PUBLIC_INTRO = "I can't share hidden or internal information. Here's what's public:";
 

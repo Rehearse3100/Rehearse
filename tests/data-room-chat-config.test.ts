@@ -103,8 +103,9 @@ describe("strings built from the config are exactly today's", () => {
       // name_query, unfiltered, standalone_question and is_follow_up, the repeated meta
       // rule and the range note removed; 2026-11-08: industry names picked from the
       // message's list, locked-in → current_tools, more acknowledgement examples; then
-      // negative conditions, typos never inappropriate; then narrows_previous).
-      router: "af0445655fecfe23f669b5327ba2607086ee6b99ff7fc75b4da4a4c5929b884c",
+      // negative conditions, typos never inappropriate; then narrows_previous; then
+      // unknown_company).
+      router: "24832bd08b4c55688f27624eec5f292dadf4a3995051ea7ab86b8313e34c91dd",
       // Changed on purpose since: indirect answers (rules, contracts, mandates) count.
       selection: "98f8701b4d6d3e5ed84066b70671527d0a41ac12fbebd5186cb0c218ec3a62e7",
       opening: "a41a805ae91ecd7886ef4d027f503b573b1aad81069d646675a260097a8bdd68",

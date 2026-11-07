@@ -59,6 +59,7 @@ import {
   META_PUBLIC_INTRO,
   SMALL_TALK_REPLY,
   THANKS_REPLY,
+  UNKNOWN_COMPANY_REPLY,
 } from "@/lib/data-room-chat-scope";
 
 // ── Fakes ───
@@ -2622,5 +2623,60 @@ describe("narrowing the previous list, and openings about themselves (2026-11-08
     infoSpy.mockRestore();
     expect(reply.intro).toBe(findable("operations"));
     expect(logged).toBe(JSON.stringify([["[data-room-chat] opening dropped:", "talks about the answer"]]));
+  });
+});
+
+describe("a company that isn't in the Data Room (2026-11-08)", () => {
+  const unknown = (intent: string, extra: Record<string, unknown> = {}): ReturnType<typeof modelReply> =>
+    modelReply({ intent, topic: null, attribute: null, unknown_company: true, confidence: "high", ...extra });
+
+  it("Summit selected + 'tell me about max printing press' → the fixed reply, no facts, never the name typed", async () => {
+    state.classify.mockResolvedValueOnce(unknown("overview"));
+    const reply = await ask({ scope: ONE, newMessage: "tell me about max printing press" });
+    expect(reply).toEqual({ intro: UNKNOWN_COMPANY_REPLY, items: [] });
+    expect(UNKNOWN_COMPANY_REPLY).toBe("I can't find that company in the Data Room. Check the company list, or ask about the selected company.");
+    expect(JSON.stringify(reply).toLowerCase()).not.toContain("max printing");
+    expect(state.create).not.toHaveBeenCalled();
+    expect(state.open).not.toHaveBeenCalled();
+    // The router saw the name as typed (it isn't in the roster, so nothing replaced it).
+    const routerInput = (state.classify.mock.calls[0]?.[0] as { messages: ModelMessage[] }).messages[1]?.content ?? "";
+    expect(routerInput.endsWith("Question: tell me about max printing press")).toBe(true);
+  });
+
+  it("'do they use SlotEasy?' stays a normal question (a vendor, not a company)", async () => {
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "current_tools"));
+    state.create.mockResolvedValueOnce(selection(["C1:h:0"]));
+    const reply = (await ask({ scope: ONE, newMessage: "do they use SlotEasy?" })) as { intro: string; items: Array<{ text: string }> };
+    expect(reply.intro).not.toBe(UNKNOWN_COMPANY_REPLY);
+    expect(reply.items[0]?.text).toContain(TOOLS_FINDING);
+  });
+
+  it("'is there a company called Lantern?' stays a name question in both modes", async () => {
+    for (const scope of [ALL, ONE]) {
+      state.classify.mockResolvedValueOnce(unknown("name_query", { name_match: { kind: "contains", value: "Lantern" } }));
+      expect(await ask({ scope, newMessage: "is there a company called Lantern?" }), scope.mode).toEqual({
+        intro: 'No company names contain "Lantern".',
+        items: [],
+      });
+    }
+  });
+
+  it("a real but unselected company still gets the out-of-scope reply first (no router call)", async () => {
+    const reply = (await ask({ scope: ONE, newMessage: "tell me about Falcon Market" })) as { intro: string };
+    expect(reply.intro.startsWith("Your question mentions Falcon Market, which isn't selected.")).toBe(true);
+    expect(state.classify).not.toHaveBeenCalled();
+  });
+
+  it("All companies: 'tell me about max printing press' gets the new reply; a filter question still runs as today", async () => {
+    state.classify.mockResolvedValueOnce(unknown("overview"));
+    expect(await ask({ scope: ALL, newMessage: "tell me about max printing press" })).toEqual({ intro: UNKNOWN_COMPANY_REPLY, items: [] });
+    state.classify.mockResolvedValueOnce(
+      unknown("filter_list", { filters: [{ field: "online_booking", op: "eq", value: true }], criteria_count: 1 })
+    );
+    const filtered = (await ask({ scope: ALL, newMessage: "which have online booking, like max printing press?" })) as { intro: string };
+    expect(filtered.intro).toBe("2 companies match.");
+    // Without the flag, the usual All-companies reply.
+    state.classify.mockResolvedValueOnce(routerReply("overview"));
+    expect(await ask({ scope: ALL, newMessage: "tell me about them" })).toEqual({ intro: ALL_MODE_REPLY, items: [] });
   });
 });

@@ -24,7 +24,10 @@
  * question, recent questions and scope kind, and for All companies the roster's
  * industry names) labels the question; an "inappropriate"
  * label gets the moderation reply; a "not English" label is ignored when the message
- * holds two common English function words (typos). Small talk (greeting, thanks, how
+ * holds two common English function words (typos). A question about a company by a
+ * name that isn't in the Data Room (the router's unknown_company) gets "I can't find
+ * that company in the Data Room. …" (in All companies mode not for a filter question).
+ * Small talk (greeting, thanks, how
  * are you, acknowledgement, goodbye) gets its fixed reply, and a question about
  * company names is answered from the roster (the question's scope, every match A–Z),
  * in both modes. The router also rewrites the question to stand on its own; when
@@ -154,6 +157,7 @@ import {
   firstWordAsWritten,
   greetingReply,
   META_PUBLIC_INTRO,
+  UNKNOWN_COMPANY_REPLY,
   parseChatScope,
   parseHistoryQuestions,
   redactCompanyMentions,
@@ -582,6 +586,12 @@ export async function POST(request: Request): Promise<NextResponse> {
       if (fixed) {
         return NextResponse.json(fixed);
       }
+      // A company by a name that isn't in the Data Room: a fixed reply instead of the
+      // All-companies one (a filter question still runs as usual).
+      if (decision.unknownCompany === true && decision.intent !== "filter_list") {
+        const reply: ScopedAnswer = { intro: UNKNOWN_COMPANY_REPLY, items: [] };
+        return NextResponse.json(reply);
+      }
       // "Give this again, by locations": the previous list's companies (every one of
       // its conditions), re-sorted, when the question points back at that list; and
       // (narrows_previous) "from this list…" / "greater than 6" right after a list: the
@@ -622,6 +632,12 @@ export async function POST(request: Request): Promise<NextResponse> {
     const fixed = smallTalkOrNamesAnswer(routed, scope, chatConfig, scopedCompanies);
     if (fixed) {
       return NextResponse.json(fixed);
+    }
+    // A company by a name that isn't in the Data Room ("tell me about max printing
+    // press" with another company selected): a fixed reply, no facts, never the name typed.
+    if (routed.unknownCompany === true) {
+      const reply: ScopedAnswer = { intro: UNKNOWN_COMPANY_REPLY, items: [] };
+      return NextResponse.json(reply);
     }
 
     // The router's rewrite of the question, when it passes the checks (non-empty, at

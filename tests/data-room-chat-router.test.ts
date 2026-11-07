@@ -881,3 +881,20 @@ describe("narrows_previous (2026-11-08)", () => {
     expect(ROUTER_SYSTEM_PROMPT.length).toBeGreaterThanOrEqual(MIN_ROUTER_PROMPT_CHARS);
   });
 });
+
+describe("unknown_company (2026-11-08)", () => {
+  it("one prompt line with neutral examples for true and false; read only when exactly true", () => {
+    expect(ROUTER_SYSTEM_PROMPT).toContain('"unknown_company": boolean');
+    expect(ROUTER_SYSTEM_PROMPT).toContain(
+      'unknown_company: true when the question asks about a specific company by a name that is neither a reference such as [C1] nor "another company" (companies in the Data Room are already replaced by those before you see the question), for example "tell me about Quokka Print Shop" is true. false for vendors, products or tools a company uses ("do they use Zentrix?" is false), for people\'s names, places and industries, and when the question names no company.'
+    );
+    // No real vendor from the Data Room in the prompt.
+    expect(ROUTER_SYSTEM_PROMPT).not.toContain("SlotEasy");
+    const base = { intent: "overview", topic: null, attribute: null, confidence: "high" };
+    expect(parseRouterReply(reply({ ...base, unknown_company: true }))).toMatchObject({ unknownCompany: true });
+    for (const value of [false, "true", 1, null, undefined]) {
+      expect(parseRouterReply(reply({ ...base, unknown_company: value })), String(value)).not.toHaveProperty("unknownCompany");
+    }
+    expect(ROUTER_SYSTEM_PROMPT.length).toBeGreaterThanOrEqual(MIN_ROUTER_PROMPT_CHARS);
+  });
+});

@@ -17,7 +17,9 @@
  * reply also says whether the question is in English (parseRouterEnglish; a message
  * with two common English function words counts as English whatever it says,
  * hasEnglishFunctionWords) and, for a list, the order it asks for (sort: locations or
- * name), and whether an All-companies question narrows the previous list instead of
+ * name), whether the question asks about a company by a name that isn't in the Data
+ * Room (unknown_company; names that are already became refs or "another company"),
+ * and whether an All-companies question narrows the previous list instead of
  * starting a new search (narrows_previous). For All companies, the user message also lists the roster's industry
  * names (any simulation; names only), and the prompt asks the router to pick an
  * industry filter's value from that list. "Compare …", "side by side" and "vs" are
@@ -103,6 +105,8 @@ export type RouterDecision = {
   standaloneQuestion?: string;
   /** The question only makes sense with the recent questions; omitted otherwise. */
   isFollowUp?: true;
+  /** The question asks about a company by a name that isn't in the Data Room; omitted otherwise. */
+  unknownCompany?: true;
 };
 
 /** What every unclear or invalid classification becomes: public facts only. */
@@ -143,7 +147,7 @@ export function buildRouterSystemPrompt(config: DataRoomChatConfig = getDataRoom
   const topics = topicList(config);
   return [
     "You classify one question a student asks while researching companies in a sales-training Data Room. You never see any company information, only the question. Reply with a single JSON object and nothing else:",
-    '{"intent": string, "topic": string | null, "attribute": string | null, "filters": object[] | null, "criteria_count": number, "unfiltered": boolean, "narrows_previous": boolean, "sort": object | null, "name_match": object | null, "small_talk_kind": string | null, "standalone_question": string, "is_follow_up": boolean, "exact_value": boolean, "english": boolean, "confidence": "high" | "low"}',
+    '{"intent": string, "topic": string | null, "attribute": string | null, "filters": object[] | null, "criteria_count": number, "unfiltered": boolean, "narrows_previous": boolean, "sort": object | null, "name_match": object | null, "small_talk_kind": string | null, "standalone_question": string, "is_follow_up": boolean, "unknown_company": boolean, "exact_value": boolean, "english": boolean, "confidence": "high" | "low"}',
     "",
     "intent (pick one):",
     '- overview: a general or open-ended question about the company or companies ("tell me about them", "what should I know?", "tell me everything", "summarize").',
@@ -186,6 +190,8 @@ export function buildRouterSystemPrompt(config: DataRoomChatConfig = getDataRoom
     'standalone_question: the question rewritten so it makes sense on its own, using the recent questions to fill in what a follow-up refers to ("and their budget?" after "What software does [C1] use?" is "What is [C1]\'s budget?"). Keep company references such as [C1] exactly as written and never add a company name. When the question already makes sense on its own, copy it unchanged.',
     "",
     "is_follow_up: true when the question only makes sense with the recent questions (it asks for more on an earlier question, or continues it); false otherwise.",
+    "",
+    'unknown_company: true when the question asks about a specific company by a name that is neither a reference such as [C1] nor "another company" (companies in the Data Room are already replaced by those before you see the question), for example "tell me about Quokka Print Shop" is true. false for vendors, products or tools a company uses ("do they use Zentrix?" is false), for people\'s names, places and industries, and when the question names no company.',
     "",
     "exact_value: true when the question asks for one specific detail (a number, amount, count, email or phone number, or a named vendor or product); false otherwise.",
     "",
@@ -292,8 +298,8 @@ const TOPIC_FREE_INTENTS: readonly RouterIntent[] = ["filter_list", "name_query"
  * read as a one-item list; no limit on how many); any condition the whitelist can't
  * read makes them null (an All-companies question then gets the fixed reply); a
  * criteria count that isn't a whole number of 0 or more (as a number or numeric
- * string) becomes null. exact_value, unfiltered, narrows_previous and is_follow_up are
- * true only when exactly true. A valid "sort" (locations or name, asc or desc; parseRosterSort) is
+ * string) becomes null. exact_value, unfiltered, narrows_previous, is_follow_up and
+ * unknown_company are true only when exactly true. A valid "sort" (locations or name, asc or desc; parseRosterSort) is
  * kept as sort; anything else leaves it out (A–Z). small_talk keeps its kind (null
  * when unknown); name_query its name_match (parseNameMatch). standalone_question is
  * kept as trimmed text when it is a non-empty string (the route checks it).
@@ -322,6 +328,7 @@ export function parseRouterReply(raw: string | null | undefined, scopeKind?: Sco
     small_talk_kind: smallTalkKind,
     standalone_question: standaloneQuestion,
     is_follow_up: isFollowUp,
+    unknown_company: unknownCompany,
     exact_value: exactValue,
     confidence,
   } = parsed as Record<string, unknown>;
@@ -360,6 +367,7 @@ export function parseRouterReply(raw: string | null | undefined, scopeKind?: Sco
     ...(nameMatch ? { nameMatch } : {}),
     ...(standalone ? { standaloneQuestion: standalone } : {}),
     ...(isFollowUp === true ? { isFollowUp: true as const } : {}),
+    ...(unknownCompany === true ? { unknownCompany: true as const } : {}),
   };
   return decision.intent === "specific_research" && decision.topic === null
     ? OVERVIEW_DECISION
