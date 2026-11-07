@@ -793,3 +793,42 @@ describe("who decides, and answer-key questions", () => {
     );
   });
 });
+
+describe("industries, locked-in and short acknowledgements (2026-11-08)", () => {
+  it("All companies: the roster's industry names go in the user message, after the scope; Selected: none", () => {
+    const all = buildRouterMessages({
+      question: "which gyms have online booking?",
+      recentQuestions: [],
+      scopeKind: "all",
+      industries: ["Auto Repair", "Fitness Studio", "Legal Services"],
+    });
+    expect(all[1]?.content.split("\n").slice(0, 2)).toEqual([
+      "Scope: all companies",
+      "Industries in this Data Room: Auto Repair, Fitness Studio, Legal Services",
+    ]);
+    // The system prompt is the same with or without the list (cached).
+    expect(all[0]).toEqual({ role: "system", content: ROUTER_SYSTEM_PROMPT });
+    expect(ROUTER_SYSTEM_PROMPT).not.toContain("Auto Repair");
+    for (const scopeKind of ["one", "several"] as const) {
+      expect(buildRouterMessages({ question: "q", recentQuestions: [], scopeKind })[1]?.content).not.toContain("Industries in this Data Room");
+    }
+    expect(buildRouterMessages({ question: "q", recentQuestions: [], scopeKind: "all", industries: [] })[1]?.content).not.toContain(
+      "Industries in this Data Room"
+    );
+  });
+
+  it("one generic industry rule; the locked-in rule; the acknowledgement examples", () => {
+    for (const text of [
+      'For an industry condition, use the exact name from the "Industries in this Data Room" line of the message that matches what the student means, plurals, synonyms and everyday words included; when several names match, add one industry condition for each.',
+      '- Questions about being locked into, tied to, committed to or under contract with a vendor or system are specific_research with topic current_tools (for example "are they locked into anything?" is current_tools); a follow-up keeps that meaning in its standalone_question (for example "Is [C1] locked into a vendor, system or contract?").',
+      '"acknowledgement" (ok, k, sure, cool, alright, perfect, got it, makes sense, sounds good, yes, no)',
+    ]) {
+      expect(ROUTER_SYSTEM_PROMPT, text).toContain(text);
+    }
+    expect(ROUTER_SYSTEM_PROMPT.length).toBeGreaterThanOrEqual(MIN_ROUTER_PROMPT_CHARS);
+    // A locked-in question about one company parses as current_tools research.
+    expect(
+      parseRouterReply(reply({ intent: "specific_research", topic: "current_tools", attribute: null, confidence: "high" }))
+    ).toMatchObject({ intent: "specific_research", topic: "current_tools" });
+  });
+});

@@ -5,7 +5,9 @@
  * question's conditions (filters, as many as it asks for) over public roster
  * attributes, this module validates them against a whitelist and runs them over the
  * roster in code (different fields must all match; two conditions on the same field
- * mean either one, except locations, where both must hold), and the answer lists
+ * mean either one, except locations, where both must hold; an industry condition
+ * that names one of the roster's industries exactly, any case, matches only that
+ * industry, any other industry value matches as "contains"), and the answer lists
  * every matching company from the database, A–Z or in the order the question asked
  * for (by locations or name; never by fit), under a count line and with no opening
  * sentence (as a table: layout "table", each item with its card values). A request
@@ -16,8 +18,9 @@
  * labels) and a fixed note that research can't be searched across all companies. A
  * "how many companies are there?" question (no conditions) gets the roster total; an
  * answer-key or rule-breaking question its own reply; any other All-companies
- * question one fixed reply. Used by lib/data-room-chat-router.ts (filter validation)
- * and POST /api/student/data-room-chat.
+ * question one fixed reply. The roster's industry names (industryNames, any
+ * simulation) also go to the router, so it can pick from them. Used by
+ * lib/data-room-chat-router.ts (filter validation) and POST /api/student/data-room-chat.
  */
 
 import { filterFieldsPhrase, getDataRoomChatConfig, joinList, type DataRoomChatConfig } from "@/lib/data-room-chat-config";
@@ -313,11 +316,46 @@ function matchesText(actual: string | null, expected: string): boolean {
   return text.length > 0 && text.includes(expected.toLowerCase());
 }
 
-/** True when the company matches the filter. A missing (unknown) value never matches. */
-export function matchesFilter(company: FilterCompany, filter: RosterFilter): boolean {
+/**
+ * The roster's distinct industry names, A–Z (trimmed; one spelling per name, any
+ * case): what the router is shown to pick an industry filter from. Industry names
+ * only, never anything about a company.
+ */
+export function industryNames(companies: ReadonlyArray<{ industry: string }>): string[] {
+  const byKey = new Map<string, string>();
+  for (const company of companies) {
+    const name = company.industry.trim();
+    if (name && !byKey.has(name.toLowerCase())) {
+      byKey.set(name.toLowerCase(), name);
+    }
+  }
+  return Array.from(byKey.values()).sort((a, b) => a.localeCompare(b));
+}
+
+/** The roster's industry names, lowercased: an industry value among them matches exactly. */
+function industryKeys(companies: readonly FilterCompany[]): ReadonlySet<string> {
+  return new Set(industryNames(companies).map((name) => name.toLowerCase()));
+}
+
+/**
+ * An industry condition: a value that is one of the roster's industries (knownIndustries,
+ * lowercased; any case) matches that industry exactly; any other value matches as
+ * "contains", as before.
+ */
+function matchesIndustry(actual: string, expected: string, knownIndustries?: ReadonlySet<string>): boolean {
+  const value = expected.trim().toLowerCase();
+  return knownIndustries?.has(value) ? actual.trim().toLowerCase() === value : matchesText(actual, expected);
+}
+
+/**
+ * True when the company matches the filter. A missing (unknown) value never matches.
+ * knownIndustries: the roster's industry names, lowercased (industry conditions that
+ * name one match it exactly; without them every industry value is "contains").
+ */
+export function matchesFilter(company: FilterCompany, filter: RosterFilter, knownIndustries?: ReadonlySet<string>): boolean {
   switch (filter.field) {
     case "industry":
-      return matchesText(company.industry, String(filter.value));
+      return matchesIndustry(company.industry, String(filter.value), knownIndustries);
     case "metro":
       return matchesText(company.metro, String(filter.value));
     case "state":
@@ -336,15 +374,19 @@ export function matchesFilter(company: FilterCompany, filter: RosterFilter): boo
  * all match; two on the same field mean either one ("Colorado or Utah"), except
  * locations, where both must hold ("between 3 and 8 locations").
  */
-export function matchesFilters(company: FilterCompany, filters: readonly RosterFilter[]): boolean {
+export function matchesFilters(
+  company: FilterCompany,
+  filters: readonly RosterFilter[],
+  knownIndustries?: ReadonlySet<string>
+): boolean {
   return FILTER_FIELDS.every((field) => {
     const conditions = filters.filter((filter) => filter.field === field);
     if (conditions.length === 0) {
       return true;
     }
     return field === "locations"
-      ? conditions.every((filter) => matchesFilter(company, filter))
-      : conditions.some((filter) => matchesFilter(company, filter));
+      ? conditions.every((filter) => matchesFilter(company, filter, knownIndustries))
+      : conditions.some((filter) => matchesFilter(company, filter, knownIndustries));
   });
 }
 
@@ -355,6 +397,7 @@ export function matchesFilters(company: FilterCompany, filters: readonly RosterF
  * locations · {Metro}" under its name from the database.
  * It is shown as a table (layout "table"): each item also carries its card values
  * (industry, locations, metro, territory, online booking); the text stays the fallback.
+ * The companies' own industry names decide exact industry matches (matchesIndustry).
  */
 export function answerFilter(
   filter: RosterFilter | readonly RosterFilter[],
@@ -362,8 +405,9 @@ export function answerFilter(
   sort?: RosterSort | null
 ): ScopedAnswer {
   const filters: readonly RosterFilter[] = Array.isArray(filter) ? filter : [filter as RosterFilter];
+  const knownIndustries = industryKeys(companies);
   return listAnswer(
-    companies.filter((company) => matchesFilters(company, filters)),
+    companies.filter((company) => matchesFilters(company, filters, knownIndustries)),
     sort
   );
 }
@@ -421,7 +465,8 @@ export function answerAllCompanies(
     const ids = new Set(previousListIds);
     const listed = companies.filter((company) => ids.has(company.id));
     if (listed.length > 0) {
-      return listAnswer(filters ? listed.filter((company) => matchesFilters(company, filters)) : listed, sort);
+      const knownIndustries = industryKeys(companies);
+      return listAnswer(filters ? listed.filter((company) => matchesFilters(company, filters, knownIndustries)) : listed, sort);
     }
   }
   if (intent === "filter_list" && filters === null && criteriaCount === 0) {

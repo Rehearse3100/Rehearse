@@ -2406,3 +2406,95 @@ describe("Selected mode: the note and the line sources", () => {
     expect(names.items.every((item) => !("lines" in item))).toBe(true);
   });
 });
+
+describe("industries from the roster, and openings that claim absence (2026-11-08)", () => {
+  const routerInput = (call = 0): string =>
+    (state.classify.mock.calls[call]?.[0] as { messages: ModelMessage[] }).messages[1]?.content ?? "";
+  const listFilter = (filters: unknown[]): ReturnType<typeof modelReply> =>
+    modelReply({ intent: "filter_list", topic: null, attribute: null, filters, criteria_count: filters.length, confidence: "high" });
+
+  it("All companies: the router's user message lists the roster's industry names (names only); Selected mode: no list", async () => {
+    await ask({ scope: ALL, newMessage: "which dentists have online booking?" });
+    expect(routerInput().split("\n").slice(0, 2)).toEqual(["Scope: all companies", "Industries in this Data Room: Dental, Retail"]);
+    // Nothing per company: no name, city or other value.
+    for (const value of [...ALL_NAMES, "Front Range", "Boise", "Denver"]) {
+      expect(routerInput(), value).not.toContain(value);
+    }
+    await ask({ scope: ONE, newMessage: "What software do they use?" });
+    expect(routerInput(1)).not.toContain("Industries in this Data Room");
+    // The system prompt is identical either way (cached).
+    const systems = state.classify.mock.calls.map((call) => (call[0] as { messages: ModelMessage[] }).messages[0]?.content);
+    expect(systems).toEqual([ROUTER_SYSTEM_PROMPT, ROUTER_SYSTEM_PROMPT]);
+  });
+
+  it("another roster's industries work with no code change: the exact name matches only that industry; any other value is 'contains'", async () => {
+    const row = (id: string, name: string, industry: string): unknown => ({
+      ...ROSTER[0],
+      id,
+      company_name: name,
+      industry,
+      vertical: null,
+      blurb: null,
+      public_signals: [],
+    });
+    state.roster = [
+      row("pulse", "Pulse Studio", "Fitness Studio"),
+      row("ironclad", "Ironclad Supply", "Fitness Studio Supplies"),
+      row("barrister", "Barrister Partners", "Legal Services"),
+      row("torque", "Torque Garage", "Auto Repair"),
+    ];
+    const names = (reply: unknown): string[] => (reply as { items: Array<{ companyName: string }> }).items.map((item) => item.companyName);
+
+    // "gyms" → the router picks the listed "Fitness Studio": the studio only, not the supplier.
+    state.classify.mockResolvedValueOnce(listFilter([{ field: "industry", op: "eq", value: "Fitness Studio" }]));
+    expect(names(await ask({ scope: ALL, newMessage: "which gyms are there?" }))).toEqual(["Pulse Studio"]);
+    expect(routerInput()).toContain("Industries in this Data Room: Auto Repair, Fitness Studio, Fitness Studio Supplies, Legal Services");
+    // "law firms" → "Legal Services".
+    state.classify.mockResolvedValueOnce(listFilter([{ field: "industry", op: "eq", value: "Legal Services" }]));
+    expect(names(await ask({ scope: ALL, newMessage: "any law firms?" }))).toEqual(["Barrister Partners"]);
+    // Several match: one condition each (either one).
+    state.classify.mockResolvedValueOnce(
+      listFilter([
+        { field: "industry", op: "eq", value: "Auto Repair" },
+        { field: "industry", op: "eq", value: "Legal Services" },
+      ])
+    );
+    expect(names(await ask({ scope: ALL, newMessage: "garages or lawyers?" }))).toEqual(["Barrister Partners", "Torque Garage"]);
+    // A value that isn't listed still matches as "contains", as before.
+    state.classify.mockResolvedValueOnce(listFilter([{ field: "industry", op: "contains", value: "fitness" }]));
+    expect(names(await ask({ scope: ALL, newMessage: "fitness?" }))).toEqual(["Ironclad Supply", "Pulse Studio"]);
+  });
+
+  it("Kestrel, 'and are they locked into anything?': an opening that says nothing is mentioned is dropped for the fixed line", async () => {
+    state.roster = [
+      ...ROSTER,
+      {
+        ...ROSTER[0],
+        id: "kestrel",
+        company_name: "Kestrel Physical Wellness",
+        industry: "Wellness",
+        vertical: "wellness",
+        blurb: null,
+        public_signals: [],
+      },
+    ];
+    state.storedResearchFacts = [];
+    state.classify.mockResolvedValueOnce(routerReply("overview"));
+    state.open.mockResolvedValueOnce(modelReply({ opening: "There's no locked-in contract or vendor mentioned for this company." }));
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const reply = (await ask({ scope: { mode: "companies", companyIds: ["kestrel"] }, newMessage: "and are they locked into anything?" })) as {
+      intro: string;
+    };
+    const logged = JSON.stringify(infoSpy.mock.calls);
+    infoSpy.mockRestore();
+    expect(reply.intro).toBe(OVERVIEW_FIRST_LINE_ONE);
+    expect(logged).toBe(JSON.stringify([["[data-room-chat] opening dropped:", "claims something is absent"]]));
+  });
+
+  it("an opening that restates a negative card fact still shows", async () => {
+    state.open.mockResolvedValueOnce(modelReply({ opening: "This company has no online booking and is in territory." }));
+    expect(((await ask({ scope: ONE, newMessage: "Tell me about them" })) as { intro: string }).intro).toBe(
+      "This company has no online booking and is in territory."
+    );
+  });
+});

@@ -528,6 +528,41 @@ const CLAIM_WORD_FORMS: readonly RegExp[] = [
   /^perfect(?:|ly)$/,
 ];
 
+// ── Absence claims: an opening may never say something isn't there ───
+
+/** A negation: no, not, none, never, nothing, nobody, nor, without, cannot, or an "n't" contraction. */
+const NEGATION_PATTERN = /\b(?:no|not|none|never|nothing|nobody|nor|without|cannot)\b|\b[a-z]+n['’]t\b/;
+
+/**
+ * Words that, with a negation, say something wasn't found or recorded ("not
+ * mentioned", "no … listed", "isn't on record", "no information", "not known").
+ */
+const ABSENCE_REPORT_WORD = new RegExp(
+  "^(?:mention(?:s|ed|ing)?|list(?:s|ed|ing)?|found|finds?|findable|record(?:s|ed)?|indicat(?:e|es|ed|ion|ions)|" +
+    "known|knows?|note[sd]?|report(?:s|ed|ing)?|available|specified|stated|shown|shows?|disclosed|documented|" +
+    "cited|referenced|provided|information|info|details?|data|evidence|signs?)$"
+);
+
+/** Words that say on their own that something is absent or unknown. */
+const ABSENCE_WORD =
+  /^(?:missing|absent|unknown|unlisted|unmentioned|unrecorded|unreported|unspecified|undisclosed|undocumented|unavailable)$/;
+
+/**
+ * True when the sentence says something is missing, not mentioned, not listed, not
+ * found, unknown, none or not on record: a negation together with a mention / listed
+ * / found / recorded / indicated / known / noted / reported / available kind of word,
+ * or a word such as "missing" or "unknown". An opening can't know what isn't there
+ * (the clue may simply not be shown), so this is never allowed. Restating a negative
+ * card fact is fine: "This company has no online booking." has no such word.
+ */
+function claimsAbsence(text: string): boolean {
+  const words = toWords(text);
+  if (words.some((word) => ABSENCE_WORD.test(word))) {
+    return true;
+  }
+  return NEGATION_PATTERN.test(text.toLowerCase()) && words.some((word) => ABSENCE_REPORT_WORD.test(word));
+}
+
 /** The opening call's instructions: one sentence introducing the answer it sees; no new fact, judgment or name. */
 export const OPENING_SYSTEM_PROMPT = [
   'You write the opening sentence of an answer a student sees while researching companies in a sales-training Data Room. You are given the student\'s question and the exact answer text shown below your sentence; companies appear only as "Company 1", "Company 2" and so on. Reply with a single JSON object and nothing else:',
@@ -680,7 +715,8 @@ export type OpeningRejection =
   | "company name"
   | "company-name word"
   | "number not shown"
-  | "claim not in the facts";
+  | "claim not in the facts"
+  | "claims something is absent";
 
 /**
  * The first check the opening fails, or null when it passes them all. Dropped when it
@@ -690,8 +726,12 @@ export type OpeningRejection =
  * name, or a distinctive company-name word — unless the student used that word in the
  * question, or the facts shown use it and it isn't the first word of a name; has a
  * number that is in neither the answer (as the student sees it, number words
- * included: "two" allows 2) nor the question; or uses a claim word ("updated",
- * "new", "positive", "growing"…) whose stem the facts shown don't use.
+ * included: "two" allows 2) nor the question; uses a claim word ("updated",
+ * "new", "positive", "growing"…) whose stem the facts shown don't use; or says
+ * something is missing, not mentioned, not listed, not found, unknown, none or not on
+ * record (claimsAbsence; 2026-11-08: Kestrel, "There's no locked-in contract or vendor
+ * mentioned for this company." above an answer whose hidden clue is a multi-year
+ * vendor agreement).
  */
 export function openingRejection(
   opening: string,
@@ -745,6 +785,9 @@ export function openingRejection(
   };
   if (openingWords.some(isUnstatedClaim)) {
     return "claim not in the facts";
+  }
+  if (claimsAbsence(text)) {
+    return "claims something is absent";
   }
   return null;
 }

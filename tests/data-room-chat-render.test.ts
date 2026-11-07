@@ -780,3 +780,53 @@ describe("selection call", () => {
     expect(parseSelection(null, facts)).toEqual({ facts: [], exactAnswer: false });
   });
 });
+
+describe("an opening may never claim something is absent (2026-11-08)", () => {
+  const index = buildScopeIndex([
+    { id: "kestrel", name: "Kestrel Physical Wellness", industry: "Wellness" },
+    { id: "northview", name: "Northview Family Dentistry", industry: "Dental" },
+  ]);
+  const overview: ScopedAnswer = {
+    intro: "",
+    items: [
+      {
+        companyId: "kestrel",
+        companyName: "Kestrel Physical Wellness",
+        text: "Wellness · 4 locations · Tucson, AZ\nOut of territory.\nNo online booking.\nFamily-run wellness practice.",
+      },
+    ],
+  };
+  const reject = (opening: string, answer: ScopedAnswer = overview): string | null =>
+    openingRejection(opening, "and are they locked into anything?", answer, index);
+
+  it("Kestrel and Northview style: missing, not mentioned, not listed, not found, unknown, none, not on record → dropped", () => {
+    for (const opening of [
+      // The real failure: the hidden clue is a multi-year vendor agreement.
+      "There's no locked-in contract or vendor mentioned for this company.",
+      "No vendor contract is listed for this company.",
+      "This company's software isn't on record.",
+      "Their contract terms are unknown.",
+      "Nothing is noted about a vendor agreement for this company.",
+      "There's no information about any contracts for this company.",
+      "None of their systems are mentioned.",
+      "A vendor agreement was not found for this company.",
+      "No contract details are available for this company.",
+      "Their scheduling vendor is missing from the facts.",
+      "This company doesn’t indicate any long-term commitments.",
+    ]) {
+      expect(reject(opening), opening).toBe("claims something is absent");
+    }
+  });
+
+  it("restating a negative card fact stays allowed; so does a plain positive sentence", () => {
+    expect(reject("This company has no online booking.")).toBeNull();
+    expect(reject("This company doesn't offer online booking and is out of territory.")).toBeNull();
+    expect(reject("This company is a family-run wellness practice with 4 locations.")).toBeNull();
+    // A mention-kind word without a negation is no absence claim.
+    expect(reject("This company lists 4 locations.")).toBeNull();
+  });
+
+  it("dropped → no opening (the route then shows the fixed first line)", () => {
+    expect(checkOpening("There's no locked-in contract or vendor mentioned for this company.", "q", overview, index)).toBeNull();
+  });
+});

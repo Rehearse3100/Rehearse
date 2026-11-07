@@ -319,7 +319,13 @@ describe("route: checks before the pipeline", () => {
     expect(fake.router.mock.calls[0]?.[0]).toMatchObject({
       // 2026-11-07: gpt-6-luna (the config's model settings; gpt-4o shuts down 2027-01-14).
       model: "gpt-6-luna",
-      messages: buildRouterMessages({ question: "Which ones have online booking?", recentQuestions: [], scopeKind: "all" }),
+      // 2026-11-08: All companies also lists the roster's industry names (this roster: Retail).
+      messages: buildRouterMessages({
+        question: "Which ones have online booking?",
+        recentQuestions: [],
+        scopeKind: "all",
+        industries: ["Retail"],
+      }),
     });
   });
 

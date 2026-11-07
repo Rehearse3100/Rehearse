@@ -21,7 +21,8 @@
  * mostly non-Latin letters; and the router's own "not English" verdict. Flow: an
  * unselected-company mention → a server reply (code, against the live roster);
  * otherwise a router call (lib/data-room-chat-router.ts; sees only the redacted
- * question, recent questions and scope kind) labels the question; an "inappropriate"
+ * question, recent questions and scope kind, and for All companies the roster's
+ * industry names) labels the question; an "inappropriate"
  * label gets the moderation reply; a "not English" label is ignored when the message
  * holds two common English function words (typos). Small talk (greeting, thanks, how
  * are you, acknowledgement, goodbye) gets its fixed reply, and a question about
@@ -78,6 +79,7 @@ import {
 } from "@/lib/data-room-chat-config";
 import {
   answerAllCompanies,
+  industryNames,
   parsePreviousListIds,
   refersToPreviousList,
   type FilterCompany,
@@ -548,13 +550,15 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     const question = redactStudentText(newMessage, index, refLabels);
 
-    // The router never sees facts or company data.
+    // The router never sees facts or company data. For All companies it also gets the
+    // roster's industry names (names only), so an industry filter uses a real one.
     const scopeKind = scopeKindOf(scope);
     const routerMessages = buildRouterMessages(
       {
         question,
         recentQuestions: parseHistoryQuestions(body.history).map((text) => redactStudentText(text, index, refLabels)),
         scopeKind,
+        ...(scope.mode === "all" ? { industries: industryNames(roster.map(toListCompany)) } : {}),
       },
       chatConfig
     );

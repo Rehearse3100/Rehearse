@@ -17,7 +17,10 @@
  * reply also says whether the question is in English (parseRouterEnglish; a message
  * with two common English function words counts as English whatever it says,
  * hasEnglishFunctionWords) and, for a list, the order it asks for (sort: locations or
- * name). "Compare …", "side by side" and "vs" are read in code (isCompareRequest).
+ * name). For All companies, the user message also lists the roster's industry
+ * names (any simulation; names only), and the prompt asks the router to pick an
+ * industry filter's value from that list. "Compare …", "side by side" and "vs" are
+ * read in code (isCompareRequest).
  * For a follow-up, parseFollowUpContext reads the lines the latest answer about the
  * same companies showed (for "nothing new"). POST /api/student/data-room-chat makes
  * the call (lib/data-room-chat-models.ts builds it from the config's model
@@ -162,6 +165,7 @@ export function buildRouterSystemPrompt(config: DataRoomChatConfig = getDataRoom
     '- field "territory" (in the sales territory) or "online_booking": op "eq", value true or false.',
     'Conditions on different fields must all hold. Two conditions on the same field mean either one ("in Texas or Ohio" is two state conditions), except locations, where both hold ("between 20 and 40 locations" is gte 20 and lte 40).',
     "Put only conditions on these fields in filters; when the question asks for nothing they can express, use null.",
+    'For an industry condition, use the exact name from the "Industries in this Data Room" line of the message that matches what the student means, plurals, synonyms and everyday words included; when several names match, add one industry condition for each.',
     "",
     'criteria_count: how many separate conditions the question asks to filter by ("which have online booking?" is 1; "fitness studios in Phoenix" is 2; 0 when it filters by nothing, as in "how many companies are there?", which is filter_list with criteria_count 0).',
     "",
@@ -171,7 +175,7 @@ export function buildRouterSystemPrompt(config: DataRoomChatConfig = getDataRoom
     "",
     'name_match (set it for name_query; otherwise null): {"kind": "starts_with" | "contains" | "list", "value": string}. starts_with: names that start with some letters or a word ("which names start with B?" is {"kind": "starts_with", "value": "B"}); contains: names that contain them, or a company called or named something ("is there one called Lantern?" is {"kind": "contains", "value": "Lantern"}); list: every name ("list the company names" is {"kind": "list", "value": ""}). Copy the value as the question writes it, a reference such as [C1] included.',
     "",
-    'small_talk_kind (set it for small_talk; otherwise null): "greeting" (hi, hello, good morning), "thanks" (thanks, thank you, thx, much appreciated), "how_are_you" (how are you, how\'s it going, what\'s up), "acknowledgement" (ok, sure, got it, sounds good, yes, no) or "goodbye" (bye, see you, later).',
+    'small_talk_kind (set it for small_talk; otherwise null): "greeting" (hi, hello, good morning), "thanks" (thanks, thank you, thx, much appreciated), "how_are_you" (how are you, how\'s it going, what\'s up), "acknowledgement" (ok, k, sure, cool, alright, perfect, got it, makes sense, sounds good, yes, no) or "goodbye" (bye, see you, later).',
     "",
     'standalone_question: the question rewritten so it makes sense on its own, using the recent questions to fill in what a follow-up refers to ("and their budget?" after "What software does [C1] use?" is "What is [C1]\'s budget?"). Keep company references such as [C1] exactly as written and never add a company name. When the question already makes sense on its own, copy it unchanged.',
     "",
@@ -185,6 +189,7 @@ export function buildRouterSystemPrompt(config: DataRoomChatConfig = getDataRoom
     '- specific_research needs a concrete angle. "Tell me everything", "what should I know?" and "anything else?" are overview.',
     "- Read typos charitably.",
     '- Questions about who decides, approves, signs off on or makes purchasing decisions are specific_research with topic ownership, even when they mention software, tools or vendors (for example "who approves new equipment purchases?" is ownership).',
+    '- Questions about being locked into, tied to, committed to or under contract with a vendor or system are specific_research with topic current_tools (for example "are they locked into anything?" is current_tools); a follow-up keeps that meaning in its standalone_question (for example "Is [C1] locked into a vendor, system or contract?").',
     "- Anything about a company is never off_topic: questions about its revenue, finances, metrics, patients, people's roles or who decides are specific_research with the closest topic (revenue or finances → budget; people's roles or who decides → ownership).",
     '- Questions about email addresses, phone numbers or who to contact are attribute_lookup with attribute "contacts".',
     '- Questions phrased as "how many…", "which are…" or "list the…" with one or more conditions are filter_list; read them charitably (for example "how many are located retail?" is filter_list with filters [{"field": "industry", "op": "contains", "value": "retail"}]).',
@@ -212,20 +217,31 @@ export type RouterInput = {
   /** The student's earlier questions, redacted, oldest first (the last 3 are used). */
   recentQuestions: readonly string[];
   scopeKind: ScopeKind;
+  /**
+   * All companies only: the roster's industry names, A–Z (lib/data-room-chat-filter.ts
+   * industryNames), for the router to pick an industry filter from. Names only.
+   */
+  industries?: readonly string[];
 };
 
-/** The classifier's messages: only the question, recent questions and scope kind. */
+/**
+ * The classifier's messages: only the question, recent questions and scope kind, and
+ * for All companies the roster's industry names ("Industries in this Data Room: …",
+ * in the user message, so the system prompt stays the same for every question).
+ */
 export function buildRouterMessages(
   input: RouterInput,
   config: DataRoomChatConfig = getDataRoomChatConfig()
 ): Array<{ role: "system" | "user"; content: string }> {
   const recent = input.recentQuestions.slice(-ROUTER_RECENT_QUESTIONS);
+  const industries = input.industries ?? [];
   return [
     { role: "system", content: buildRouterSystemPrompt(config) },
     {
       role: "user",
       content: [
         `Scope: ${SCOPE_KIND_LABELS[input.scopeKind]}`,
+        ...(industries.length > 0 ? [`Industries in this Data Room: ${industries.join(", ")}`] : []),
         "Recent questions (oldest first):",
         ...(recent.length > 0 ? recent.map((question) => `- ${question}`) : ["(none)"]),
         `Question: ${input.question}`,

@@ -18,6 +18,7 @@ import {
   answerAllCompanies,
   answerFilter,
   matchCountIntro,
+  industryNames,
   matchesFilter,
   matchesFilters,
   META_ALL_MODE_REPLY,
@@ -742,5 +743,60 @@ describe("the previous list again, in another order", () => {
     expect(parsePreviousListIds([{ ...list, scope: { mode: "companies", companyIds: ["peak"] } }])).toEqual([]);
     expect(parsePreviousListIds("nope")).toEqual([]);
     expect(parsePreviousListIds([{ ...list, items: [{ companyId: 7 }, null, { companyId: "peak" }] }])).toEqual(["peak"]);
+  });
+});
+
+describe("industries from the roster (2026-11-08)", () => {
+  const company = (id: string, industry: string): FilterCompany => ({
+    id,
+    name: `Company ${id}`,
+    industry,
+    locations: 3,
+    metro: "Austin, TX",
+    inTerritory: true,
+    onlineBooking: true,
+  });
+  const ROSTER_B = [
+    company("a", "Fitness Studio"),
+    company("b", "Fitness Studio Supplies"),
+    company("c", "Legal Services"),
+    company("d", " legal services "),
+    company("e", "Auto Repair"),
+    company("f", ""),
+  ];
+  const names = (answer: { items: Array<{ companyId: string }> }): string[] => answer.items.map((item) => item.companyId);
+  const industry = (value: string): RosterFilter => ({ field: "industry", op: "contains", value });
+
+  it("the distinct industry names, trimmed, one spelling per name, A–Z (no empty ones)", () => {
+    expect(industryNames(ROSTER_B)).toEqual(["Auto Repair", "Fitness Studio", "Fitness Studio Supplies", "Legal Services"]);
+    expect(industryNames(ROSTER)).toEqual(["Dental", "Retail", "Veterinary"]);
+  });
+
+  it("a value that is one of them (any case) matches that industry exactly", () => {
+    expect(names(answerFilter([industry("Fitness Studio")], ROSTER_B))).toEqual(["a"]);
+    expect(names(answerFilter([industry("legal services")], ROSTER_B))).toEqual(["c", "d"]);
+    // Two industry conditions: either one.
+    expect(names(answerFilter([industry("Auto Repair"), industry("Fitness Studio")], ROSTER_B))).toEqual(["a", "e"]);
+  });
+
+  it("any other value falls back to 'contains', as before", () => {
+    expect(names(answerFilter([industry("fitness")], ROSTER_B))).toEqual(["a", "b"]);
+    expect(names(answerFilter([industry("dent")], ROSTER))).toEqual(["maple", "summit"]);
+    // Without the roster's names (matchesFilter alone), every value is "contains".
+    expect(matchesFilter(company("x", "Fitness Studio Supplies"), industry("Fitness Studio"))).toBe(true);
+    expect(matchesFilter(company("x", "Fitness Studio Supplies"), industry("Fitness Studio"), new Set(["fitness studio"]))).toBe(false);
+  });
+
+  it("a re-sorted previous list uses the whole roster's names", () => {
+    const decision: RouterDecision = {
+      intent: "filter_list",
+      topic: null,
+      attribute: null,
+      filters: [industry("Fitness Studio")],
+      criteriaCount: 1,
+      exactValue: false,
+      sort: { field: "name", direction: "asc" },
+    };
+    expect(names(answerAllCompanies(decision, ROSTER_B, ["a", "b"]))).toEqual(["a"]);
   });
 });
