@@ -120,10 +120,11 @@ describe("the config itself", () => {
 
   it("Tempo's model settings and labels (2026-11-07)", () => {
     const tempo = getDataRoomChatConfig();
+    // 2026-11-07: tokenLimitParam max_completion_tokens (gpt-6-luna rejects max_tokens).
     expect(tempo.models).toEqual({
-      router: { model: "gpt-6-luna", reasoningEffort: "none" },
-      selection: { model: "gpt-6-luna", reasoningEffort: "none" },
-      opening: { model: "gpt-6-luna", reasoningEffort: "none" },
+      router: { model: "gpt-6-luna", reasoningEffort: "none", tokenLimitParam: "max_completion_tokens" },
+      selection: { model: "gpt-6-luna", reasoningEffort: "none", tokenLimitParam: "max_completion_tokens" },
+      opening: { model: "gpt-6-luna", reasoningEffort: "none", tokenLimitParam: "max_completion_tokens" },
     });
     expect(tempo.appliedFilterLabels).toEqual({
       industry: "industry",

@@ -158,11 +158,13 @@ const TEMPO_DATA_ROOM_CHAT_CONFIG: DataRoomChatConfig = {
     recent_changes: "recent changes",
   },
   // gpt-4o and gpt-4.1-mini shut down on 2027-01-14. gpt-6-luna's model page lists
-  // reasoning effort "none" for Chat Completions; no temperature is sent.
+  // reasoning effort "none" for Chat Completions; no temperature is sent. It rejects
+  // max_tokens (confirmed live 2026-11-07: "Use 'max_completion_tokens' instead."), so
+  // the output cap goes under max_completion_tokens.
   models: {
-    router: { model: "gpt-6-luna", reasoningEffort: "none" },
-    selection: { model: "gpt-6-luna", reasoningEffort: "none" },
-    opening: { model: "gpt-6-luna", reasoningEffort: "none" },
+    router: { model: "gpt-6-luna", reasoningEffort: "none", tokenLimitParam: "max_completion_tokens" },
+    selection: { model: "gpt-6-luna", reasoningEffort: "none", tokenLimitParam: "max_completion_tokens" },
+    opening: { model: "gpt-6-luna", reasoningEffort: "none", tokenLimitParam: "max_completion_tokens" },
   },
 };
 

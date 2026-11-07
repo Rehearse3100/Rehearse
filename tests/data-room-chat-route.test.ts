@@ -485,14 +485,16 @@ describe("specific research and the selection call", () => {
     });
 
     expect(state.create).toHaveBeenCalledTimes(1);
-    // 2026-11-07: the config's settings (was gpt-4o, temperature 0); max_tokens and JSON mode as before.
+    // 2026-11-07: the config's settings (was gpt-4o, temperature 0); the same cap, under
+    // max_completion_tokens (gpt-6-luna rejects max_tokens), and JSON mode as before.
     expect(state.create.mock.calls[0]?.[0]).toMatchObject({
       model: "gpt-6-luna",
       reasoning_effort: "none",
-      max_tokens: 500,
+      max_completion_tokens: 500,
       response_format: { type: "json_object" },
     });
     expect(state.create.mock.calls[0]?.[0]).not.toHaveProperty("temperature");
+    expect(state.create.mock.calls[0]?.[0]).not.toHaveProperty("max_tokens");
     const messages = selectionMessages();
     expect(messages).toHaveLength(2);
     expect(messages[0]).toEqual({ role: "system", content: SELECTION_SYSTEM_PROMPT });
@@ -666,14 +668,16 @@ describe("the opening sentence, written last from the finished answer", () => {
     });
     expect(state.open).toHaveBeenCalledTimes(1);
     expect(state.open.mock.invocationCallOrder[0]!).toBeGreaterThan(state.create.mock.invocationCallOrder[0]!);
-    // 2026-11-07: the config's settings (was gpt-4o, temperature 0.3); max_tokens and JSON mode as before.
+    // 2026-11-07: the config's settings (was gpt-4o, temperature 0.3); the same cap, under
+    // max_completion_tokens (gpt-6-luna rejects max_tokens), and JSON mode as before.
     expect(openingArgs()).toMatchObject({
       model: "gpt-6-luna",
       reasoning_effort: "none",
-      max_tokens: 100,
+      max_completion_tokens: 100,
       response_format: { type: "json_object" },
     });
     expect(openingArgs()).not.toHaveProperty("temperature");
+    expect(openingArgs()).not.toHaveProperty("max_tokens");
     expect(openingArgs().messages).toEqual([
       { role: "system", content: OPENING_SYSTEM_PROMPT },
       {
@@ -1843,10 +1847,12 @@ describe("the router call", () => {
       model: "gpt-6-luna",
       reasoning_effort: "none",
       // 2026-11-06: 600 (was 300, sized for three filters); filters are unlimited now.
-      max_tokens: 600,
+      // 2026-11-07: under max_completion_tokens (gpt-6-luna rejects max_tokens).
+      max_completion_tokens: 600,
       response_format: { type: "json_object" },
     });
     expect(args).not.toHaveProperty("temperature");
+    expect(args).not.toHaveProperty("max_tokens");
     expect(args.messages).toEqual([
       { role: "system", content: ROUTER_SYSTEM_PROMPT },
       {
@@ -1994,12 +2000,27 @@ describe("model settings: built from the config, with the DATA_ROOM_CHAT_MODEL o
     });
   }
 
-  it("Tempo's default: gpt-6-luna, reasoning effort none, no temperature; max_tokens and JSON mode as before", async () => {
+  it("Tempo's default: gpt-6-luna, reasoning effort none, no temperature; the same caps under max_completion_tokens; JSON mode", async () => {
     expect(await settingsOfAllThree()).toEqual([
-      { model: "gpt-6-luna", reasoning_effort: "none", max_tokens: 600, response_format: { type: "json_object" } },
-      { model: "gpt-6-luna", reasoning_effort: "none", max_tokens: 500, response_format: { type: "json_object" } },
-      { model: "gpt-6-luna", reasoning_effort: "none", max_tokens: 100, response_format: { type: "json_object" } },
+      { model: "gpt-6-luna", reasoning_effort: "none", max_completion_tokens: 600, response_format: { type: "json_object" } },
+      { model: "gpt-6-luna", reasoning_effort: "none", max_completion_tokens: 500, response_format: { type: "json_object" } },
+      { model: "gpt-6-luna", reasoning_effort: "none", max_completion_tokens: 100, response_format: { type: "json_object" } },
     ]);
+  });
+
+  it("Tempo's three calls send max_completion_tokens and never max_tokens (gpt-6-luna rejects it, 2026-11-07)", async () => {
+    const settings = await settingsOfAllThree();
+    expect(settings).toHaveLength(3);
+    for (const [i, call] of ["router", "selection", "opening"].map((name, n) => [n, name] as const)) {
+      expect(settings[i], call).toHaveProperty("max_completion_tokens");
+      expect(settings[i], call).not.toHaveProperty("max_tokens");
+    }
+    // An override with another model keeps the settings, so it sends max_completion_tokens too.
+    vi.stubEnv("DATA_ROOM_CHAT_MODEL", "eval-model-x");
+    state.classify.mockClear();
+    state.create.mockClear();
+    state.open.mockClear();
+    expect((await settingsOfAllThree()).every((entry) => "max_completion_tokens" in entry && !("max_tokens" in entry))).toBe(true);
   });
 
   it('"gpt-4o" brings back gpt-4o\'s old settings: temperature 0 / 0 / 0.3 and no reasoning effort', async () => {

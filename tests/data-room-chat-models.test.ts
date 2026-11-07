@@ -53,9 +53,13 @@ describe("a call's request settings", () => {
 describe("the models the calls use", () => {
   const tempo = getDataRoomChatConfig().models;
 
-  it("Tempo's default: gpt-6-luna for all three, reasoning effort none, no temperature", () => {
+  it("Tempo's default: gpt-6-luna for all three, reasoning effort none, no temperature, max_completion_tokens", () => {
     for (const call of ["router", "selection", "opening"] as const) {
-      expect(tempo[call], call).toEqual({ model: "gpt-6-luna", reasoningEffort: "none" });
+      // 2026-11-07: gpt-6-luna rejects max_tokens, so the cap goes under max_completion_tokens.
+      expect(tempo[call], call).toEqual({ model: "gpt-6-luna", reasoningEffort: "none", tokenLimitParam: "max_completion_tokens" });
+      const request = chatRequestSettings(tempo[call], 100);
+      expect(request, call).toHaveProperty("max_completion_tokens", 100);
+      expect(request, call).not.toHaveProperty("max_tokens");
     }
   });
 
