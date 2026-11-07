@@ -7,7 +7,7 @@
  * roster in code (different fields must all match; two conditions on the same field
  * mean either one, except locations, where both must hold), and the answer lists
  * every matching company A–Z from the database, under a count line and with no
- * opening sentence. A "how many companies are there?" question (no conditions) gets
+ * opening sentence (as a table: layout "table", each item with its card values). A "how many companies are there?" question (no conditions) gets
  * the roster total; an answer-key or rule-breaking question its own reply; any other
  * All-companies question one fixed reply. Used by lib/data-room-chat-router.ts
  * (filter validation) and POST /api/student/data-room-chat.
@@ -243,6 +243,8 @@ export function matchesFilters(company: FilterCompany, filters: readonly RosterF
  * The answer for one condition or several (matchesFilters): the count intro
  * (matchCountIntro), then every matching company A–Z (no other order, no ranking,
  * no cap), each "{Industry} · {N} locations · {Metro}" under its name from the database.
+ * It is shown as a table (layout "table"): each item also carries its card values
+ * (industry, locations, metro, territory, online booking); the text stays the fallback.
  */
 export function answerFilter(
   filter: RosterFilter | readonly RosterFilter[],
@@ -257,10 +259,18 @@ export function answerFilter(
   }
   return {
     intro: matchCountIntro(matches.length),
+    layout: "table",
     items: matches.map((company) => ({
       companyId: company.id,
       companyName: company.name,
       text: formatRosterListLine(company),
+      card: {
+        industry: company.industry.trim(),
+        locations: company.locations,
+        metro: company.metro?.trim() || null,
+        inTerritory: company.inTerritory,
+        onlineBooking: company.onlineBooking,
+      },
     })),
   };
 }

@@ -17,8 +17,9 @@
  * the facts of an answer with no first line of its own (withOpening). A follow-up
  * that brings back only facts already shown gets a fixed first line instead
  * (withNothingNewIntro), and so do findings the selection call says don't answer
- * the question (withRelatedFindingsIntro, read with isNoFactAnswersReply). Used by
- * POST /api/student/data-room-chat.
+ * the question (withRelatedFindingsIntro, read with isNoFactAnswersReply). A compare
+ * answer about 2–3 companies also carries card values and signals for a side-by-side
+ * table (withCompareLayout). Used by POST /api/student/data-room-chat.
  */
 
 import type { CompanyAllowance } from "@/lib/data-room-chat-policy";
@@ -27,6 +28,7 @@ import {
   redactCompanyMentions,
   textContainsCompanyName,
   toWords,
+  type AnswerCard,
   type FirstWordReplacement,
   type ScopedAnswer,
   type ScopeIndex,
@@ -285,6 +287,51 @@ export function renderAnswer(blocks: readonly CompanyBlock[], keepEmpty: boolean
       : []
   );
   return items.length > 0 ? { intro: "", items } : { intro: NOTHING_FINDABLE_REPLY, items: [] };
+}
+
+/**
+ * A company's card values for a compare column, from the same stored values as its
+ * overview (industry: the title-cased vertical, else the industry column).
+ */
+export function compareCard(source: CompanyFactSource): AnswerCard {
+  const industry = source.vertical?.trim() ? titleCase(source.vertical.trim()) : source.industry?.trim() ?? "";
+  return {
+    industry,
+    locations: source.locations,
+    metro: source.metro?.trim() || null,
+    inTerritory: source.inTerritory,
+    onlineBooking: source.onlineBooking,
+  };
+}
+
+/**
+ * A compare answer about two or three companies, shown side by side (layout
+ * "compare"): each item also carries its card values and public signals; its text
+ * (the overview) stays the fallback. One company, or a company without a source, is
+ * left as it is.
+ */
+export function withCompareLayout(answer: ScopedAnswer, sources: readonly CompanyFactSource[]): ScopedAnswer {
+  if (answer.items.length < 2) {
+    return answer;
+  }
+  const byId = new Map(sources.map((source) => [source.id, source]));
+  if (!answer.items.every((item) => byId.has(item.companyId))) {
+    return answer;
+  }
+  return {
+    ...answer,
+    layout: "compare",
+    items: answer.items.map((item) => {
+      const source = byId.get(item.companyId);
+      return source
+        ? {
+            ...item,
+            card: compareCard(source),
+            signals: source.publicSignals.map((signal) => signal.trim()).filter((signal) => signal.length > 0),
+          }
+        : item;
+    }),
+  };
 }
 
 /**

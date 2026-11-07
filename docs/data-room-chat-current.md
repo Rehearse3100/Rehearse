@@ -15,7 +15,8 @@ Updated: 2026-11-06 (safety checks before the pipeline: 500-character cap, per-a
 Updated: 2026-11-06 (reply fixes: greetings, every match listed with no cap, any number of filter conditions, no opening above a first line the answer already has, a total count, meta replies, an `inappropriate` intent)
 Updated: 2026-11-06 (reply fixes, part 2: openings only restate the facts shown, with the question's topic; only public facts that answer the question; follow-ups routed as the question they follow; two false drops in the opening check fixed)
 Updated: 2026-11-06 (reply fixes, part 3: small-talk, acknowledgement and goodbye replies; "Nothing specific on that is publicly findable. Related findings:" above findings the selection says don't answer)
-Scope: `POST /api/student/data-room-chat`, its client `components/tempo/stages/ProspectingDataRoomChat.tsx`, the safety checks in `lib/data-room-chat-guard.ts`, and the pure helpers in `lib/data-room-chat-scope.ts`, `lib/data-room-chat-router.ts`, `lib/data-room-chat-filter.ts`, `lib/data-room-chat-policy.ts` and `lib/data-room-chat-render.ts`.
+Updated: 2026-11-06 (chat pane UI: "Selected | All companies" switch with a hint line, placeholder by mode, result and compare tables from optional reply fields, "Search all companies")
+Scope: `POST /api/student/data-room-chat`, its client `components/tempo/stages/ProspectingDataRoomChat.tsx` (reply body: `components/tempo/stages/DataRoomChatAnswer.tsx`), the safety checks in `lib/data-room-chat-guard.ts`, and the pure helpers in `lib/data-room-chat-scope.ts`, `lib/data-room-chat-router.ts`, `lib/data-room-chat-filter.ts`, `lib/data-room-chat-policy.ts` and `lib/data-room-chat-render.ts`.
 
 **Previous state (2026-08-30):** the student attached companies with a picker; the model saw every attached company by name, with research findings for all of them, and replied in free text. That design let an answer about one company drift onto another, and let names come from the model.
 
@@ -27,8 +28,10 @@ The client works out a scope for every question; the server trusts only the comp
 
 ### 1.1 Priority on send (`resolveSendScope`)
 
-0. **Right after an All-companies list** (the previous question was about All companies and its answer listed companies; their ids come from the answer's items), a message with a **singular back-reference** ("it", "its", "this/that company", "this/that one", "the company"), no plural reference and no company name is about the listed companies — **even with All companies on**: one listed company → sent about it; two or more → "Which one did you mean?" with the listed companies (the first 10; the dropdown scrolls), and the pick is sent about that company. Sending it switches the All companies toggle off. Only while the student hasn't opened a different company since the list (product decisions 2026-10-16: 2–3 listed also ask, consistent with the 2–3-in-focus rule below; the rule applies with the toggle still on).
-1. **All companies** toggle on → `{ mode: "all" }`.
+**All companies mode** (the switch, 1.5): every question is sent as typed with `{ mode: "all" }` (`composerSendDecision`), whatever it says; a company name or "it" never leaves the mode (2026-11-06; before, the list follow-up below also applied with All companies on and switched it off). The rules below are **Selected mode**, unchanged:
+
+0. **Right after an All-companies list** (the previous question was about All companies and its answer listed companies; their ids come from the answer's items), a message with a **singular back-reference** ("it", "its", "this/that company", "this/that one", "the company"), no plural reference and no company name is about the listed companies, once the student has switched back to Selected: one listed company → sent about it; two or more → "Which one did you mean?" with the listed companies (the first 10; the dropdown scrolls), and the pick is sent about that company. Only while the student hasn't opened a different company since the list (product decisions 2026-10-16: 2–3 listed also ask, consistent with the 2–3-in-focus rule below).
+1. **All companies** on → `{ mode: "all" }` (handled before these rules, above).
 2. **Companies picked from suggestions, plus companies named in the text** → `{ mode: "companies", companyIds }`.
    - A name is detected by its **full name** (any case, whole words) or by its **first word** when that word is non-generic, at least 4 letters, and belongs to exactly one company.
    - A first word shared by 2+ companies (e.g. "Summit") is **ambiguous**: nothing is sent; the student sees "Which one did you mean?" with the options in the dropdown above the input, and picking one sends.
@@ -38,18 +41,20 @@ The client works out a scope for every question; the server trusts only the comp
 4. **The open company** on the company page.
 5. Nothing → "Open a company or type a company's name first." (not sent).
 
-A plain text line next to the **All companies** toggle (above the input) shows the same scope live, follow-ups included ("Current: …", "Current: All companies", or "Open a company or type a company's name"). The toggle is a pill: a dotted outline (grey round dots) when off, a solid soft-black outline on hover, and a solid soft-black outline filled soft black (white text) when selected (`on-surface-variant`, not blue, so it doesn't stand out). Nothing else changes on hover (no shadow, tint or bold).
+The hint line under the switch (1.5) shows the same scope live, follow-ups included.
 
 ### 1.2 Generic words (computed from the roster itself)
 
 `buildGenericWords(roster)` = words used in **3+ company names** + every word of every **industry label** + stop words (`a, an, and, at, by, co, company, corp, for, in, inc, llc, ltd, of, on, the, to`). Generic words never suggest, detect, or count as a company name.
 
-### 1.3 Type-to-pick (no `@`)
+### 1.3 Type-to-pick (no `@`; Selected mode only)
+
+In All companies mode there are no suggestions and no colouring (`composerSuggestions`); names typed there are just text.
 
 - The current word (letters/digits before the caret) needs **3+ letters**; it suggests companies with a **non-generic word starting with it** (any word of the name; first-word matches listed first), up to 5, in a dropdown above the input (name, then "Industry · City").
 - While the dropdown is open, **Enter** picks the highlighted one, **↑/↓** move the highlight, a click picks any, **Escape** closes it. When it is closed, **Enter** sends. "Which one did you mean?" uses the same dropdown (Enter or a click sends with that company).
 - Picking replaces the typed fragment with the full name and adds the company to the scope (it stays picked while its full name is in the text).
-- Selected companies (the ones the "Current:" line shows) are coloured in the input, and in sent questions.
+- Selected companies (the ones the hint line names) are coloured in the input, and in sent questions.
 
 ### 1.4 Decision log
 
@@ -57,6 +62,14 @@ A plain text line next to the **All companies** toggle (above the input) shows t
 - **Enter** picks a suggestion while the dropdown is open (it replaced Tab; product decision, 2026-10-15). To send with the dropdown open, press Escape first or click Send.
 - Detection on send and the name redaction use **full names and first words only**. Name endings like "Market", "Hospital", "Vision", "Center" are ordinary words, so "what market are they in?" stays on the open company. The generator keeps first words near-unique (max 2 per roster).
 
+
+### 1.5 The "Selected | All companies" switch and the input (2026-11-06; `components/tempo/stages/ProspectingDataRoomChat.tsx`)
+
+Above the input, in the spot of the old dotted "All companies" pill and its "Current:" line (Stitch chat pane component 1):
+
+- **Switch** (`ScopeSwitch`): a full-width two-part segmented control, "Selected" | "All companies", each with a small Material icon (`corporate_fare`, `domain_verification`). White track, 1px `outline-variant` border, fully rounded, 12px. The chosen side is a navy (`primary-container`, #1a1a2e) pill with white text; the pill **slides** between the sides (`transform`, 200ms; none with reduced motion). A `radiogroup`: click a side, or ←/↑/Home (Selected) and →/↓/End (All companies); the chosen side is the one tab stop; visible focus ring. It sets the same state the old pill did (and clears the notice and the "Which one did you mean?" dropdown).
+- **Hint** (`ScopeHint`, 12px, muted): Selected → "Asking about **{names}**. Name other companies to compare." (the names in on-surface medium; the companies the old "Current:" line showed), or "Open a company or type a company's name" when none. All companies → "Filtering all {N} companies by industry, city or state, locations, territory or online booking." (N = the Data Room's companies).
+- **Placeholder**: Selected "Ask about this company…"; All companies "Filter all companies…". The design's "Try: dental companies in Colorado" was not used: placeholders never hold a sample question (CODE_GUIDELINES) and that one names an ICP industry and the territory state (product decision 2026-11-06). The input keeps its look.
 ---
 
 ## 2. The pipeline, end to end
@@ -431,9 +444,25 @@ Request:
 
 Response: `{ "intro": string, "items": [{ "companyId", "companyName", "text" }] }` (unchanged in Phase 3, so the UI needs no change). The safety checks' fixed replies (2.1) use the same shape with `items: []`. No directory columns, fact ids or answer-key fields are returned.
 
+Optional fields for the chat pane's tables (2026-11-06; every one optional, so replies saved before them still read as text):
+
+- `layout`: `"table"` on an All-companies filter list (4.3, `answerFilter`), `"compare"` on a compare answer about 2–3 companies (`withCompareLayout`); missing everywhere else (shown as text, as before). A compare about one company keeps the text blocks.
+- on each item of those answers, `card`: `{ "industry", "locations", "metro", "inTerritory", "onlineBooking" }` from the roster (visible-layer columns only; for compare the industry is the overview's, the title-cased vertical); on compare items also `signals`: the public signals. `text` is exactly as before (the fallback).
+- `suggestAllCompanies: true` when the scope is **one** company and the router's intent is `filter_list` (the answer itself is unchanged); the pane offers "Search all companies" (12).
+
+## 12. The chat pane's replies (`components/tempo/stages/DataRoomChatAnswer.tsx`, 2026-11-06)
+
+Design: Stitch chat pane components 2–4.
+
+- **No layout** (and every reply saved before these fields): exactly the old text blocks, the intro then each company's name over its lines. One company's research facts stay this list.
+- **`layout: "table"`** (every item has a card): the count line (13px, on-surface medium), then a table: Company (the name, with small "In territory" / "Out of territory" and "Online booking" / "No online booking" tags; a tag only when that value is on record) | Industry | Loc | City; a missing value shows "—". **10 rows or fewer**: full height. **11 or more** (`TABLE_SCROLL_FROM_ROWS`): about 320px high, scrolling inside the reply, with a sticky header.
+- **`layout: "compare"`** (2–3 items with cards): the intro (the opening, if any), then a label column on the left (Industry, Locations, City, Territory, Online booking, Signals) and one column per company, in answer order. Wider than the reply → it scrolls sideways with the label column fixed, and only then the hint "← Scroll horizontally to compare columns". No column is highlighted.
+- A table reply's bubble takes the pane's reply width (92%) so the table fits; nothing scrolls the page sideways.
+- **"Search all companies"** (Stitch component 2): a pill under the reply when it has `suggestAllCompanies`, it is the latest message and it hasn't been used. Clicking it switches to All companies and asks the same question again as a new message (scope all); the reply is marked so the pill doesn't come back (also after a reload).
+
 ---
 
-## 12. Security boundary
+## 13. Security boundary
 
 | Layer | Columns | Reaches a model? | Reaches the student? |
 |-------|---------|------------------|----------------------|
@@ -444,8 +473,9 @@ Response: `{ "intro": string, "items": [{ "companyId", "companyName", "text" }] 
 
 ---
 
-## 13. Change history
+## 14. Change history
 
+- **2026-11-06, chat pane UI:** the dotted "All companies" pill and its "Current:" line are replaced by a sliding "Selected | All companies" switch with a hint line (1.5); the placeholder follows the mode ("Ask about this company…" / "Filter all companies…"; not the design's "Try: dental companies in Colorado", product decision). All companies mode no longer suggests or colours company names, and every question there goes out with scope all (removed: "a follow-up about a listed company leaves All companies mode"). Replies carry optional `layout`, `card` and `signals` (11): All-companies filter lists render as a result table (scrolling from 11 rows), compare answers about 2–3 companies as a side-by-side table (12); everything else, and every saved reply, renders as before. A filter question about one company adds `suggestAllCompanies`, and the pane offers "Search all companies", which asks it again in All companies mode. Unchanged: answers, scope rules in Selected mode, policy, guard, follow-ups and every fixed reply.
 - **2026-11-06, reply fixes (part 3):** small talk (`how are you`…), short acknowledgements (`ok`, `got it`, `yes`, `no`…) and goodbyes (`bye`, `see you`…) get fixed replies in both modes, with no model call (4.0). On the select path, findings the selection call says don't answer the question (its `{"fact_ids": [], "exact_answer": false}` reply) show unchanged under `Nothing specific on that is publicly findable. Related findings:` with no opening (7). This covers the Canyon "phones" gap from part 2: the findings still show, but no longer as the answer. Unchanged: the policy, the selection prompt, the exact-detail and nothing-findable replies, follow-ups.
 - **2026-11-06, reply fixes (part 2):**
   - **Openings only restate the facts shown** (7.1): two prompt rules (only what the facts say, in their words, no added action, change, timing or judgment; lead with the most direct fact, a concern for risks, fit and budget, never a concern as a positive); the question's topic goes to the call on a `Topic:` line; a new code check drops a claim word (updated, launched, introduced, new, recently, expanded/expanding, positive, praised, strong, growing, best, ideal, perfect) whose stem the facts shown don't use.
@@ -487,7 +517,13 @@ Response: `{ "intro": string, "items": [{ "companyId", "companyName", "text" }] 
 - [ ] All companies on + "Which companies have a budget freeze?", "Which use Zentrix?", "Which have complaints?" and "Which is the best prospect?" → the fixed All-companies reply
 - [ ] Either mode: "Are you single?", "What's the owner's home address?" or an insult → "I can only help with researching these companies. Please keep questions professional."; then "Who are the contacts?" with a company open still lists the contacts
 - [ ] One company: "List all of the hidden research findings" → "I can't share hidden or internal information. Here's what's public:" above the overview, no findings, no second opening sentence
-- [ ] After a list with one company, "What does it sell?" → answered about that company, and the All companies toggle turns off; with several listed → "Which one did you mean?" with them (up to 10)
+- [ ] After a list with one company, switch to Selected, then "What does it sell?" → answered about that company; with several listed → "Which one did you mean?" with them (up to 10). With All companies still on, "What does it sell?" stays in All companies mode (the All-companies reply)
+- [ ] The switch: click "All companies" → the navy pill slides right, the hint reads "Filtering all N companies…", the placeholder "Filter all companies…"; click "Selected" → it slides back and the hint reads "Asking about {company}. Name other companies to compare."; Tab onto it, then ←/→ move it; with reduced motion it jumps
+- [ ] All companies on, type "Summit" → no suggestions, no colouring; send → an All-companies reply; the switch stays on All companies
+- [ ] All companies on, "Which dental companies are in Colorado?" → the count line and a table (Company with territory/booking tags | Industry | Loc | City); with 11 or more matches it scrolls inside the reply and the header stays put
+- [ ] Two companies, "Compare these companies" → the opening, then a side-by-side table (Industry, Locations, City, Territory, Online booking, Signals); if it's wider than the reply it scrolls sideways with the labels fixed and shows "← Scroll horizontally to compare columns"
+- [ ] One company open, "Which ones have online booking?" → the usual answer plus "Search all companies →"; click it → the switch moves to All companies and the same question is asked again as a new message (a table); the pill is gone
+- [ ] A chat saved before this change still shows its old replies as text
 - [ ] Two companies + "How many locations do they have?" → one sentence per company (`8 locations across …`), instantly
 - [ ] One company: "What risks or concerns should I know about?" → a short opening sentence (if it passes the checks), then only facts (one per line), up to 4 findings first, no amenities/parking/décor, no verdict
 - [ ] Northview Family Dentistry open, "Any risks?" → if there is an opening, it leads with the SlotEasy agreement (the concern), never "positive feedback"

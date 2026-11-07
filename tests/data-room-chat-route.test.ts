@@ -300,6 +300,32 @@ const SUMMIT_OVERVIEW = [
   "Opened 8th location three months ago",
 ].join("\n");
 
+/**
+ * An All-companies filter answer as the pane receives it (2026-11-06): the same intro
+ * and list lines, plus layout "table" and each company's card from the roster fixture.
+ */
+function asTable(answer: { intro: string; items: Array<{ companyId: string; companyName: string; text: string }> }): unknown {
+  return {
+    ...answer,
+    layout: "table",
+    items: answer.items.map((item) => {
+      const row = ROSTER.find((company) => company.id === item.companyId);
+      return {
+        ...item,
+        card: row
+          ? {
+              industry: row.industry,
+              locations: row.locations,
+              metro: row.metro,
+              inTerritory: row.in_territory,
+              onlineBooking: row.online_booking,
+            }
+          : undefined,
+      };
+    }),
+  };
+}
+
 beforeEach(() => {
   state.create.mockReset();
   state.classify.mockReset();
@@ -367,14 +393,25 @@ describe("answers rendered with no answering call", () => {
 
   it("compare: each company's overview, side by side, with no model after the router", async () => {
     state.classify.mockResolvedValueOnce(routerReply("compare"));
+    // 2026-11-06: the same overviews (the text fallback), shown side by side: layout
+    // "compare", with each company's card values and public signals.
     expect(await ask({ scope: TWO, newMessage: "Compare these companies" })).toEqual({
       intro: "",
+      layout: "compare",
       items: [
-        { companyId: "summit-dental", companyName: "Summit Dental Group", text: SUMMIT_OVERVIEW },
+        {
+          companyId: "summit-dental",
+          companyName: "Summit Dental Group",
+          text: SUMMIT_OVERVIEW,
+          card: { industry: "Dental", locations: 8, metro: "Front Range, CO", inTerritory: true, onlineBooking: false },
+          signals: ["Opened 8th location three months ago"],
+        },
         {
           companyId: "falcon",
           companyName: "Falcon Market",
           text: "Retail · 1 location · Denver, CO\nIn territory.\nNo online booking.\nFalcon Market sells local produce.\nHiring a cashier",
+          card: { industry: "Retail", locations: 1, metro: "Denver, CO", inTerritory: true, onlineBooking: false },
+          signals: ["Hiring a cashier"],
         },
       ],
     });
@@ -730,13 +767,15 @@ describe("All companies: one validated filter, run in code", () => {
 
   it("runs the filter over the roster: a count, then names from the database A–Z; only the classifier is called", async () => {
     state.classify.mockResolvedValueOnce(filterReply({ field: "online_booking", op: "eq", value: true }));
-    expect(await ask({ scope: ALL, newMessage: "Which ones have online booking?" })).toEqual({
-      intro: "2 companies match.",
-      items: [
-        { companyId: "maple", companyName: "Maple Family Dentistry", text: "Dental · 3 locations · Boulder, CO" },
-        { companyId: "summit-outdoor", companyName: "Summit Outdoor Gear", text: "Retail · 2 locations · Boise, ID" },
-      ],
-    });
+    expect(await ask({ scope: ALL, newMessage: "Which ones have online booking?" })).toEqual(
+      asTable({
+        intro: "2 companies match.",
+        items: [
+          { companyId: "maple", companyName: "Maple Family Dentistry", text: "Dental · 3 locations · Boulder, CO" },
+          { companyId: "summit-outdoor", companyName: "Summit Outdoor Gear", text: "Retail · 2 locations · Boise, ID" },
+        ],
+      })
+    );
     expect(state.classify).toHaveBeenCalledTimes(1);
     expect(state.create).not.toHaveBeenCalled();
     expect(state.queries.some((q) => q.table === "crm_prospect_contacts" || q.columns === "research_facts")).toBe(false);
@@ -770,10 +809,12 @@ describe("All companies: one validated filter, run in code", () => {
     expect(dental.items).toHaveLength(4);
 
     state.classify.mockResolvedValueOnce(filterReply({ field: "territory", op: "eq", value: false }));
-    expect(await ask({ scope: ALL, newMessage: "How many are outside my territory?" })).toEqual({
-      intro: "1 company matches.",
-      items: [{ companyId: "summit-outdoor", companyName: "Summit Outdoor Gear", text: "Retail · 2 locations · Boise, ID" }],
-    });
+    expect(await ask({ scope: ALL, newMessage: "How many are outside my territory?" })).toEqual(
+      asTable({
+        intro: "1 company matches.",
+        items: [{ companyId: "summit-outdoor", companyName: "Summit Outdoor Gear", text: "Retail · 2 locations · Boise, ID" }],
+      })
+    );
   });
 
   it("alphabetical, every match shown (no cap); no matches", async () => {
@@ -842,10 +883,12 @@ describe("All companies: up to 3 conditions, run in code", () => {
       "Maple Family Dentistry",
       "Summit Dental Group",
     ]);
-    expect(await run(filtersReply([DENTAL, CO, BOOKING]), "Which dental companies in Colorado have online booking?")).toEqual({
-      intro: "1 company matches.",
-      items: [{ companyId: "maple", companyName: "Maple Family Dentistry", text: "Dental · 3 locations · Boulder, CO" }],
-    });
+    expect(await run(filtersReply([DENTAL, CO, BOOKING]), "Which dental companies in Colorado have online booking?")).toEqual(
+      asTable({
+        intro: "1 company matches.",
+        items: [{ companyId: "maple", companyName: "Maple Family Dentistry", text: "Dental · 3 locations · Boulder, CO" }],
+      })
+    );
     expect(state.create).not.toHaveBeenCalled();
   });
 
@@ -956,10 +999,12 @@ describe("reply fixes: greetings, full lists, any number of conditions, first li
       { field: "online_booking", op: "eq", value: false },
     ];
     state.classify.mockResolvedValueOnce(listReply(five, 5));
-    expect(await ask({ scope: ALL, newMessage: "Dental in Colorado, in territory, 5+ locations, no online booking?" })).toEqual({
-      intro: "1 company matches.",
-      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: "Dental · 8 locations · Front Range, CO" }],
-    });
+    expect(await ask({ scope: ALL, newMessage: "Dental in Colorado, in territory, 5+ locations, no online booking?" })).toEqual(
+      asTable({
+        intro: "1 company matches.",
+        items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: "Dental · 8 locations · Front Range, CO" }],
+      })
+    );
   });
 
   it('a range counts as one condition: "Optometry in territory with 5 to 8 locations" filters', async () => {
@@ -1321,6 +1366,43 @@ describe("reply fixes, part 3: small talk, and an honest first line for related 
       intro: "",
       items: [{ companyId: "canyon", companyName: "Canyon Aesthetics", text: NOTHING_FINDABLE_REPLY }],
     });
+  });
+});
+
+describe("chat pane fields: tables and the search-all suggestion", () => {
+  it("suggestAllCompanies only for a filter question about ONE company; the answer itself is as before", async () => {
+    state.classify.mockResolvedValueOnce(routerReply("filter_list"));
+    state.create.mockResolvedValueOnce(selection(["C1:p:online_booking"]));
+    expect(await ask({ scope: ONE, newMessage: "Which ones have online booking?" })).toEqual({
+      intro: "",
+      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: "No online booking." }],
+      suggestAllCompanies: true,
+    });
+
+    // Not for two companies, another intent, or All companies.
+    state.classify.mockResolvedValueOnce(routerReply("filter_list"));
+    state.create.mockResolvedValueOnce(selection(["C2:p:online_booking"]));
+    expect(await ask({ scope: TWO, newMessage: "Which ones have online booking?" })).not.toHaveProperty("suggestAllCompanies");
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "budget"));
+    state.create.mockResolvedValueOnce(selection(["C1:h:1"]));
+    expect(await ask({ scope: ONE, newMessage: "What about their budget?" })).not.toHaveProperty("suggestAllCompanies");
+    state.classify.mockResolvedValueOnce(routerReply("overview"));
+    expect(await ask({ scope: ONE, newMessage: "Tell me about them" })).not.toHaveProperty("suggestAllCompanies");
+    state.classify.mockResolvedValueOnce(
+      modelReply({ intent: "filter_list", filter: { field: "online_booking", op: "eq", value: true }, criteria_count: 1, confidence: "high" })
+    );
+    expect(await ask({ scope: ALL, newMessage: "Which ones have online booking?" })).not.toHaveProperty("suggestAllCompanies");
+  });
+
+  it("compare about one company keeps the text blocks (no table); other answers carry no layout", async () => {
+    state.classify.mockResolvedValueOnce(routerReply("compare"));
+    const one = (await ask({ scope: ONE, newMessage: "Compare them" })) as Record<string, unknown>;
+    expect(one).not.toHaveProperty("layout");
+    expect(JSON.stringify(one)).not.toContain('"card"');
+    state.classify.mockResolvedValueOnce(routerReply("overview"));
+    expect(await ask({ scope: TWO, newMessage: "Tell me about them" })).not.toHaveProperty("layout");
+    // A company-names answer stays a list.
+    expect(await ask({ scope: ALL, newMessage: "tell me about companies starting with s" })).not.toHaveProperty("layout");
   });
 });
 

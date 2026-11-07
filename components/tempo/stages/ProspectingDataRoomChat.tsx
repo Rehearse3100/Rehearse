@@ -1,14 +1,19 @@
 /**
  * ProspectingDataRoomChat.tsx
  * Data Room AI Research Assistant: one transcript for the whole Data Room.
- * Each question is about a scope worked out live (lib/data-room-chat-scope.ts):
- * All companies, companies picked from suggestions or named in the text, the
- * previous question's companies (follow-ups, until a different company is opened;
- * after an All-companies list, "it" means a listed company and leaves All mode),
- * or the open company. Type-to-pick: after 3 letters, matching companies appear in a
+ * A sliding "Selected | All companies" switch above the input picks the mode, with
+ * a hint line under it. Selected: each question is about a scope worked out live
+ * (lib/data-room-chat-scope.ts): companies picked from suggestions or named in the
+ * text, the previous question's companies (follow-ups, until a different company is
+ * opened; right after an All-companies list, "it" means a listed company), or the
+ * open company. Type-to-pick: after 3 letters, matching companies appear in a
  * dropdown above the input (Enter picks the highlighted one, then Enter sends); "Which one did you
- * mean?" uses the same dropdown. The server receives company ids only and returns
- * per-company blocks; names shown come from the server reply. The input takes at
+ * mean?" uses the same dropdown. All companies: no name suggestions or highlighting,
+ * and every question goes out as typed with scope all (it never leaves the mode).
+ * The server receives company ids only and returns per-company blocks; names shown
+ * come from the server reply. Replies render as text blocks, a result table or a
+ * compare table (DataRoomChatAnswer.tsx); a filter question about one company offers
+ * "Search all companies", which asks it again in All companies mode. The input takes at
  * most 500 characters, with an "N / 500" counter past 400 (lib/data-room-chat-guard.ts).
  */
 
@@ -17,6 +22,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import type { DataRoomCompany } from "@/app/api/student/data-room/route";
+import { answerLayoutOf, DataRoomChatAnswer, SearchAllCompaniesButton } from "@/components/tempo/stages/DataRoomChatAnswer";
 import { DATA_ROOM_CHAT_COUNTER_FROM, DATA_ROOM_CHAT_MAX_CHARS } from "@/lib/data-room-chat-guard";
 import {
   buildScopeIndex,
@@ -26,10 +32,16 @@ import {
   suggestCompanies,
   textContainsCompanyName,
   wordFragmentBeforeCaret,
+  type AnswerCard,
+  type AnswerLayout,
   type ChatScope,
   type LastQuestion,
   type ScopeCompany,
+  type ScopeDecision,
+  type ScopedAnswerItem,
   type ScopeIndex,
+  type ScopeInput,
+  type ScopePreview,
 } from "@/lib/data-room-chat-scope";
 import { DATA_ROOM_CHAT_STORAGE_PREFIX, sanitizeAiResearchReply } from "@/lib/tempo-prospecting";
 
@@ -48,13 +60,10 @@ type DropdownPanel = {
   highlighted: number;
 };
 
-type AnswerItem = {
-  companyId: string;
-  companyName: string;
-  text: string;
-};
+/** One company's block in a reply; card and signals only come with table and compare replies. */
+type AnswerItem = ScopedAnswerItem;
 
-type UserMessage = {
+export type UserMessage = {
   id: string;
   role: "user";
   content: string;
@@ -67,21 +76,29 @@ type UserMessage = {
   openCompanyId?: string | null;
 };
 
-type AssistantMessage = {
+export type AssistantMessage = {
   id: string;
   role: "assistant";
   scope: ChatScope;
   intro: string;
   items: AnswerItem[];
+  /** "table" or "compare" from the server; missing on replies saved before tables (shown as text). */
+  layout?: AnswerLayout;
+  /** A filter question about one company: "Search all companies" is offered under it. */
+  suggestAllCompanies?: boolean;
+  /** "Search all companies" was used on this reply, so it isn't offered again. */
+  isSearchAllUsed?: boolean;
   /** Request failures are shown but never sent back as history. */
   isError?: boolean;
 };
 
-type TranscriptMessage = UserMessage | AssistantMessage;
+export type TranscriptMessage = UserMessage | AssistantMessage;
 
 type ChatReply = {
   intro?: unknown;
   items?: unknown;
+  layout?: unknown;
+  suggestAllCompanies?: unknown;
   error?: unknown;
 };
 
@@ -197,8 +214,30 @@ function saveTranscript(attemptId: string, messages: TranscriptMessage[]): void 
   }
 }
 
-/** Server reply → answer items (names are the server's, never typed by the model). */
-function parseAnswerItems(value: unknown): AnswerItem[] {
+/** A card from the server reply, or undefined when any value has the wrong type. */
+function parseAnswerCard(value: unknown): AnswerCard | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const { industry, locations, metro, inTerritory, onlineBooking } = value as Record<string, unknown>;
+  const isNullableBoolean = (field: unknown): field is boolean | null => field === null || typeof field === "boolean";
+  if (
+    typeof industry !== "string" ||
+    !(locations === null || (typeof locations === "number" && Number.isFinite(locations))) ||
+    !(metro === null || typeof metro === "string") ||
+    !isNullableBoolean(inTerritory) ||
+    !isNullableBoolean(onlineBooking)
+  ) {
+    return undefined;
+  }
+  return { industry, locations: locations as number | null, metro: metro as string | null, inTerritory, onlineBooking };
+}
+
+/**
+ * Server reply → answer items (names are the server's, never typed by the model),
+ * with the card values and signals tables use when they are well formed.
+ */
+export function parseAnswerItems(value: unknown): AnswerItem[] {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -206,12 +245,30 @@ function parseAnswerItems(value: unknown): AnswerItem[] {
     if (!item || typeof item !== "object") {
       return [];
     }
-    const { companyId, companyName, text } = item as Record<string, unknown>;
+    const { companyId, companyName, text, card, signals } = item as Record<string, unknown>;
     if (typeof companyId !== "string" || typeof companyName !== "string" || typeof text !== "string") {
       return [];
     }
-    return [{ companyId, companyName, text: sanitizeAiResearchReply(text) }];
+    const parsedCard = parseAnswerCard(card);
+    const parsedSignals =
+      Array.isArray(signals) && signals.every((signal) => typeof signal === "string")
+        ? signals.map((signal: string) => sanitizeAiResearchReply(signal))
+        : undefined;
+    return [
+      {
+        companyId,
+        companyName,
+        text: sanitizeAiResearchReply(text),
+        ...(parsedCard ? { card: parsedCard } : {}),
+        ...(parsedSignals ? { signals: parsedSignals } : {}),
+      },
+    ];
   });
+}
+
+/** The server's layout, or undefined (text blocks). */
+function parseAnswerLayout(value: unknown): AnswerLayout | undefined {
+  return value === "list" || value === "table" || value === "compare" ? value : undefined;
 }
 
 /** History entry sent to the server: ids and text only, never company names. */
@@ -227,6 +284,189 @@ function toHistoryEntry(message: TranscriptMessage): Record<string, unknown> {
   };
 }
 
+// ── Mode: the switch, its hint, and what each mode does ───
+
+/** Input placeholders by mode (no sample question: placeholders never suggest an answer). */
+export const SELECTED_PLACEHOLDER = "Ask about this company…";
+export const ALL_COMPANIES_PLACEHOLDER = "Filter all companies…";
+
+/** The input's placeholder in this mode. */
+export function chatPlaceholder(isAll: boolean): string {
+  return isAll ? ALL_COMPANIES_PLACEHOLDER : SELECTED_PLACEHOLDER;
+}
+
+/**
+ * The switch side a key moves to (radiogroup keys): ←/↑/Home → Selected (false),
+ * →/↓/End → All companies (true); null for any other key.
+ */
+export function scopeSwitchTarget(key: string): boolean | null {
+  switch (key) {
+    case "ArrowLeft":
+    case "ArrowUp":
+    case "Home":
+      return false;
+    case "ArrowRight":
+    case "ArrowDown":
+    case "End":
+      return true;
+    default:
+      return null;
+  }
+}
+
+/** Company-name suggestions for the word before the caret; none in All companies mode or while hidden. */
+export function composerSuggestions(
+  index: ScopeIndex,
+  text: string,
+  caret: number,
+  isAll: boolean,
+  isHidden: boolean
+): ScopeCompany[] {
+  const fragment = wordFragmentBeforeCaret(text, caret);
+  return isAll || isHidden || !fragment ? [] : suggestCompanies(index, fragment.fragment);
+}
+
+/**
+ * Where a question goes. All companies: always scope all, as typed (naming a company
+ * or "it" after a list never leaves the mode). Selected: resolveSendScope, unchanged.
+ */
+export function composerSendDecision(input: ScopeInput): ScopeDecision {
+  return input.allCompanies ? { kind: "send", scope: { mode: "all" } } : resolveSendScope(input);
+}
+
+/** The live scope the hint shows: "all" in All companies mode, else previewScope (as the "Current:" line was). */
+export function composerPreview(input: ScopeInput): ScopePreview {
+  return input.allCompanies ? { kind: "all" } : previewScope(input);
+}
+
+/**
+ * The question to ask again about every company, when the reply with this id is the
+ * latest message, offers "Search all companies", hasn't used it and follows a
+ * question; null otherwise (so the pill shows only once, on the latest reply).
+ */
+export function searchAllRequest(
+  messages: readonly TranscriptMessage[],
+  replyId: string
+): { text: string; scope: ChatScope } | null {
+  const reply = messages[messages.length - 1];
+  const question = messages[messages.length - 2];
+  if (
+    reply?.role !== "assistant" ||
+    reply.id !== replyId ||
+    !reply.suggestAllCompanies ||
+    reply.isSearchAllUsed ||
+    reply.isError ||
+    question?.role !== "user"
+  ) {
+    return null;
+  }
+  return { text: question.content, scope: { mode: "all" } };
+}
+
+const SCOPE_OPTIONS = [
+  { isAll: false, label: "Selected", icon: "corporate_fare" },
+  { isAll: true, label: "All companies", icon: "domain_verification" },
+] as const;
+
+/**
+ * "Selected | All companies": a two-part segmented control whose navy pill slides to
+ * the chosen side (200ms; none with reduced motion). A radiogroup: click a side, or
+ * use the arrow keys, Home or End; the chosen side is the one tab stop.
+ */
+export function ScopeSwitch({
+  isAll,
+  onChange,
+}: {
+  isAll: boolean;
+  onChange: (isAll: boolean) => void;
+}): React.ReactElement {
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>): void => {
+    const target = scopeSwitchTarget(event.key);
+    if (target === null) {
+      return;
+    }
+    event.preventDefault();
+    onChange(target);
+    optionRefs.current[target ? 1 : 0]?.focus();
+  };
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Ask about"
+      className="relative grid grid-cols-2 p-0.5 bg-white border border-outline-variant rounded-full text-[12px] font-medium select-none shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
+    >
+      {/* The pill: half the track, slid to the chosen side. */}
+      <span
+        aria-hidden="true"
+        data-side={isAll ? "all" : "selected"}
+        className={`pointer-events-none absolute inset-y-0.5 left-0.5 w-[calc(50%-2px)] rounded-full bg-primary-container shadow-sm transition-transform duration-200 ease-out motion-reduce:transition-none ${
+          isAll ? "translate-x-full" : "translate-x-0"
+        }`}
+      />
+      {SCOPE_OPTIONS.map((option, i) => {
+        const isChecked = option.isAll === isAll;
+        return (
+          <button
+            key={option.label}
+            ref={(element) => {
+              optionRefs.current[i] = element;
+            }}
+            type="button"
+            role="radio"
+            aria-checked={isChecked}
+            tabIndex={isChecked ? 0 : -1}
+            onClick={() => onChange(option.isAll)}
+            onKeyDown={handleKeyDown}
+            className={`relative z-10 py-1.5 px-3 rounded-full flex items-center justify-center gap-1.5 transition-colors duration-200 motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-secondary focus-visible:ring-offset-1 ${
+              isChecked ? "text-white font-semibold" : "text-on-surface-variant hover:text-on-surface"
+            }`}
+          >
+            <MaterialIcon name={option.icon} className="text-[15px]" />
+            <span>{option.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+const HINT_CLASS = "px-1 text-[12px] leading-tight text-on-surface-variant";
+
+/**
+ * The line under the switch. Selected: "Asking about {names}. Name other companies
+ * to compare." (the companies the next question is about; "Open a company or type a
+ * company's name" when none). All companies: "Filtering all {N} companies by …".
+ */
+export function ScopeHint({
+  isAll,
+  preview,
+  total,
+}: {
+  isAll: boolean;
+  preview: ScopePreview;
+  total: number;
+}): React.ReactElement {
+  if (isAll) {
+    return (
+      <p className={HINT_CLASS}>
+        Filtering all {total} {total === 1 ? "company" : "companies"} by industry, city or state, locations, territory or
+        online booking.
+      </p>
+    );
+  }
+  if (preview.kind === "companies") {
+    return (
+      <p className={HINT_CLASS}>
+        Asking about{" "}
+        <span className="font-medium text-on-surface">{preview.companies.map((company) => company.name).join(", ")}</span>.
+        Name other companies to compare.
+      </p>
+    );
+  }
+  return <p className={HINT_CLASS}>Open a company or type a company&apos;s name</p>;
+}
+
 type ProspectingDataRoomChatProps = {
   attemptId: string;
   companies: DataRoomCompany[];
@@ -237,8 +477,8 @@ type ProspectingDataRoomChatProps = {
 };
 
 /**
- * AI Research Assistant pane: transcript, All companies toggle with the "Current:" line, and
- * the input with its suggestions / "Which one did you mean?" dropdown.
+ * AI Research Assistant pane: transcript, the "Selected | All companies" switch with its
+ * hint line, and the input with its suggestions / "Which one did you mean?" dropdown.
  */
 export function ProspectingDataRoomChat({
   attemptId,
@@ -352,8 +592,8 @@ export function ProspectingDataRoomChat({
   }, [messages]);
 
   const fragment = wordFragmentBeforeCaret(input, caret);
-  const suggestions =
-    suggestionsHidden || !fragment ? [] : suggestCompanies(index, fragment.fragment);
+  // No name suggestions in All companies mode (names aren't picked there).
+  const suggestions = composerSuggestions(index, input, caret, allCompanies, suggestionsHidden);
 
   // "Which one did you mean?" takes the dropdown over from suggestions while it's open.
   const panelRows = ambiguity ? ambiguity.options : suggestions;
@@ -393,7 +633,8 @@ export function ProspectingDataRoomChat({
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [isPanelOpen]);
 
-  const preview = previewScope({
+  // What the next question is about (the hint line); always "all" in All companies mode.
+  const preview = composerPreview({
     index,
     text: input,
     allCompanies,
@@ -401,14 +642,8 @@ export function ProspectingDataRoomChat({
     openCompanyId,
     lastQuestion,
   });
-  const scopeLabel =
-    preview.kind === "all"
-      ? "Current: All companies"
-      : preview.kind === "companies"
-        ? `Current: ${preview.companies.map((company) => company.name).join(", ")}`
-        : "Open a company or type a company's name";
 
-  // Selected companies (the same ones the "Current:" line shows) are coloured in the input.
+  // Selected companies (the ones the hint names) are coloured in the input; none in All companies mode.
   const mirrorSegments = splitIntoSegments(
     input,
     findSelectedNameRanges(
@@ -466,38 +701,24 @@ export function ProspectingDataRoomChat({
     setSuggestionsHidden(true);
   };
 
-  const sendMessage = async (extraPickedIds: string[] = []): Promise<void> => {
-    const text = input.trim();
-    if (!text || isLoading) {
-      return;
-    }
-
-    const decision = resolveSendScope({
-      index,
-      text,
-      allCompanies,
-      pickedIds: [...activePickedIds, ...extraPickedIds],
-      openCompanyId,
-      lastQuestion,
-    });
-    if (decision.kind === "error") {
-      setNotice(decision.message);
-      return;
-    }
-    if (decision.kind === "ask") {
-      setAmbiguity({ word: decision.word, options: decision.options });
-      setHighlight(0);
-      // Keep keyboard control (↑/↓, Enter, Escape) even when Send was clicked.
-      inputRef.current?.focus();
-      return;
-    }
-
-    const scope = decision.scope;
-    // A follow-up about a listed company leaves All companies mode.
-    if (allCompanies && scope.mode === "companies") {
-      setAllCompanies(false);
-    }
-    const history = messages
+  /**
+   * Sends one question with its final scope and adds the reply. clearsInput: a typed
+   * question empties the input; "Search all companies" leaves a draft alone.
+   * usedReplyId: the reply whose "Search all companies" was used (not offered again).
+   */
+  const submitQuestion = async (
+    text: string,
+    scope: ChatScope,
+    options: { clearsInput: boolean; usedReplyId?: string }
+  ): Promise<void> => {
+    const current = options.usedReplyId
+      ? messages.map((message) =>
+          message.role === "assistant" && message.id === options.usedReplyId
+            ? { ...message, isSearchAllUsed: true }
+            : message
+        )
+      : messages;
+    const history = current
       .filter((message) => !(message.role === "assistant" && message.isError))
       .map(toHistoryEntry);
     // Saved with the question: its final scope and the company open right now.
@@ -508,12 +729,14 @@ export function ProspectingDataRoomChat({
       scope,
       openCompanyId,
     };
-    const withQuestion = [...messages, userMessage];
+    const withQuestion = [...current, userMessage];
 
     setMessages(withQuestion);
-    setInput("");
-    setCaret(0);
-    setPickedIds([]);
+    if (options.clearsInput) {
+      setInput("");
+      setCaret(0);
+      setPickedIds([]);
+    }
     setAmbiguity(null);
     setNotice(null);
     setIsLoading(true);
@@ -528,6 +751,7 @@ export function ProspectingDataRoomChat({
       if (!res.ok || !body || typeof body.intro !== "string") {
         throw new Error(typeof body?.error === "string" ? body.error : "AI request failed");
       }
+      const layout = parseAnswerLayout(body.layout);
       setMessages([
         ...withQuestion,
         {
@@ -536,6 +760,8 @@ export function ProspectingDataRoomChat({
           scope,
           intro: sanitizeAiResearchReply(body.intro),
           items: parseAnswerItems(body.items),
+          ...(layout ? { layout } : {}),
+          ...(body.suggestAllCompanies === true ? { suggestAllCompanies: true } : {}),
         },
       ]);
     } catch (err) {
@@ -556,6 +782,57 @@ export function ProspectingDataRoomChat({
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const sendMessage = async (extraPickedIds: string[] = []): Promise<void> => {
+    const text = input.trim();
+    if (!text || isLoading) {
+      return;
+    }
+
+    // All companies: scope all, as typed. Selected: worked out from the text (unchanged).
+    const decision = composerSendDecision({
+      index,
+      text,
+      allCompanies,
+      pickedIds: [...activePickedIds, ...extraPickedIds],
+      openCompanyId,
+      lastQuestion,
+    });
+    if (decision.kind === "error") {
+      setNotice(decision.message);
+      return;
+    }
+    if (decision.kind === "ask") {
+      setAmbiguity({ word: decision.word, options: decision.options });
+      setHighlight(0);
+      // Keep keyboard control (↑/↓, Enter, Escape) even when Send was clicked.
+      inputRef.current?.focus();
+      return;
+    }
+    await submitQuestion(text, decision.scope, { clearsInput: true });
+  };
+
+  /** The switch: the same state and side effects the old All companies pill had. */
+  const handleScopeChange = (isAll: boolean): void => {
+    if (isAll === allCompanies) {
+      return;
+    }
+    setAllCompanies(isAll);
+    setNotice(null);
+    setAmbiguity(null);
+  };
+
+  /** "Search all companies": switch to All companies and ask the same question again, as a new message. */
+  const searchAllCompanies = (replyId: string): void => {
+    const request = searchAllRequest(messages, replyId);
+    if (!request || isLoading) {
+      return;
+    }
+    setAllCompanies(true);
+    setNotice(null);
+    setAmbiguity(null);
+    void submitQuestion(request.text, request.scope, { clearsInput: false, usedReplyId: replyId });
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>): void => {
@@ -639,28 +916,16 @@ export function ProspectingDataRoomChat({
               </div>
             ) : (
               <div key={message.id} className="flex justify-start">
+                {/* A table reply takes the bubble's full width so the table fits the pane. */}
                 <div
-                  className={`max-w-[92%] bg-white border rounded-xl rounded-bl-none p-3.5 text-[14px] leading-relaxed shadow-sm space-y-3 ${
+                  className={`${answerLayoutOf(message) === "list" ? "max-w-[92%]" : "w-[92%] min-w-0"} bg-white border rounded-xl rounded-bl-none p-3.5 text-[14px] leading-relaxed shadow-sm space-y-3 ${
                     message.isError ? "border-error/40" : "border-outline-variant"
                   }`}
                 >
-                  {message.intro ? (
-                    <p
-                      className={`whitespace-pre-wrap ${
-                        message.isError ? "text-error" : "text-on-surface-variant"
-                      }`}
-                    >
-                      {message.intro}
-                    </p>
+                  <DataRoomChatAnswer answer={message} />
+                  {!isLoading && searchAllRequest(messages, message.id) ? (
+                    <SearchAllCompaniesButton onClick={() => searchAllCompanies(message.id)} />
                   ) : null}
-                  {message.items.map((item) => (
-                    <div key={item.companyId}>
-                      <p className="text-[12px] font-semibold text-on-surface mb-1">
-                        {item.companyName}
-                      </p>
-                      <p className="text-on-surface-variant whitespace-pre-wrap">{item.text}</p>
-                    </div>
-                  ))}
                 </div>
               </div>
             )
@@ -676,58 +941,9 @@ export function ProspectingDataRoomChat({
 
       {/* Footer */}
       <div className="p-4 border-t border-outline-variant shrink-0 space-y-2">
-        <div className="flex items-center gap-2.5 min-w-0">
-          {/* Off: dotted outline. Hover: solid soft-black outline. Selected: solid outline,
-              filled soft black (on-surface-variant, so it doesn't stand out).
-              Nothing else changes (no shadow, tint, bold or press effect). */}
-          <button
-            type="button"
-            onClick={() => {
-              setAllCompanies((on) => !on);
-              setNotice(null);
-              setAmbiguity(null);
-            }}
-            aria-pressed={allCompanies}
-            className={`group/all relative shrink-0 h-7 px-3 rounded-full border-[1.5px] text-[12px] font-medium flex items-center gap-1.5 cursor-pointer transition-colors duration-150 motion-reduce:transition-none ${
-              allCompanies
-                ? "border-on-surface-variant bg-on-surface-variant text-white"
-                : "border-transparent bg-white text-on-surface-variant hover:border-on-surface-variant"
-            }`}
-          >
-            {!allCompanies ? (
-              // Round dots (1.5px, "2 4", round caps) drawn on the centre line of the 1.5px
-              // border, so hover's solid border lands exactly where the dots were. The pill
-              // is 28px tall: centre line 26.5px, so rx 13.25 = rounded-full.
-              <svg
-                aria-hidden="true"
-                className="pointer-events-none absolute -inset-[0.75px] h-[calc(100%_+_1.5px)] w-[calc(100%_+_1.5px)] overflow-visible text-outline transition-opacity duration-150 group-hover/all:opacity-0 motion-reduce:transition-none"
-              >
-                <rect
-                  width="100%"
-                  height="100%"
-                  rx="13.25"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeDasharray="2 4"
-                  strokeLinecap="round"
-                />
-              </svg>
-            ) : null}
-            <span
-              className={`w-2 h-2 rounded-full shrink-0 ${allCompanies ? "bg-current" : "border border-current"}`}
-            />
-            All companies
-          </button>
-          {/* What the next question is about: plain text, not a control. */}
-          <p
-            className={`min-w-0 truncate text-[12px] ${
-              preview.kind === "none" ? "text-on-surface-variant" : "text-on-surface"
-            }`}
-          >
-            {scopeLabel}
-          </p>
-        </div>
+        {/* Which companies the next question is about: the switch, then a plain hint line. */}
+        <ScopeSwitch isAll={allCompanies} onChange={handleScopeChange} />
+        <ScopeHint isAll={allCompanies} preview={preview} total={companies.length} />
 
         {notice ? <p className="text-[12px] text-error">{notice}</p> : null}
 
@@ -826,7 +1042,7 @@ export function ProspectingDataRoomChat({
                 setSuggestionsHidden(true);
                 setAmbiguity(null);
               }}
-              placeholder="Type a message"
+              placeholder={chatPlaceholder(allCompanies)}
               maxLength={DATA_ROOM_CHAT_MAX_CHARS}
               aria-label="Ask the AI Research Assistant"
               role="combobox"

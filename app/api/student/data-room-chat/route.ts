@@ -43,7 +43,10 @@
  * under "Nothing specific on that is publicly findable. Related findings:" (no
  * opening). Everything is rendered from the
  * stored text (lib/data-room-chat-render.ts). Company names in answers come from the
- * database; the model sees companies only as refs ([C1]…).
+ * database; the model sees companies only as refs ([C1]…). For the pane's tables, an
+ * All-companies list also carries each company's card values (layout "table") and a
+ * compare answer card values and signals (layout "compare"); a filter question about
+ * one company adds suggestAllCompanies (the pane offers "Search all companies").
  */
 
 import { NextResponse } from "next/server";
@@ -71,10 +74,12 @@ import {
   toSelectableFacts,
   withExactDetailIntro,
   withNothingNewIntro,
+  withCompareLayout,
   withOpening,
   withRelatedFindingsIntro,
   type CompanyBlock,
   type CompanyFacts,
+  type CompanyFactSource,
   type SelectableFact,
   type Selection,
 } from "@/lib/data-room-chat-render";
@@ -141,8 +146,8 @@ type RosterCompany = {
   public_signals: unknown;
 };
 
-/** One company in scope: its name from the database and its facts. */
-type ScopedCompany = { id: string; name: string; facts: CompanyFacts };
+/** One company in scope: its name from the database, its stored values and its facts. */
+type ScopedCompany = { id: string; name: string; source: CompanyFactSource; facts: CompanyFacts };
 
 /** Visible-layer roster columns (never answer-key or hidden-layer fields). */
 const ROSTER_COLUMNS =
@@ -585,26 +590,21 @@ export async function POST(request: Request): Promise<NextResponse> {
       if (!row) {
         return [];
       }
-      return [
-        {
-          id,
-          name: String(row.company_name ?? ""),
-          facts: buildCompanyFacts({
-            id,
-            industry: row.industry,
-            vertical: row.vertical,
-            locations: typeof row.locations === "number" && Number.isFinite(row.locations) ? row.locations : null,
-            metro: row.metro,
-            inTerritory: typeof row.in_territory === "boolean" ? row.in_territory : null,
-            sizeNote: row.size_note,
-            onlineBooking: typeof row.online_booking === "boolean" ? row.online_booking : null,
-            blurb: row.blurb,
-            publicSignals: parseStringArray(row.public_signals),
-            contacts: contactsByCompany.get(id) ?? [],
-            findings: id === singleCompanyId ? findings : [],
-          }),
-        },
-      ];
+      const source: CompanyFactSource = {
+        id,
+        industry: row.industry,
+        vertical: row.vertical,
+        locations: typeof row.locations === "number" && Number.isFinite(row.locations) ? row.locations : null,
+        metro: row.metro,
+        inTerritory: typeof row.in_territory === "boolean" ? row.in_territory : null,
+        sizeNote: row.size_note,
+        onlineBooking: typeof row.online_booking === "boolean" ? row.online_booking : null,
+        blurb: row.blurb,
+        publicSignals: parseStringArray(row.public_signals),
+        contacts: contactsByCompany.get(id) ?? [],
+        findings: id === singleCompanyId ? findings : [],
+      };
+      return [{ id, name: String(row.company_name ?? ""), source, facts: buildCompanyFacts(source) }];
     });
     const block = (company: ScopedCompany, lines: readonly string[]): CompanyBlock => ({
       companyId: company.id,
@@ -672,6 +672,11 @@ export async function POST(request: Request): Promise<NextResponse> {
         if (decision.intent === "meta_or_bulk" && hasFacts(answer)) {
           answer = { ...answer, intro: META_PUBLIC_INTRO };
         }
+        // Compare about 2–3 companies: the same overviews, with card values and signals
+        // for the side-by-side table (the text stays the fallback).
+        if (decision.intent === "compare") {
+          answer = withCompareLayout(answer, companies.map((company) => company.source));
+        }
       }
     }
 
@@ -683,7 +688,14 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     // Written last, from the finished answer; above the facts if it passes the checks
     // (every path whose answer has no first line of its own).
-    return NextResponse.json(await withWrittenOpening(openai, openingQuestion, decision.topic, answer, index));
+    const finished = await withWrittenOpening(openai, openingQuestion, decision.topic, answer, index);
+    // A filter question about one company: the answer as it is, and the pane offers
+    // "Search all companies" under it.
+    return NextResponse.json(
+      singleCompanyId !== null && decision.intent === "filter_list"
+        ? { ...finished, suggestAllCompanies: true }
+        : finished
+    );
   } catch (error) {
     console.error("[data-room-chat] unexpected:", error);
     return NextResponse.json(

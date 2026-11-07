@@ -38,6 +38,32 @@ const ROSTER: FilterCompany[] = [
 const names = (filter: RosterFilter): string[] =>
   ROSTER.filter((company) => matchesFilter(company, filter)).map((company) => company.name);
 
+/**
+ * A filter answer as the pane receives it (2026-11-06): the same intro and list
+ * lines, plus layout "table" and each company's card from the roster fixture.
+ */
+function asTable(answer: { intro: string; items: Array<{ companyId: string; companyName: string; text: string }> }): unknown {
+  return {
+    ...answer,
+    layout: "table",
+    items: answer.items.map((item) => {
+      const company = ROSTER.find((row) => row.id === item.companyId);
+      return {
+        ...item,
+        card: company
+          ? {
+              industry: company.industry,
+              locations: company.locations,
+              metro: company.metro,
+              inTerritory: company.inTerritory,
+              onlineBooking: company.onlineBooking,
+            }
+          : undefined,
+      };
+    }),
+  };
+}
+
 /** A filter_list decision; `filter` is shorthand for a one-condition `filters` list. */
 function decision(overrides: Partial<RouterDecision> & { filter?: RosterFilter | null }): RouterDecision {
   const { filter, ...rest } = overrides;
@@ -197,23 +223,48 @@ describe("matching", () => {
 
 describe("the list answer", () => {
   it("results match the roster, A–Z, each with its list line, after a count intro; no other order", () => {
-    expect(answerFilter({ field: "online_booking", op: "eq", value: true }, ROSTER)).toEqual({
-      intro: "3 companies match.",
-      items: [
-        { companyId: "aspen", companyName: "Aspen Vet Clinic", text: "Veterinary" },
-        { companyId: "maple", companyName: "Maple Family Dentistry", text: "Dental · 3 locations · Boulder, CO" },
-        { companyId: "outdoor", companyName: "Summit Outdoor Gear", text: "Retail · 2 locations · Boise, ID" },
-      ],
-    });
+    expect(answerFilter({ field: "online_booking", op: "eq", value: true }, ROSTER)).toEqual(
+      asTable({
+        intro: "3 companies match.",
+        items: [
+          { companyId: "aspen", companyName: "Aspen Vet Clinic", text: "Veterinary" },
+          { companyId: "maple", companyName: "Maple Family Dentistry", text: "Dental · 3 locations · Boulder, CO" },
+          { companyId: "outdoor", companyName: "Summit Outdoor Gear", text: "Retail · 2 locations · Boise, ID" },
+        ],
+      })
+    );
   });
 
   it("one match: the singular count", () => {
-    expect(answerFilter({ field: "territory", op: "eq", value: false }, ROSTER)).toEqual({
-      intro: "1 company matches.",
-      items: [{ companyId: "outdoor", companyName: "Summit Outdoor Gear", text: "Retail · 2 locations · Boise, ID" }],
-    });
+    expect(answerFilter({ field: "territory", op: "eq", value: false }, ROSTER)).toEqual(
+      asTable({
+        intro: "1 company matches.",
+        items: [{ companyId: "outdoor", companyName: "Summit Outdoor Gear", text: "Retail · 2 locations · Boise, ID" }],
+      })
+    );
     expect(matchCountIntro(1)).toBe("1 company matches.");
     expect(matchCountIntro(12)).toBe("12 companies match.");
+  });
+
+  it("a filter answer is a table: layout 'table', each company's card from the roster, the list line kept as the fallback", () => {
+    const answer = answerFilter({ field: "territory", op: "eq", value: true }, ROSTER);
+    expect(answer.layout).toBe("table");
+    expect(answer.items.map((item) => [item.companyName, item.text, item.card])).toEqual([
+      ["Aspen Vet Clinic", "Veterinary", { industry: "Veterinary", locations: null, metro: null, inTerritory: true, onlineBooking: true }],
+      [
+        "Falcon Market",
+        "Retail · 1 location · Denver, CO",
+        { industry: "Retail", locations: 1, metro: "Denver, CO", inTerritory: true, onlineBooking: null },
+      ],
+      [
+        "Summit Dental Group",
+        "Dental · 8 locations · Front Range, CO",
+        { industry: "Dental", locations: 8, metro: "Front Range, CO", inTerritory: true, onlineBooking: false },
+      ],
+    ]);
+    // No match, and every fixed reply: no layout (shown as text).
+    expect(answerFilter({ field: "industry", op: "eq", value: "Legal" }, ROSTER).layout).toBeUndefined();
+    expect(answerAllCompanies(decision({ intent: "overview", filters: null }), ROSTER).layout).toBeUndefined();
   });
 
   it("every match, A–Z, under a plain count line (no cap)", () => {
@@ -283,14 +334,16 @@ describe("All-companies answers", () => {
 
   it('"Which companies are in Colorado?" with {"field":"state","op":"contains","value":"Colorado"} lists the Colorado companies', () => {
     const filter = parseRosterFilter({ field: "state", op: "contains", value: "Colorado" });
-    expect(answerAllCompanies(decision({ filter }), ROSTER)).toEqual({
-      intro: "3 companies match.",
-      items: [
-        { companyId: "falcon", companyName: "Falcon Market", text: "Retail · 1 location · Denver, CO" },
-        { companyId: "maple", companyName: "Maple Family Dentistry", text: "Dental · 3 locations · Boulder, CO" },
-        { companyId: "summit", companyName: "Summit Dental Group", text: "Dental · 8 locations · Front Range, CO" },
-      ],
-    });
+    expect(answerAllCompanies(decision({ filter }), ROSTER)).toEqual(
+      asTable({
+        intro: "3 companies match.",
+        items: [
+          { companyId: "falcon", companyName: "Falcon Market", text: "Retail · 1 location · Denver, CO" },
+          { companyId: "maple", companyName: "Maple Family Dentistry", text: "Dental · 3 locations · Boulder, CO" },
+          { companyId: "summit", companyName: "Summit Dental Group", text: "Dental · 8 locations · Front Range, CO" },
+        ],
+      })
+    );
   });
 
   it("the count line is the plain count at any size (no cap wording)", () => {
@@ -394,17 +447,21 @@ describe("any number of conditions", () => {
 
   it("1, 2 or 3 conditions run in code and list A–Z under the count", () => {
     expect(listed([DENTAL], 1)).toEqual(["Maple Family Dentistry", "Summit Dental Group"]);
-    expect(answerAllCompanies(decision({ filters: [DENTAL, CO], criteriaCount: 2 }), ROSTER)).toEqual({
-      intro: "2 companies match.",
-      items: [
-        { companyId: "maple", companyName: "Maple Family Dentistry", text: "Dental · 3 locations · Boulder, CO" },
-        { companyId: "summit", companyName: "Summit Dental Group", text: "Dental · 8 locations · Front Range, CO" },
-      ],
-    });
-    expect(answerAllCompanies(decision({ filters: [DENTAL, CO, BOOKING], criteriaCount: 3 }), ROSTER)).toEqual({
-      intro: "1 company matches.",
-      items: [{ companyId: "maple", companyName: "Maple Family Dentistry", text: "Dental · 3 locations · Boulder, CO" }],
-    });
+    expect(answerAllCompanies(decision({ filters: [DENTAL, CO], criteriaCount: 2 }), ROSTER)).toEqual(
+      asTable({
+        intro: "2 companies match.",
+        items: [
+          { companyId: "maple", companyName: "Maple Family Dentistry", text: "Dental · 3 locations · Boulder, CO" },
+          { companyId: "summit", companyName: "Summit Dental Group", text: "Dental · 8 locations · Front Range, CO" },
+        ],
+      })
+    );
+    expect(answerAllCompanies(decision({ filters: [DENTAL, CO, BOOKING], criteriaCount: 3 }), ROSTER)).toEqual(
+      asTable({
+        intro: "1 company matches.",
+        items: [{ companyId: "maple", companyName: "Maple Family Dentistry", text: "Dental · 3 locations · Boulder, CO" }],
+      })
+    );
     expect(listed([CO, ID], 2)).toEqual(["Falcon Market", "Maple Family Dentistry", "Summit Dental Group", "Summit Outdoor Gear"]);
     expect(listed([CO, ID], null)).toHaveLength(4);
   });
@@ -421,10 +478,12 @@ describe("any number of conditions", () => {
   it("four and five conditions run in code, like any other number", () => {
     const fiveOrMore: RosterFilter = { field: "locations", op: "gte", value: 5 };
     const noBooking: RosterFilter = { field: "online_booking", op: "eq", value: false };
-    expect(answerAllCompanies(decision({ filters: [DENTAL, CO, IN_TERRITORY, fiveOrMore], criteriaCount: 4 }), ROSTER)).toEqual({
-      intro: "1 company matches.",
-      items: [{ companyId: "summit", companyName: "Summit Dental Group", text: "Dental · 8 locations · Front Range, CO" }],
-    });
+    expect(answerAllCompanies(decision({ filters: [DENTAL, CO, IN_TERRITORY, fiveOrMore], criteriaCount: 4 }), ROSTER)).toEqual(
+      asTable({
+        intro: "1 company matches.",
+        items: [{ companyId: "summit", companyName: "Summit Dental Group", text: "Dental · 8 locations · Front Range, CO" }],
+      })
+    );
     expect(listed([DENTAL, CO, IN_TERRITORY, fiveOrMore, noBooking], 5)).toEqual(["Summit Dental Group"]);
   });
 

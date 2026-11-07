@@ -892,8 +892,41 @@ export function greetingReply(kind: GreetingKind, scope: ChatScope): ScopedAnswe
 
 // ── Server: the answer ───
 
-/** The route's reply: an optional intro and one block per company (names from the database). */
+/** One company's visible card values, for a result table row or a compare column (from the roster). */
+export type AnswerCard = {
+  industry: string;
+  locations: number | null;
+  metro: string | null;
+  inTerritory: boolean | null;
+  onlineBooking: boolean | null;
+};
+
+/** How the chat pane shows an answer: "table" (a filter list), "compare" (side by side); none or "list": text blocks. */
+export type AnswerLayout = "list" | "table" | "compare";
+
+/**
+ * One company's block. text is always the full answer as lines (the fallback the
+ * pane shows when it doesn't use a table); card and signals are only on table and
+ * compare answers.
+ */
+export type ScopedAnswerItem = {
+  companyId: string;
+  companyName: string;
+  text: string;
+  card?: AnswerCard;
+  /** Public signals, for a compare column. */
+  signals?: string[];
+};
+
+/**
+ * The route's reply: an optional intro and one block per company (names from the
+ * database). layout and the item fields are optional, so replies saved before they
+ * existed still read as text blocks. suggestAllCompanies: a filter question about
+ * one company, where the pane offers "Search all companies".
+ */
 export type ScopedAnswer = {
   intro: string;
-  items: Array<{ companyId: string; companyName: string; text: string }>;
+  items: ScopedAnswerItem[];
+  layout?: AnswerLayout;
+  suggestAllCompanies?: boolean;
 };
