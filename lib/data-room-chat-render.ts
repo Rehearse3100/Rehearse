@@ -769,6 +769,7 @@ export const SELECTION_SYSTEM_PROMPT = [
   "- fact_ids: the ids of the facts that answer the question, most relevant first. Copy each id exactly as written; use only ids from the list.",
   "- Choose only facts that answer the question. If it is about several companies, choose the facts that answer it for the companies listed.",
   "- Choose a fact only if it actually answers the question. A fact about a different subject never answers it, even when it is the only fact listed for a company; returning no facts is fine.",
+  "- A fact also answers the question when it settles it indirectly, for example a rule, contract, mandate, agreement, freeze or restriction that decides who chooses, what they use, what they can spend or whether something will change.",
   "- exact_answer: true only if a listed fact states exactly what was asked (for example the number, amount or count, the email address or phone number, or the named vendor or product); false otherwise.",
   '- If no fact answers the question, reply {"fact_ids": [], "exact_answer": false}.',
   "- If the exact thing asked for (for example an email address, a revenue number or a count) isn't stated in the facts, set exact_answer to false and choose only facts genuinely related to it (about the same subject); if none are, return no facts rather than loosely related ones.",

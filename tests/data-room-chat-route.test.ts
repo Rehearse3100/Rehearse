@@ -1663,6 +1663,53 @@ describe("final manual test fixes: who decides, traps, thanks", () => {
   });
 });
 
+describe("indirect answers count (rules, contracts, mandates)", () => {
+  const JUNIPER_ROW = {
+    id: "juniper",
+    company_name: "Juniper Ridge Aesthetics",
+    industry: "Med Spa",
+    vertical: "med spa",
+    locations: 4,
+    metro: "Denver, CO",
+    in_territory: true,
+    size_note: null,
+    online_booking: false,
+    blurb: null,
+    public_signals: [],
+  };
+  const FRANCHISE = "Franchise agreement requires all clinics to purchase scheduling tools from an approved corporate catalog.";
+  const OPENING = "Here's what's on record for your question.";
+
+  it("Juniper, 'Who decides on software purchases?': the selection picks the franchise rule → the normal opening, no related-findings line", async () => {
+    state.roster = [...ROSTER, JUNIPER_ROW];
+    state.storedResearchFacts = [{ text: FRANCHISE, topics: ["ownership"] }];
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "ownership"));
+    state.create.mockResolvedValueOnce(selection(["C1:h:0"]));
+    state.open.mockResolvedValueOnce(modelReply({ opening: OPENING }));
+    const reply = await ask({ scope: { mode: "companies", companyIds: ["juniper"] }, newMessage: "Who decides on software purchases?" });
+    expect(reply).toEqual({
+      intro: OPENING,
+      items: [{ companyId: "juniper", companyName: "Juniper Ridge Aesthetics", text: FRANCHISE }],
+    });
+    expect(JSON.stringify(reply)).not.toContain(RELATED_FINDINGS_INTRO);
+    expect(selectionMessages()[0]?.content).toContain("A fact also answers the question when it settles it indirectly");
+  });
+
+  it("Canyon, 'What's going on with their phones?': the selection still picks none → still the related-findings line", async () => {
+    state.roster = [...ROSTER, CANYON_ROW];
+    state.storedResearchFacts = CANYON_FINDINGS;
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "operations"));
+    state.create.mockResolvedValueOnce(selection([], false));
+    const reply = (await ask({ scope: { mode: "companies", companyIds: ["canyon"] }, newMessage: "What's going on with their phones?" })) as {
+      intro: string;
+      items: Array<{ text: string }>;
+    };
+    expect(reply.intro).toBe(RELATED_FINDINGS_INTRO);
+    expect(reply.items[0]?.text).toBe(`${INTAKE}\n${DIRECTORS}`);
+    expect(state.open).not.toHaveBeenCalled();
+  });
+});
+
 describe("the router call", () => {
   it("sees only the redacted question, the last 3 redacted questions and the scope kind — no facts", async () => {
     await POST(

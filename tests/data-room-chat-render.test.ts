@@ -646,6 +646,16 @@ describe("selection call", () => {
     );
   });
 
+  it("an indirect answer counts: a rule, contract, mandate, agreement, freeze or restriction that settles the question", () => {
+    expect(SELECTION_SYSTEM_PROMPT).toContain(
+      "- A fact also answers the question when it settles it indirectly, for example a rule, contract, mandate, agreement, freeze or restriction that decides who chooses, what they use, what they can spend or whether something will change."
+    );
+    // The different-subject rule is still there, right before it.
+    const rules = SELECTION_SYSTEM_PROMPT.split("\n");
+    const differentSubject = rules.findIndex((line) => line.startsWith("- Choose a fact only if it actually answers the question."));
+    expect(rules[differentSubject + 1]).toMatch(/^- A fact also answers the question when it settles it indirectly/);
+  });
+
   it("only facts that actually answer the question; a fact about a different subject never does, and none is fine", () => {
     expect(SELECTION_SYSTEM_PROMPT).toContain(
       "- Choose a fact only if it actually answers the question. A fact about a different subject never answers it, even when it is the only fact listed for a company; returning no facts is fine."

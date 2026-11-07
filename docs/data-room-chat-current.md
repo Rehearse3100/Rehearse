@@ -407,6 +407,7 @@ Rules:
 - fact_ids: the ids of the facts that answer the question, most relevant first. Copy each id exactly as written; use only ids from the list.
 - Choose only facts that answer the question. If it is about several companies, choose the facts that answer it for the companies listed.
 - Choose a fact only if it actually answers the question. A fact about a different subject never answers it, even when it is the only fact listed for a company; returning no facts is fine.
+- A fact also answers the question when it settles it indirectly, for example a rule, contract, mandate, agreement, freeze or restriction that decides who chooses, what they use, what they can spend or whether something will change.
 - exact_answer: true only if a listed fact states exactly what was asked (for example the number, amount or count, the email address or phone number, or the named vendor or product); false otherwise.
 - If no fact answers the question, reply {"fact_ids": [], "exact_answer": false}.
 - If the exact thing asked for (for example an email address, a revenue number or a count) isn't stated in the facts, set exact_answer to false and choose only facts genuinely related to it (about the same subject); if none are, return no facts rather than loosely related ones.
@@ -501,6 +502,7 @@ Design: Stitch chat pane components 2–4.
 
 ## 14. Change history
 
+- **2026-11-06, indirect answers:** the selection prompt counts a fact that settles the question indirectly (a rule, contract, mandate, agreement, freeze or restriction) as an answer (8). Juniper Ridge Aesthetics, "Who decides on software purchases?", showed the franchise catalog rule under the related-findings line because the call said no fact answered it.
 - **2026-11-06, final manual test fixes:** who-decides questions route to `ownership` (5.1); traps, which to avoid, correct answers and the right lead are `meta_or_bulk` (5.1); more thanks spellings (4.0).
 - **2026-11-06, per-simulation chat config (no behaviour change):** the simulation-specific wording moved into `lib/data-room-chat-config.ts` (2.2): the filterable fields, the greeting's topics, the table, compare and tag labels, the router's topic descriptions, and the transcript storage prefix (same value). Every string is unchanged for Tempo.
 - **2026-11-06, limited compares, "which ones", All-companies reply, router room:** a compare limited to some rows starts with the fixed compare line instead of an opening (11); with one company open, a question starting "which ones", "which of them" or "which companies" also offers "Search all companies", whatever the router labels it (11); the All-companies fixed reply ends "Switch to Selected and ask about a company to research it in depth." (was "Open a company to research it in depth."); the router's `max_tokens` is 600 (was 300, sized for three filters), so a long filter question's JSON reply isn't cut off (5.1).

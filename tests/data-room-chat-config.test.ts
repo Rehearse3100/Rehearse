@@ -98,7 +98,8 @@ describe("strings built from the config are exactly today's", () => {
       // Taken from the code before the config existed (2026-11-06); the router's changed
       // since on purpose (who-decides → ownership, traps as meta).
       router: "9d86681edaa09a8bee5bafa3d5daacec66e7b840d659f313db908c4d1511fd04",
-      selection: "4e5c06733259b8fa3605e09253fc60b2ee05c2511812abca19824a3399030b5d",
+      // Changed on purpose since: indirect answers (rules, contracts, mandates) count.
+      selection: "98f8701b4d6d3e5ed84066b70671527d0a41ac12fbebd5186cb0c218ec3a62e7",
       opening: "a41a805ae91ecd7886ef4d027f503b573b1aad81069d646675a260097a8bdd68",
       table: "65a0fd3d40e9e2b4e25dfaa4046a65534a48af836aa22dc830f3b254ff98aaac",
       compare: "540868c8e26fef34bf5d9dbf4537d4eeadb0e5be6806cf8add51670fdae5bb29",
