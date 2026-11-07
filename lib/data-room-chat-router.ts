@@ -8,7 +8,11 @@
  * conditions the question asks for (a locations range is one; validated by
  * lib/data-room-chat-filter.ts); in All companies mode valid
  * filters are used even when the router is unsure. The reply also says whether the
- * question is in English (parseRouterEnglish). POST /api/student/data-room-chat
+ * question is in English (parseRouterEnglish). Follow-ups ("tell me more", "more
+ * about that") about the same 1–3 companies are recognised in code
+ * (isFollowUpQuestion) and routed as the earlier question they follow
+ * (parseFollowUpContext reads it, and the lines its answer showed, from the
+ * client-sent history). POST /api/student/data-room-chat
  * makes the gpt-4o call; lib/data-room-chat-policy.ts turns the decision into the
  * allowed facts and lib/data-room-chat-render.ts into the answer path.
  */
@@ -19,7 +23,7 @@ import {
   QUESTION_TOPICS,
   type QuestionTopic,
 } from "@/lib/data-room-research-topics";
-import type { ChatScope } from "@/lib/data-room-chat-scope";
+import { parseChatScope, type ChatScope } from "@/lib/data-room-chat-scope";
 
 // ── Decision shape ───
 
@@ -254,4 +258,132 @@ export function parseRouterEnglish(raw: string | null | undefined): boolean {
   } catch {
     return true;
   }
+}
+
+// ── Follow-ups ───
+
+/** A follow-up refers back with one of these (never "them": that is the companies themselves). */
+const BACK_REFERENCE = "(?:that|this|it|those|these)";
+
+/**
+ * Whole-message follow-up phrasings, after lowercasing, dropping punctuation, a
+ * lead-in ("ok", "can you"…) and a closing "please".
+ */
+const FOLLOW_UP_PATTERNS: readonly RegExp[] = [
+  new RegExp(`^(?:(?:tell|show|give) me|say|share) (?:a (?:bit|little) )?more(?: (?:about|on) ${BACK_REFERENCE})?$`),
+  new RegExp(`^more(?: details?| info| information)?(?: (?:about|on) ${BACK_REFERENCE})?$`),
+  new RegExp(`^(?:anything|something|what) (?:else|more) (?:about|on) ${BACK_REFERENCE}$`),
+  new RegExp(`^(?:go on|keep going|elaborate(?: on ${BACK_REFERENCE})?|expand on ${BACK_REFERENCE})$`),
+];
+const FOLLOW_UP_LEAD_IN =
+  /^(?:(?:ok|okay|cool|great|nice|thanks|thank you|and|so|sure|yes|yeah|please|can you|could you|would you)\s+)+/;
+const FOLLOW_UP_CLOSING = /\s+please$/;
+
+/** The same caps parseHistoryQuestions uses for client-sent history. */
+const FOLLOW_UP_MAX_HISTORY_ENTRIES = 100;
+const FOLLOW_UP_MAX_TEXT_LENGTH = 8_000;
+
+/**
+ * True when the whole message only asks for more on the previous answer ("tell me
+ * more", "more about that", "anything else on that?", "can you elaborate?"). A
+ * message with its own subject ("tell me more about their budget") or about the
+ * companies themselves ("tell me more about them") is not a follow-up.
+ */
+export function isFollowUpQuestion(text: string): boolean {
+  const normalized = text
+    .toLowerCase()
+    .replace(/['’]/g, "")
+    .replace(/[^a-z]+/g, " ")
+    .trim()
+    .replace(FOLLOW_UP_LEAD_IN, "")
+    .replace(FOLLOW_UP_CLOSING, "")
+    .trim();
+  return FOLLOW_UP_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+/** What a follow-up is about, read from the client-sent history. */
+export type FollowUpContext = {
+  /** The latest earlier question that isn't itself a follow-up: the follow-up is routed and answered as this. */
+  question: string;
+  /** The questions before it, oldest first (the router's recent questions). */
+  earlierQuestions: string[];
+  /** The lines the latest answer already showed, by company id (empty when there is none). */
+  shownLines: Map<string, Set<string>>;
+};
+
+type HistoryTurn = { question: string; scope: ChatScope | null; lines: Map<string, Set<string>> | null };
+
+function isSameCompanies(a: ChatScope | null, b: ChatScope): boolean {
+  if (a?.mode !== "companies" || b.mode !== "companies" || a.companyIds.length !== b.companyIds.length) {
+    return false;
+  }
+  return a.companyIds.every((id) => b.companyIds.includes(id));
+}
+
+/** An answer's lines by company id, from its items ({ companyId, text }; malformed items are skipped). */
+function parseShownLines(items: unknown[]): Map<string, Set<string>> {
+  const lines = new Map<string, Set<string>>();
+  for (const item of items) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const { companyId, text } = item as Record<string, unknown>;
+    if (typeof companyId !== "string" || typeof text !== "string") {
+      continue;
+    }
+    const set = lines.get(companyId) ?? new Set<string>();
+    for (const line of text.split("\n")) {
+      if (line.trim()) {
+        set.add(line.trim());
+      }
+    }
+    lines.set(companyId, set);
+  }
+  return lines;
+}
+
+/**
+ * The context of a follow-up about the given 1–3 companies, from the client-sent
+ * history ({ role: "user", content, scope } and { role: "assistant", items, scope }).
+ * Walks back from the latest question over earlier follow-ups to the question they
+ * follow; every question on the way must be about the same companies. Null when
+ * there is no such question, a question on the way is about other companies (or
+ * has no scope), or the scope is All companies. The history is client-sent: it only
+ * picks the question to route and the lines to compare, never text that is shown.
+ */
+export function parseFollowUpContext(history: unknown, scope: ChatScope): FollowUpContext | null {
+  if (!Array.isArray(history) || scope.mode !== "companies") {
+    return null;
+  }
+  const turns: HistoryTurn[] = [];
+  for (const entry of history.slice(-FOLLOW_UP_MAX_HISTORY_ENTRIES)) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    const { role, content, scope: entryScope, items } = entry as Record<string, unknown>;
+    if (role === "user" && typeof content === "string") {
+      turns.push({ question: content.slice(0, FOLLOW_UP_MAX_TEXT_LENGTH), scope: parseChatScope(entryScope), lines: null });
+    } else if (role === "assistant" && Array.isArray(items) && turns.length > 0) {
+      const turn = turns[turns.length - 1];
+      if (turn) {
+        turn.lines = parseShownLines(items);
+      }
+    }
+  }
+  let latestLines: Map<string, Set<string>> | null = null;
+  for (let i = turns.length - 1; i >= 0; i -= 1) {
+    const turn = turns[i];
+    if (!turn || !isSameCompanies(turn.scope, scope)) {
+      return null;
+    }
+    latestLines = latestLines ?? turn.lines;
+    if (!isFollowUpQuestion(turn.question)) {
+      return {
+        question: turn.question,
+        earlierQuestions: turns.slice(0, i).map((earlier) => earlier.question),
+        shownLines: latestLines ?? new Map<string, Set<string>>(),
+      };
+    }
+  }
+  return null;
 }

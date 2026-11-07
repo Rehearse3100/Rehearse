@@ -11,10 +11,12 @@
  * call's messages and reply parsing live here). Code keeps the ids that are in the
  * set it was given, and the renderers turn facts into the { intro, items } answer.
  * The only model-written text is a one-sentence opening, written last by a separate
- * call that sees only the question and the finished answer text (companies as
- * "Company 1", "Company 2"…; its messages are built here), checked here
- * (checkOpening) and placed above the facts (withOpening; also used for
- * All-companies lists). Used by POST /api/student/data-room-chat.
+ * call that sees only the question, its topic and the finished answer text
+ * (companies as "Company 1", "Company 2"…; its messages are built here), checked
+ * here (checkOpening: it may only restate what the facts shown say) and placed above
+ * the facts of an answer with no first line of its own (withOpening). A follow-up
+ * that brings back only facts already shown gets a fixed first line instead
+ * (withNothingNewIntro). Used by POST /api/student/data-room-chat.
  */
 
 import type { CompanyAllowance } from "@/lib/data-room-chat-policy";
@@ -27,13 +29,16 @@ import {
   type ScopedAnswer,
   type ScopeIndex,
 } from "@/lib/data-room-chat-scope";
-import type { ResearchFinding } from "@/lib/data-room-research-topics";
+import type { QuestionTopic, ResearchFinding } from "@/lib/data-room-research-topics";
 
 /** The reply for a company when no fact answers the question (or none is allowed). */
 export const NOTHING_FINDABLE_REPLY = "Nothing about that is publicly findable for this company.";
 
 /** The intro when the question asks for one exact detail that no fact states, above related facts. */
 export const EXACT_DETAIL_MISSING_INTRO = "That exact detail isn't publicly findable. Related facts:";
+
+/** The intro when a follow-up ("tell me more") brings back only facts the last answer already showed. */
+export const FOLLOW_UP_NOTHING_NEW_INTRO = "That's everything publicly findable on this.";
 
 // ── Facts ───
 
@@ -289,6 +294,25 @@ export function hasFacts(answer: ScopedAnswer): boolean {
   return answer.items.some((item) => item.text !== NOTHING_FINDABLE_REPLY);
 }
 
+/**
+ * Starts a follow-up's answer with FOLLOW_UP_NOTHING_NEW_INTRO when it shows facts
+ * and every line it shows was already shown for that company (shownLines: the
+ * previous answer's lines by company id). An answer with something new, or with no
+ * facts, is returned as it is.
+ */
+export function withNothingNewIntro(
+  answer: ScopedAnswer,
+  shownLines: ReadonlyMap<string, ReadonlySet<string>>
+): ScopedAnswer {
+  const factItems = answer.items.filter((item) => item.text !== NOTHING_FINDABLE_REPLY);
+  const isNothingNew =
+    factItems.length > 0 &&
+    factItems.every((item) =>
+      item.text.split("\n").every((line) => shownLines.get(item.companyId)?.has(line.trim()) ?? false)
+    );
+  return isNothingNew ? { ...answer, intro: FOLLOW_UP_NOTHING_NEW_INTRO } : answer;
+}
+
 // ── Opening sentence (written from the finished answer, checked here) ───
 
 /** Longest opening sentence shown. */
@@ -304,6 +328,75 @@ const JUDGMENT_PATTERN =
   /\b(?:better than|the best|recommend\w*|go with|i['’]?d pick|i would pick|strong fit|good fit)\b/i;
 const NUMBER_PATTERN = /\d+/g;
 
+/**
+ * Number words a fact may spell out, as the digits an opening may write instead
+ * ("two locations" → 2, "eighteen months" → 18, "fourth location" → 4th).
+ */
+const NUMBER_WORD_DIGITS: Readonly<Record<string, string>> = {
+  zero: "0",
+  one: "1",
+  two: "2",
+  three: "3",
+  four: "4",
+  five: "5",
+  six: "6",
+  seven: "7",
+  eight: "8",
+  nine: "9",
+  ten: "10",
+  eleven: "11",
+  twelve: "12",
+  thirteen: "13",
+  fourteen: "14",
+  fifteen: "15",
+  sixteen: "16",
+  seventeen: "17",
+  eighteen: "18",
+  nineteen: "19",
+  twenty: "20",
+  thirty: "30",
+  forty: "40",
+  fifty: "50",
+  sixty: "60",
+  seventy: "70",
+  eighty: "80",
+  ninety: "90",
+  first: "1",
+  second: "2",
+  third: "3",
+  fourth: "4",
+  fifth: "5",
+  sixth: "6",
+  seventh: "7",
+  eighth: "8",
+  ninth: "9",
+  tenth: "10",
+  eleventh: "11",
+  twelfth: "12",
+};
+
+/**
+ * Claim words: an action, change, timing or judgment an opening may state only when
+ * the facts shown state it too. Each entry matches the forms of one word stem, so
+ * "praised" is allowed when a fact says "praise" and "growing" when one says
+ * "growth"; "updated" is dropped when no fact says "update".
+ */
+const CLAIM_WORD_FORMS: readonly RegExp[] = [
+  /^updat(?:e|ed|es|ing)$/,
+  /^launch(?:|ed|es|ing)$/,
+  /^introduc(?:e|ed|es|ing|tion|tions)$/,
+  /^new(?:|ly|er|est)$/,
+  /^recent(?:|ly)$/,
+  /^expan(?:d|ded|ding|ds|sion|sions)$/,
+  /^positive(?:|ly)$/,
+  /^prais(?:e|ed|es|ing)$/,
+  /^strong(?:|er|est|ly)$/,
+  /^(?:grow|grows|growing|grew|grown|growth)$/,
+  /^best$/,
+  /^ideal(?:|ly)$/,
+  /^perfect(?:|ly)$/,
+];
+
 /** The opening call's instructions: one sentence introducing the answer it sees; no new fact, judgment or name. */
 export const OPENING_SYSTEM_PROMPT = [
   'You write the opening sentence of an answer a student sees while researching companies in a sales-training Data Room. You are given the student\'s question and the exact answer text shown below your sentence; companies appear only as "Company 1", "Company 2" and so on. Reply with a single JSON object and nothing else:',
@@ -312,6 +405,8 @@ export const OPENING_SYSTEM_PROMPT = [
   "Rules:",
   '- opening: ONE short, friendly sentence (at most 30 words) that introduces the answer. It may summarise what the answer shows (for example "Four dental companies in Colorado offer online booking.").',
   "- Never add a fact, number or detail that isn't in the answer.",
+  '- Only say what the facts shown say, in their own words where you can. Never add an action, change, timing or judgment the facts don\'t state (for example "updated", "launched", "recently", "new", "positive" or "strong").',
+  '- Lead with the fact that most directly answers the question. When the "Topic:" line says risks, fit or budget, lead with a concern if the answer shows one (an existing contract or vendor, a freeze, a mandate, or something not being what it seems). Never describe a concern as a positive.',
   '- For a list, use the total from the "N companies match" line, never the number of companies shown.',
   '- When the answer is about one company, call it "this company", never "one company" or "the company below".',
   '- Never judge, rank or recommend a company. Never write "better than", "the best", "recommend", "go with", "I\'d pick", "strong fit" or "good fit".',
@@ -363,14 +458,16 @@ function redactForOpening(
 
 /**
  * The opening call's messages, built once the answer is final: only the student's
- * question and the exact answer text they will see, with company names replaced
- * by "Company 1", "Company 2"… in the order the answer shows them. Nothing else
- * (no finding the answer doesn't show, no answer key).
+ * question, the router's topic for it (a "Topic:" line, when there is one) and the
+ * exact answer text they will see, with company names replaced by "Company 1",
+ * "Company 2"… in the order the answer shows them. Nothing else (no finding the
+ * answer doesn't show, no answer key).
  */
 export function buildOpeningMessages(
   question: string,
   answer: ScopedAnswer,
-  index: ScopeIndex
+  index: ScopeIndex,
+  topic: QuestionTopic | null = null
 ): Array<{ role: "system" | "user"; content: string }> {
   const labels = companyLabels(answer);
   const shown = shownAnswerText(
@@ -380,9 +477,13 @@ export function buildOpeningMessages(
       text: redactForOpening(item.text, index, labels, item.companyId),
     }))
   );
+  const topicLine = topic ? `\nTopic: ${topic}` : "";
   return [
     { role: "system", content: OPENING_SYSTEM_PROMPT },
-    { role: "user", content: `Question: ${redactForOpening(question, index, labels, null)}\n\nAnswer:\n${shown}` },
+    {
+      role: "user",
+      content: `Question: ${redactForOpening(question, index, labels, null)}${topicLine}\n\nAnswer:\n${shown}`,
+    },
   ];
 }
 
@@ -419,14 +520,107 @@ function distinctiveNameWords(index: ScopeIndex): Set<string> {
   return words;
 }
 
+/** The first word of every roster company name: never allowed in an opening, even when a fact uses it. */
+function nameFirstWords(index: ScopeIndex): Set<string> {
+  const words = new Set<string>();
+  index.nameWordsById.forEach((nameWords) => {
+    if (nameWords[0]) {
+      words.add(nameWords[0]);
+    }
+  });
+  return words;
+}
+
+/** The digits in a text, plus the digits of the number words it spells out. */
+function numbersIn(text: string): string[] {
+  return [
+    ...(text.match(NUMBER_PATTERN) ?? []),
+    ...toWords(text).flatMap((word) => (NUMBER_WORD_DIGITS[word] ? [NUMBER_WORD_DIGITS[word]] : [])),
+  ];
+}
+
+/** Why an opening is dropped (shown in the server log), or null when it passes every check. */
+export type OpeningRejection =
+  | "empty"
+  | "too long"
+  | "more than one sentence"
+  | "ref or placeholder"
+  | "judgment"
+  | "company name"
+  | "company-name word"
+  | "number not shown"
+  | "claim not in the facts";
+
 /**
- * The opening sentence if it passes every check, else null (then no opening is
- * shown — never a fallback). Dropped when it is over 200 characters or more than
- * one sentence; mentions a ref (C1, [C1]), a "Company 1"-style placeholder, a full
- * roster company name, or a distinctive company-name word (words the student used
- * in the question are allowed); has a number that isn't in the answer (as the
- * student sees it) or the question; or judges a company (better than, the best,
- * recommend, go with, I'd pick, strong fit, good fit).
+ * The first check the opening fails, or null when it passes them all. Dropped when it
+ * is empty, over 200 characters or more than one sentence; mentions a ref (C1, [C1])
+ * or a "Company 1"-style placeholder; judges a company (better than, the best,
+ * recommend, go with, I'd pick, strong fit, good fit); mentions a full roster company
+ * name, or a distinctive company-name word — unless the student used that word in the
+ * question, or the facts shown use it and it isn't the first word of a name; has a
+ * number that is in neither the answer (as the student sees it, number words
+ * included: "two" allows 2) nor the question; or uses a claim word ("updated",
+ * "new", "positive", "growing"…) whose stem the facts shown don't use.
+ */
+export function openingRejection(
+  opening: string,
+  question: string,
+  answer: ScopedAnswer,
+  index: ScopeIndex
+): OpeningRejection | null {
+  const text = opening.trim();
+  if (!text) {
+    return "empty";
+  }
+  if (text.length > MAX_OPENING_LENGTH) {
+    return "too long";
+  }
+  if (isMoreThanOneSentence(text)) {
+    return "more than one sentence";
+  }
+  if (REF_PATTERN.test(text) || PLACEHOLDER_PATTERN.test(text)) {
+    return "ref or placeholder";
+  }
+  if (JUDGMENT_PATTERN.test(text)) {
+    return "judgment";
+  }
+  if (index.companies.some((company) => textContainsCompanyName(index, text, company.id))) {
+    return "company name";
+  }
+  const openingWords = toWords(text);
+  const questionWords = new Set(toWords(question));
+  // The facts as the student sees them (no headers): a word repeated from them names
+  // no company, unless it is a name's first word.
+  const factWords = toWords(answer.items.map((item) => item.text).join("\n"));
+  const allowedFactWords = new Set(factWords);
+  nameFirstWords(index).forEach((word) => allowedFactWords.delete(word));
+  const distinctive = distinctiveNameWords(index);
+  if (
+    openingWords.some((word) => distinctive.has(word) && !questionWords.has(word) && !allowedFactWords.has(word))
+  ) {
+    return "company-name word";
+  }
+  const shown = shownAnswerText(
+    answer.intro,
+    answer.items.map((item) => ({ name: item.companyName, text: item.text }))
+  );
+  const knownNumbers = new Set([...numbersIn(question), ...numbersIn(shown)]);
+  if ((text.match(NUMBER_PATTERN) ?? []).some((number) => !knownNumbers.has(number))) {
+    return "number not shown";
+  }
+  const isUnstatedClaim = (word: string): boolean => {
+    const forms = CLAIM_WORD_FORMS.find((pattern) => pattern.test(word));
+    return forms !== undefined && !factWords.some((factWord) => forms.test(factWord));
+  };
+  if (openingWords.some(isUnstatedClaim)) {
+    return "claim not in the facts";
+  }
+  return null;
+}
+
+/**
+ * The opening sentence (trimmed) if it passes every check (openingRejection), else
+ * null: then no opening is shown — never a fallback.
  */
 export function checkOpening(
   opening: string,
@@ -434,38 +628,16 @@ export function checkOpening(
   answer: ScopedAnswer,
   index: ScopeIndex
 ): string | null {
-  const text = opening.trim();
-  if (!text || text.length > MAX_OPENING_LENGTH || isMoreThanOneSentence(text)) {
-    return null;
-  }
-  if (REF_PATTERN.test(text) || PLACEHOLDER_PATTERN.test(text) || JUDGMENT_PATTERN.test(text)) {
-    return null;
-  }
-  if (index.companies.some((company) => textContainsCompanyName(index, text, company.id))) {
-    return null;
-  }
-  const questionWords = new Set(toWords(question));
-  const distinctive = distinctiveNameWords(index);
-  if (toWords(text).some((word) => distinctive.has(word) && !questionWords.has(word))) {
-    return null;
-  }
-  const shown = shownAnswerText(
-    answer.intro,
-    answer.items.map((item) => ({ name: item.companyName, text: item.text }))
-  );
-  const knownNumbers = new Set([...(question.match(NUMBER_PATTERN) ?? []), ...(shown.match(NUMBER_PATTERN) ?? [])]);
-  if ((text.match(NUMBER_PATTERN) ?? []).some((number) => !knownNumbers.has(number))) {
-    return null;
-  }
-  return text;
+  return openingRejection(opening, question, answer, index) === null ? opening.trim() : null;
 }
 
 /**
  * True when the answer gets an opening sentence: it shows facts and has no first
  * line of its own. An answer that already starts with a fixed line (a filter list's
- * "{n} companies match.", the exact-detail line, the "nothing hidden" line) or shows
- * no facts (the nothing-findable reply, any fixed reply) gets none, so its first
- * line is never doubled.
+ * "{n} companies match.", the exact-detail line, the "nothing hidden" line, the
+ * follow-up's "That's everything publicly findable on this.") or shows no facts (the
+ * nothing-findable reply, any fixed reply) gets none, so its first line is never
+ * doubled.
  */
 export function needsOpening(answer: ScopedAnswer): boolean {
   return hasFacts(answer) && answer.intro === "";
@@ -481,7 +653,10 @@ export function withOpening(answer: ScopedAnswer, opening: string | null): Scope
 
 // ── Selection call ───
 
-/** The selection call's instructions: choose fact ids and say whether one is exact; never write an answer. */
+/**
+ * The selection call's instructions: choose fact ids that actually answer the
+ * question (none is fine) and say whether one is exact; never write an answer.
+ */
 export const SELECTION_SYSTEM_PROMPT = [
   'You choose facts that answer a student\'s question in a sales-training Data Room. Each line under "Facts" is one fact, written as "id: fact". Companies appear only as references such as C1, in the ids and in the question.',
   "Reply with a single JSON object and nothing else:",
@@ -490,9 +665,10 @@ export const SELECTION_SYSTEM_PROMPT = [
   "Rules:",
   "- fact_ids: the ids of the facts that answer the question, most relevant first. Copy each id exactly as written; use only ids from the list.",
   "- Choose only facts that answer the question. If it is about several companies, choose the facts that answer it for the companies listed.",
+  "- Choose a fact only if it actually answers the question. A fact about a different subject never answers it, even when it is the only fact listed for a company; returning no facts is fine.",
   "- exact_answer: true only if a listed fact states exactly what was asked (for example the number, amount or count, the email address or phone number, or the named vendor or product); false otherwise.",
   '- If no fact answers the question, reply {"fact_ids": [], "exact_answer": false}.',
-  "- If the exact thing asked for (for example an email address, a revenue number or a count) isn't stated in the facts, set exact_answer to false and return no facts rather than loosely related ones.",
+  "- If the exact thing asked for (for example an email address, a revenue number or a count) isn't stated in the facts, set exact_answer to false and choose only facts genuinely related to it (about the same subject); if none are, return no facts rather than loosely related ones.",
   "- Never rank, recommend or judge the companies; only choose facts.",
 ].join("\n");
 

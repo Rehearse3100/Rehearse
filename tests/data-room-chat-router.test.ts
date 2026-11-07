@@ -7,13 +7,17 @@
  * unknown topic or attribute just becomes null). Filters: 1–3 conditions, or a
  * single "filter" read as a one-item list. The prompt's examples never hint at the
  * real ICP (industries, territory places and states, location bounds), checked
- * against scripts/config/tempo-icp.ts.
+ * against scripts/config/tempo-icp.ts. Follow-ups ("tell me more", "more about that")
+ * are recognised in code and read back to the question they follow, with the lines
+ * its answer showed, for the same companies only.
  */
 
 import { describe, expect, it } from "vitest";
 import {
   buildRouterMessages,
+  isFollowUpQuestion,
   OVERVIEW_DECISION,
+  parseFollowUpContext,
   parseRouterReply,
   ROUTER_SYSTEM_PROMPT,
   scopeKindOf,
@@ -379,5 +383,105 @@ describe("prompt examples stay neutral", () => {
     ]) {
       expect(ROUTER_SYSTEM_PROMPT, text).toContain(text);
     }
+  });
+});
+
+describe("follow-ups", () => {
+  const CANYON = { mode: "companies" as const, companyIds: ["canyon"] };
+  const OTHER = { mode: "companies" as const, companyIds: ["maple"] };
+  const hiring = [
+    { role: "user", content: "Are they hiring?", scope: CANYON },
+    { role: "assistant", intro: "", items: [{ companyId: "canyon", text: "Job listing: Spa Attendant" }], scope: CANYON },
+  ];
+
+  it("recognises a whole-message request for more on the last answer", () => {
+    for (const text of [
+      "tell me more about that",
+      "Tell me more.",
+      "tell me a bit more",
+      "Can you tell me more about it?",
+      "ok, tell me more please",
+      "more about that",
+      "More on this?",
+      "more details",
+      "anything else on that?",
+      "Anything more about those?",
+      "what else about that",
+      "Could you elaborate?",
+      "elaborate on that",
+      "go on",
+      "expand on that",
+    ]) {
+      expect(isFollowUpQuestion(text), text).toBe(true);
+    }
+  });
+
+  it("a message with its own subject, about the companies themselves, or a plain 'anything else?' is not one", () => {
+    for (const text of [
+      "tell me more about their budget",
+      "tell me more about them",
+      "Tell me about them",
+      "anything else?",
+      "What else should I know?",
+      "Are they hiring?",
+      "more locations than Summit?",
+      "",
+    ]) {
+      expect(isFollowUpQuestion(text), text).toBe(false);
+    }
+  });
+
+  it("Canyon: the follow-up is about the earlier question, with the lines its answer showed", () => {
+    const context = parseFollowUpContext(
+      [{ role: "user", content: "What's their industry?", scope: OTHER }, ...hiring],
+      CANYON
+    );
+    expect(context).toEqual({
+      question: "Are they hiring?",
+      earlierQuestions: ["What's their industry?"],
+      shownLines: new Map([["canyon", new Set(["Job listing: Spa Attendant"])]]),
+    });
+  });
+
+  it("walks back over earlier follow-ups to the question they follow; the latest answer's lines count", () => {
+    const context = parseFollowUpContext(
+      [
+        ...hiring,
+        { role: "user", content: "tell me more", scope: CANYON },
+        {
+          role: "assistant",
+          intro: "",
+          items: [{ companyId: "canyon", text: "Job listing: Spa Attendant\nCareers page lists a guest coordinator role" }],
+          scope: CANYON,
+        },
+      ],
+      CANYON
+    );
+    expect(context?.question).toBe("Are they hiring?");
+    expect(context?.earlierQuestions).toEqual([]);
+    expect(context?.shownLines.get("canyon")).toEqual(
+      new Set(["Job listing: Spa Attendant", "Careers page lists a guest coordinator role"])
+    );
+  });
+
+  it("no context: other companies, no scope on the question, All companies, no earlier question, or no history", () => {
+    expect(parseFollowUpContext(hiring, OTHER)).toBeNull();
+    expect(parseFollowUpContext([{ role: "user", content: "Are they hiring?" }], CANYON)).toBeNull();
+    expect(parseFollowUpContext(hiring, { mode: "all" })).toBeNull();
+    expect(parseFollowUpContext([{ role: "user", content: "tell me more", scope: CANYON }], CANYON)).toBeNull();
+    expect(parseFollowUpContext([], CANYON)).toBeNull();
+    expect(parseFollowUpContext("not a list", CANYON)).toBeNull();
+    // A follow-up chain that crosses into other companies stops there.
+    expect(
+      parseFollowUpContext([...hiring, { role: "user", content: "tell me more", scope: OTHER }], CANYON)
+    ).toBeNull();
+  });
+
+  it("an earlier question with no answer (a failed request) still counts; its lines are empty", () => {
+    expect(parseFollowUpContext([{ role: "user", content: "Are they hiring?", scope: CANYON }], CANYON)).toEqual({
+      question: "Are they hiring?",
+      earlierQuestions: [],
+      shownLines: new Map(),
+    });
   });
 });

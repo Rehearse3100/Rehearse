@@ -16,7 +16,10 @@
  * selection call; different fields AND, same field OR, locations AND; valid filters
  * used even at low confidence), anything else the fixed reply. Also: the router call (sees no
  * facts, fails closed), the out-of-scope mention reply, company-name questions and
- * request checks.
+ * request checks. Part 2 fixes (real cases): an opening may only restate the facts
+ * shown (Canyon "updated", Northview "positive feedback"), with the question's topic
+ * passed to its call; unrelated public facts aren't shown; a follow-up ("tell me more
+ * about that") is routed as the earlier question it follows.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -579,7 +582,7 @@ describe("the opening sentence, written last from the finished answer", () => {
       { role: "system", content: OPENING_SYSTEM_PROMPT },
       {
         role: "user",
-        content: `Question: What about Company 1's budget?\n\nAnswer:\nCompany 1\n${BUDGET_FINDING}\n8 locations across Front Range, CO.`,
+        content: `Question: What about Company 1's budget?\nTopic: budget\n\nAnswer:\nCompany 1\n${BUDGET_FINDING}\n8 locations across Front Range, CO.`,
       },
     ]);
     // Nothing the answer doesn't show: no other finding, no contact, no name or id.
@@ -1022,6 +1025,164 @@ describe("reply fixes: greetings, full lists, any number of conditions, first li
     state.classify.mockResolvedValueOnce(routerReply("attribute_lookup", null, "contacts"));
     const contacts = (await ask({ scope: ONE, newMessage: "Who should I contact?" })) as { items: Array<{ text: string }> };
     expect(contacts.items[0]?.text).toContain("Dana Reyes");
+  });
+});
+
+describe("reply fixes, part 2: openings restate the facts, no unrelated facts, follow-ups", () => {
+  const CANYON_ROW = {
+    id: "canyon",
+    company_name: "Canyon Aesthetics",
+    industry: "Med Spa",
+    vertical: "med spa",
+    locations: 2,
+    metro: "Scottsdale, AZ",
+    in_territory: false,
+    size_note: null,
+    online_booking: true,
+    blurb: "Boutique med spa offering injectables and skincare.",
+    public_signals: ["Job listing: Spa Attendant", "Website highlights online intake for new clients"],
+  };
+  const NORTHVIEW_ROW = {
+    id: "northview",
+    company_name: "Northview Family Dentistry",
+    industry: "Dental",
+    vertical: "dental",
+    locations: 3,
+    metro: "Boulder, CO",
+    in_territory: true,
+    size_note: "3 locations in Boulder County",
+    online_booking: true,
+    blurb: "Family dentistry practice with a mature patient base and digital front desk tools.",
+    public_signals: ["Recently refreshed patient portal branding"],
+  };
+  const INTAKE = "Website FAQ notes online intake forms for first-time clients.";
+  const DIRECTORS = "The website FAQ explains how medical directors oversee injectable services.";
+  const CANYON_FINDINGS = [
+    { text: INTAKE, topics: ["current_tools", "operations"] },
+    { text: DIRECTORS, topics: ["operations"] },
+  ];
+  const PRAISE = "Patient forum threads praise the refreshed portal branding.";
+  const OUTREACH = "Local newsletter profiled the practice's school outreach program.";
+  const EMERGENCY = "Website highlights same-day emergency appointment availability.";
+  const SLOTEASY = "Operations team standardized on SlotEasy eighteen months ago with a multi-year agreement.";
+  const NORTHVIEW_FINDINGS = [
+    { text: PRAISE, topics: ["customer_feedback", "current_tools"] },
+    { text: OUTREACH, topics: ["amenities"] },
+    { text: EMERGENCY, topics: ["operations"] },
+    { text: SLOTEASY, topics: ["current_tools", "operations"] },
+  ];
+  const CANYON = { mode: "companies", companyIds: ["canyon"] };
+  const NORTHVIEW = { mode: "companies", companyIds: ["northview"] };
+  const HIRING_HISTORY = [
+    { role: "user", content: "Are they hiring?", scope: CANYON },
+    { role: "assistant", intro: "", items: [{ companyId: "canyon", text: "Job listing: Spa Attendant" }], scope: CANYON },
+  ];
+  const opening = (text: string): ReturnType<typeof modelReply> => modelReply({ opening: text });
+  /** The user message of the opening call / router call with this index. */
+  const openingUser = (call = 0): string =>
+    (state.open.mock.calls[call]?.[0] as { messages: ModelMessage[] }).messages[1]?.content ?? "";
+  const routerUser = (call = 0): string =>
+    (state.classify.mock.calls[call]?.[0] as { messages: ModelMessage[] }).messages[1]?.content ?? "";
+
+  beforeEach(() => {
+    state.roster = [...ROSTER, CANYON_ROW, NORTHVIEW_ROW];
+  });
+
+  it("Canyon, 'What changed recently?': an opening that adds 'updated' is dropped (the log names the check, not the sentence)", async () => {
+    state.storedResearchFacts = CANYON_FINDINGS;
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "recent_changes"));
+    state.create.mockResolvedValueOnce(selection([]));
+    state.open.mockResolvedValueOnce(opening("This company updated its online intake forms."));
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const reply = await ask({ scope: CANYON, newMessage: "What changed recently?" });
+    const logged = JSON.stringify(infoSpy.mock.calls);
+    infoSpy.mockRestore();
+
+    expect(reply).toEqual({
+      intro: "",
+      items: [{ companyId: "canyon", companyName: "Canyon Aesthetics", text: `${INTAKE}\n${DIRECTORS}` }],
+    });
+    expect(logged).toBe(JSON.stringify([["[data-room-chat] opening dropped:", "claim not in the facts"]]));
+    expect(openingUser()).toContain("Question: What changed recently?\nTopic: recent_changes\n\nAnswer:");
+  });
+
+  it("Northview, 'Any risks?': 'positive feedback' over a concern is dropped; an opening that leads with the concern is shown", async () => {
+    state.storedResearchFacts = NORTHVIEW_FINDINGS;
+    state.classify.mockResolvedValue(routerReply("specific_research", "risks"));
+    state.create.mockResolvedValue(selection([]));
+    const items = [{ companyId: "northview", companyName: "Northview Family Dentistry", text: `${PRAISE}\n${EMERGENCY}\n${SLOTEASY}` }];
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    state.open.mockResolvedValueOnce(
+      opening("This company has received positive feedback for its portal branding and offers same-day emergency appointments.")
+    );
+    expect(await ask({ scope: NORTHVIEW, newMessage: "Any risks?" })).toEqual({ intro: "", items });
+
+    // "18" restates "eighteen" (a spelled-out number may be written as digits).
+    const concern = "This company's operations team standardized on SlotEasy 18 months ago under a multi-year agreement.";
+    state.open.mockResolvedValueOnce(opening(concern));
+    expect(await ask({ scope: NORTHVIEW, newMessage: "Any risks?" })).toEqual({ intro: concern, items });
+    infoSpy.mockRestore();
+    expect(openingUser(1)).toContain("Question: Any risks?\nTopic: risks\n\nAnswer:");
+  });
+
+  it("Canyon, 'What's going on with their phones?': no public fact answers it → the nothing-findable reply, not unrelated lines", async () => {
+    // The policy allows no finding here (topic current_tools; the stored finding is
+    // operations). A finding the policy does allow is still always shown (unchanged).
+    state.storedResearchFacts = [{ text: DIRECTORS, topics: ["operations"] }];
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "current_tools"));
+    state.create.mockResolvedValueOnce(selection([]));
+    expect(await ask({ scope: CANYON, newMessage: "What's going on with their phones?" })).toEqual({
+      intro: "",
+      items: [{ companyId: "canyon", companyName: "Canyon Aesthetics", text: NOTHING_FINDABLE_REPLY }],
+    });
+    // The public lines were offered; the prompt says to pick only facts that answer.
+    expect(factLines()).toContain("C1:s:1: Website highlights online intake for new clients");
+    expect(selectionMessages()[0]?.content).toContain("A fact about a different subject never answers it");
+    expect(state.open).not.toHaveBeenCalled();
+  });
+
+  it("Canyon, 'tell me more about that' after 'Are they hiring?': routed as that question; the same line again under the fixed first line, no opening", async () => {
+    state.storedResearchFacts = CANYON_FINDINGS;
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "staffing"));
+    state.create.mockResolvedValueOnce(selection(["C1:s:0"]));
+    state.open.mockResolvedValue(opening("Here's what's on record for your question."));
+    expect(await ask({ scope: CANYON, newMessage: "tell me more about that", history: HIRING_HISTORY })).toEqual({
+      intro: "That's everything publicly findable on this.",
+      items: [{ companyId: "canyon", companyName: "Canyon Aesthetics", text: "Job listing: Spa Attendant" }],
+    });
+    expect(routerUser()).toBe(
+      ["Scope: one company", "Recent questions (oldest first):", "(none)", "Question: Are they hiring?"].join("\n")
+    );
+    expect(selectionMessages()[1]?.content.split("\n")[0]).toBe("Question: Are they hiring?");
+    expect(state.open).not.toHaveBeenCalled();
+  });
+
+  it("a follow-up that finds something new is a normal answer; its opening sees the earlier question and topic", async () => {
+    state.storedResearchFacts = CANYON_FINDINGS;
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "staffing"));
+    state.create.mockResolvedValueOnce(selection(["C1:s:0", "C1:s:1"]));
+    state.open.mockResolvedValueOnce(opening("Here's what's on record for your question."));
+    expect(await ask({ scope: CANYON, newMessage: "Anything else on that?", history: HIRING_HISTORY })).toEqual({
+      intro: "Here's what's on record for your question.",
+      items: [
+        {
+          companyId: "canyon",
+          companyName: "Canyon Aesthetics",
+          text: "Job listing: Spa Attendant\nWebsite highlights online intake for new clients",
+        },
+      ],
+    });
+    expect(openingUser().startsWith("Question: Are they hiring?\nTopic: staffing\n\nAnswer:")).toBe(true);
+  });
+
+  it("not a follow-up: a question with its own subject, a different company, or All companies (the router sees the message as typed)", async () => {
+    await ask({ scope: CANYON, newMessage: "tell me more about their budget", history: HIRING_HISTORY });
+    expect(routerUser(0).endsWith("Question: tell me more about their budget")).toBe(true);
+    await ask({ scope: NORTHVIEW, newMessage: "tell me more about that", history: HIRING_HISTORY });
+    expect(routerUser(1).endsWith("- Are they hiring?\nQuestion: tell me more about that")).toBe(true);
+    await ask({ scope: ALL, newMessage: "tell me more about that", history: HIRING_HISTORY });
+    expect(routerUser(2).endsWith("Question: tell me more about that")).toBe(true);
   });
 });
 

@@ -2,12 +2,16 @@
  * data-room-chat/route.ts
  * POST — Data Room AI Research Assistant, extractive: every answer is rendered by
  * code from stored facts; the model never writes a fact. The only model-written text
- * is a one-sentence opening, written last by its own call from the question and the
- * finished answer text only (companies as "Company 1", "Company 2"…), checked by
- * code and shown above the facts — never on a nothing-findable or fixed reply, nor on
- * an answer with its own first line (an All-companies list's count line, the
- * exact-detail line, the "nothing hidden" line); if it fails or is dropped, the
- * answer goes out unchanged. The client sends a
+ * is a one-sentence opening, written last by its own call from the question, its
+ * topic and the finished answer text only (companies as "Company 1", "Company 2"…),
+ * checked by code (it may only restate what the facts shown say) and shown above the
+ * facts — never on a nothing-findable or fixed reply, nor on an answer with its own
+ * first line (an All-companies list's count line, the exact-detail line, the
+ * "nothing hidden" line, the follow-up line); if it fails or is dropped, the
+ * answer goes out unchanged. A follow-up ("tell me more", "more about that") about
+ * the same 1–3 companies is routed and answered as the earlier question it follows;
+ * when that brings back only lines already shown, the answer starts with "That's
+ * everything publicly findable on this." The client sends a
  * scope (1–3 company ids, or all companies) and the question; facts are loaded
  * server-side. Before anything else, every question passes the safety checks
  * (lib/data-room-chat-guard.ts), each refusal a fixed reply: over 500 characters;
@@ -55,12 +59,14 @@ import {
   checkOpening,
   hasFacts,
   needsOpening,
+  openingRejection,
   overviewLines,
   parseOpening,
   parseSelection,
   renderAnswer,
   toSelectableFacts,
   withExactDetailIntro,
+  withNothingNewIntro,
   withOpening,
   type CompanyBlock,
   type CompanyFacts,
@@ -77,13 +83,16 @@ import {
 } from "@/lib/data-room-chat-guard";
 import {
   buildRouterMessages,
+  isFollowUpQuestion,
   OVERVIEW_DECISION,
+  parseFollowUpContext,
   parseRouterEnglish,
   parseRouterReply,
   scopeKindOf,
   type RouterDecision,
   type ScopeKind,
 } from "@/lib/data-room-chat-router";
+import type { QuestionTopic } from "@/lib/data-room-research-topics";
 import {
   answerNameQuery,
   buildOutOfScopeMessage,
@@ -264,14 +273,16 @@ async function selectFacts(openai: OpenAI, question: string, facts: SelectableFa
 /**
  * The opening call (gpt-4o, temperature 0.3, JSON), made once the answer is final
  * and only when it shows facts and has no first line of its own (needsOpening; not
- * above the exact-detail or "nothing hidden" line): it sees the question and the
- * answer text the student will see (companies as "Company 1"…). Its sentence goes
- * above the answer if it passes the checks; a failed call or a dropped sentence
- * leaves the answer unchanged.
+ * above the exact-detail, "nothing hidden" or follow-up line): it sees the question,
+ * its topic and the answer text the student will see (companies as "Company 1"…).
+ * Its sentence goes above the answer if it passes the checks; a failed call or a
+ * dropped sentence leaves the answer unchanged (a dropped sentence logs which check
+ * it failed, not the sentence).
  */
 async function withWrittenOpening(
   openai: OpenAI,
   question: string,
+  topic: QuestionTopic | null,
   answer: ScopedAnswer,
   index: ScopeIndex
 ): Promise<ScopedAnswer> {
@@ -284,9 +295,13 @@ async function withWrittenOpening(
       temperature: OPENING_TEMPERATURE,
       max_tokens: OPENING_MAX_TOKENS,
       response_format: { type: "json_object" },
-      messages: buildOpeningMessages(question, answer, index),
+      messages: buildOpeningMessages(question, answer, index, topic),
     });
     const opening = parseOpening(response.choices[0]?.message?.content);
+    const rejection = opening ? openingRejection(opening, question, answer, index) : null;
+    if (rejection) {
+      console.info("[data-room-chat] opening dropped:", rejection);
+    }
     return withOpening(answer, checkOpening(opening, question, answer, index));
   } catch (error) {
     console.error("[data-room-chat] opening:", error);
@@ -444,14 +459,25 @@ export async function POST(request: Request): Promise<NextResponse> {
     const singleCompanyId =
       scope.mode === "companies" && scope.companyIds.length === 1 ? scope.companyIds[0] : null;
     const refLabels = buildRefLabels(scopedIds);
-    const openingQuestion = newMessage.slice(0, 8_000);
+
+    // A follow-up ("tell me more", "more about that") about the same 1–3 companies is
+    // routed and answered as the earlier question it follows: its own words carry no
+    // subject, so the router, the selection call and the opening see that question.
+    // An earlier question over the length cap is not reused.
+    const followUpContext =
+      scope.mode === "companies" && isFollowUpQuestion(newMessage)
+        ? parseFollowUpContext(body.history, scope)
+        : null;
+    const followUp = followUpContext && !isTooLong(followUpContext.question) ? followUpContext : null;
+
+    const openingQuestion = (followUp?.question ?? newMessage).slice(0, 8_000);
     const question = redactStudentText(openingQuestion, index, refLabels);
 
     // The router never sees facts or company data.
     const scopeKind = scopeKindOf(scope);
     const routerMessages = buildRouterMessages({
       question,
-      recentQuestions: parseHistoryQuestions(body.history).map((text) =>
+      recentQuestions: (followUp ? followUp.earlierQuestions : parseHistoryQuestions(body.history)).map((text) =>
         redactStudentText(text, index, refLabels)
       ),
       scopeKind,
@@ -634,9 +660,15 @@ export async function POST(request: Request): Promise<NextResponse> {
       }
     }
 
+    // A follow-up that brings back only lines the last answer already showed says so
+    // in a fixed first line (so no opening sentence).
+    if (followUp) {
+      answer = withNothingNewIntro(answer, followUp.shownLines);
+    }
+
     // Written last, from the finished answer; above the facts if it passes the checks
     // (every path whose answer has no first line of its own).
-    return NextResponse.json(await withWrittenOpening(openai, openingQuestion, answer, index));
+    return NextResponse.json(await withWrittenOpening(openai, openingQuestion, decision.topic, answer, index));
   } catch (error) {
     console.error("[data-room-chat] unexpected:", error);
     return NextResponse.json(

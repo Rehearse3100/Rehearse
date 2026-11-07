@@ -4,10 +4,11 @@
  * values, the findings and public facts the policy allows, the answer path per
  * router decision (compare is an overview), the renderers (overview, attribute,
  * selected facts, nothing-findable, the exact-detail intro), the opening sentence
- * (its call's input: question and shown answer only, names as Company 1…; its
- * prompt; every drop rule; where it shows), and the selection call's messages (allowed
- * findings and public facts) and reply parsing (only given ids survive, in order;
- * exact_answer).
+ * (its call's input: question, topic and shown answer only, names as Company 1…; its
+ * prompt; every drop rule, including claim words the facts don't state and the drop
+ * reason; where it shows), the follow-up's "nothing new" line, and the selection
+ * call's messages (allowed findings and public facts), prompt (only facts that answer)
+ * and reply parsing (only given ids survive, in order; exact_answer).
  */
 
 import { describe, expect, it } from "vitest";
@@ -23,10 +24,12 @@ import {
   buildSelectionMessages,
   checkOpening,
   EXACT_DETAIL_MISSING_INTRO,
+  FOLLOW_UP_NOTHING_NEW_INTRO,
   hasFacts,
   needsOpening,
   NOTHING_FINDABLE_REPLY,
   OPENING_SYSTEM_PROMPT,
+  openingRejection,
   overviewLines,
   parseOpening,
   parseSelection,
@@ -35,6 +38,7 @@ import {
   SELECTION_SYSTEM_PROMPT,
   toSelectableFacts,
   withExactDetailIntro,
+  withNothingNewIntro,
   withOpening,
   type CompanyFactSource,
 } from "@/lib/data-room-chat-render";
@@ -390,6 +394,184 @@ describe("the opening sentence (written from the finished answer)", () => {
   });
 });
 
+describe("the opening only restates what the facts shown say", () => {
+  const index = buildScopeIndex([
+    { id: "summit-dental", name: "Summit Dental Group", industry: "Dental" },
+    { id: "falcon", name: "Falcon Market", industry: "Retail" },
+    { id: "maple", name: "Maple Family Dentistry", industry: "Dental" },
+    { id: "cedar", name: "Cedar Grove Family Dentistry", industry: "Dental" },
+    { id: "northview", name: "Northview Family Dentistry", industry: "Dental" },
+    { id: "canyon", name: "Canyon Aesthetics", industry: "Med Spa" },
+  ]);
+  const shown = (companyId: string, companyName: string, ...lines: string[]): ScopedAnswer => ({
+    intro: "",
+    items: [{ companyId, companyName, text: lines.join("\n") }],
+  });
+  // The real failures (2026-11): Canyon Aesthetics, "What changed recently?", and
+  // Northview Family Dentistry, "Any risks?".
+  const CANYON_CHANGES = shown(
+    "canyon",
+    "Canyon Aesthetics",
+    "Website FAQ notes online intake forms for first-time clients.",
+    "The website FAQ explains how medical directors oversee injectable services."
+  );
+  const NORTHVIEW_RISKS = shown(
+    "northview",
+    "Northview Family Dentistry",
+    "Patient forum threads praise the refreshed portal branding.",
+    "Website highlights same-day emergency appointment availability.",
+    "Operations team standardized on SlotEasy eighteen months ago with a multi-year agreement."
+  );
+
+  it("Canyon: an opening that adds an action the facts don't state ('updated', 'recently') is dropped; a restatement is kept", () => {
+    const question = "What changed recently?";
+    expect(checkOpening("This company updated its online intake forms.", question, CANYON_CHANGES, index)).toBeNull();
+    expect(openingRejection("This company updated its online intake forms.", question, CANYON_CHANGES, index)).toBe(
+      "claim not in the facts"
+    );
+    // "recently" is in the question, not in the facts: still dropped.
+    expect(checkOpening("This company recently added online intake forms.", question, CANYON_CHANGES, index)).toBeNull();
+    expect(
+      checkOpening("This company's website FAQ notes online intake forms for first-time clients.", question, CANYON_CHANGES, index)
+    ).toBe("This company's website FAQ notes online intake forms for first-time clients.");
+  });
+
+  it("Northview: a concern described as a positive ('positive feedback') is dropped; leading with the concern is kept", () => {
+    const question = "Any risks?";
+    const positive =
+      "This company has received positive feedback for its portal branding and offers same-day emergency appointments.";
+    expect(checkOpening(positive, question, NORTHVIEW_RISKS, index)).toBeNull();
+    expect(openingRejection(positive, question, NORTHVIEW_RISKS, index)).toBe("claim not in the facts");
+    const concern = "This company's operations team standardized on SlotEasy eighteen months ago under a multi-year agreement.";
+    expect(checkOpening(concern, question, NORTHVIEW_RISKS, index)).toBe(concern);
+  });
+
+  it("a claim word is fine when the facts use the same stem (any form); a look-alike word doesn't count", () => {
+    const answer = shown(
+      "canyon",
+      "Canyon Aesthetics",
+      "Reviews praise consultative staff.",
+      "Recently refreshed patient portal branding",
+      "Local paper noted steady growth at both studios.",
+      "Expanded hygiene team hiring at two locations",
+      "Local newsletter profiled the owner."
+    );
+    for (const opening of [
+      "Reviewers praised this company's consultative staff.",
+      "This company recently refreshed its patient portal branding.",
+      "This company is growing steadily at both studios.",
+      "This company is expanding its hygiene team.",
+    ]) {
+      expect(checkOpening(opening, "Any updates?", answer, index), opening).toBe(opening);
+    }
+    // "newsletter" is not "new"; "launched", "strong", "ideal", "perfect", "best", "introduced" aren't in the facts.
+    for (const opening of [
+      "This company has a new owner.",
+      "This company launched a portal.",
+      "This company has strong reviews.",
+      "This company looks ideal.",
+      "This company's portal is perfect.",
+      "This company is best known for its staff.",
+      "This company introduced a portal.",
+    ]) {
+      expect(openingRejection(opening, "Any updates?", answer, index), opening).toBe("claim not in the facts");
+    }
+  });
+
+  it("a company-name word the facts shown use is fine (it names no company); a name's first word never is", () => {
+    const answer = shown("summit-dental", "Summit Dental Group", "Opened a booth at the farmers market downtown.");
+    expect(checkOpening("This company opened a booth at the farmers market downtown.", "Any events?", answer, index)).toBe(
+      "This company opened a booth at the farmers market downtown."
+    );
+    // Not in the facts: still dropped (the word is part of Falcon Market's name).
+    const other = shown("summit-dental", "Summit Dental Group", "Opened a booth downtown.");
+    expect(openingRejection("This company opened a booth at the market.", "Any events?", other, index)).toBe(
+      "company-name word"
+    );
+    const named = shown("summit-dental", "Summit Dental Group", "Summit is growing fast.");
+    expect(openingRejection("Summit is growing fast.", "Any news?", named, index)).toBe("company-name word");
+  });
+
+  it("a number the facts spell out may be written as digits; any other number is still dropped", () => {
+    const answer = shown(
+      "maple",
+      "Maple Family Dentistry",
+      "Careers page lists hygienist openings at two locations.",
+      "Lease filing shows a fourth office under construction."
+    );
+    expect(checkOpening("This company is hiring hygienists at 2 locations.", "Are they hiring?", answer, index)).toBe(
+      "This company is hiring hygienists at 2 locations."
+    );
+    expect(checkOpening("A 4th office is under construction.", "Are they hiring?", answer, index)).toBe(
+      "A 4th office is under construction."
+    );
+    expect(openingRejection("This company is hiring at 3 locations.", "Are they hiring?", answer, index)).toBe(
+      "number not shown"
+    );
+    expect(
+      checkOpening("This company standardized on SlotEasy 18 months ago.", "Any risks?", NORTHVIEW_RISKS, index)
+    ).toBe("This company standardized on SlotEasy 18 months ago.");
+  });
+
+  it("says which check dropped a sentence; null when it passes", () => {
+    const question = "Any risks?";
+    expect(openingRejection("", question, NORTHVIEW_RISKS, index)).toBe("empty");
+    expect(openingRejection(`${"Here's what's on record. ".repeat(10)}`, question, NORTHVIEW_RISKS, index)).toBe("too long");
+    expect(openingRejection("Here's what's on record. Take a look.", question, NORTHVIEW_RISKS, index)).toBe(
+      "more than one sentence"
+    );
+    expect(openingRejection("Here's what's on record for Company 1.", question, NORTHVIEW_RISKS, index)).toBe(
+      "ref or placeholder"
+    );
+    expect(openingRejection("It looks like a good fit.", question, NORTHVIEW_RISKS, index)).toBe("judgment");
+    expect(openingRejection("Here's what's on record for Falcon Market.", question, NORTHVIEW_RISKS, index)).toBe(
+      "company name"
+    );
+    expect(openingRejection("Here's what's on record for your question.", question, NORTHVIEW_RISKS, index)).toBeNull();
+  });
+
+  it("the call is told the question's topic; the prompt says to restate the facts and lead with a concern", () => {
+    expect(buildOpeningMessages("Any risks?", NORTHVIEW_RISKS, index, "risks")[1]?.content).toBe(
+      ["Question: Any risks?", "Topic: risks", "", "Answer:", "Company 1", ...NORTHVIEW_RISKS.items[0]!.text.split("\n")].join(
+        "\n"
+      )
+    );
+    expect(buildOpeningMessages("Any risks?", NORTHVIEW_RISKS, index, null)[1]?.content.startsWith("Question: Any risks?\n\nAnswer:")).toBe(
+      true
+    );
+    for (const line of [
+      '- Only say what the facts shown say, in their own words where you can. Never add an action, change, timing or judgment the facts don\'t state (for example "updated", "launched", "recently", "new", "positive" or "strong").',
+      '- Lead with the fact that most directly answers the question. When the "Topic:" line says risks, fit or budget, lead with a concern if the answer shows one (an existing contract or vendor, a freeze, a mandate, or something not being what it seems). Never describe a concern as a positive.',
+    ]) {
+      expect(OPENING_SYSTEM_PROMPT, line).toContain(line);
+    }
+  });
+});
+
+describe("a follow-up that brings back nothing new", () => {
+  const answer: ScopedAnswer = {
+    intro: "",
+    items: [{ companyId: "canyon", companyName: "Canyon Aesthetics", text: "Job listing: Spa Attendant" }],
+  };
+  const shownBefore = new Map([["canyon", new Set(["Job listing: Spa Attendant"])]]);
+
+  it("the same lines again: the fixed first line (so no opening)", () => {
+    const again = withNothingNewIntro(answer, shownBefore);
+    expect(again).toEqual({ ...answer, intro: FOLLOW_UP_NOTHING_NEW_INTRO });
+    expect(FOLLOW_UP_NOTHING_NEW_INTRO).toBe("That's everything publicly findable on this.");
+    expect(needsOpening(again)).toBe(false);
+  });
+
+  it("a new line, another company's lines, or no facts: unchanged", () => {
+    const more = { ...answer, items: [{ ...answer.items[0]!, text: "Job listing: Spa Attendant\nCareers page lists a guest coordinator role" }] };
+    expect(withNothingNewIntro(more, shownBefore)).toEqual(more);
+    expect(withNothingNewIntro(answer, new Map([["maple", new Set(["Job listing: Spa Attendant"])]]))).toEqual(answer);
+    expect(withNothingNewIntro(answer, new Map())).toEqual(answer);
+    const nothing = { intro: "", items: [{ ...answer.items[0]!, text: NOTHING_FINDABLE_REPLY }] };
+    expect(withNothingNewIntro(nothing, new Map([["canyon", new Set([NOTHING_FINDABLE_REPLY])]]))).toEqual(nothing);
+  });
+});
+
 describe("selection call", () => {
   const facts = toSelectableFacts(
     [...allowedFindings(summit, { public: true, hidden: [BUDGET] }), ...allowedPublicFacts(summit, { public: true, hidden: [BUDGET] })],
@@ -412,9 +594,15 @@ describe("selection call", () => {
     );
   });
 
-  it("asks for no loosely related facts (and exact_answer false) when the exact thing asked for isn't stated", () => {
+  it("an exact thing that isn't stated: exact_answer false and only genuinely related facts, never loosely related ones", () => {
     expect(SELECTION_SYSTEM_PROMPT).toContain(
-      "- If the exact thing asked for (for example an email address, a revenue number or a count) isn't stated in the facts, set exact_answer to false and return no facts rather than loosely related ones."
+      "- If the exact thing asked for (for example an email address, a revenue number or a count) isn't stated in the facts, set exact_answer to false and choose only facts genuinely related to it (about the same subject); if none are, return no facts rather than loosely related ones."
+    );
+  });
+
+  it("only facts that actually answer the question; a fact about a different subject never does, and none is fine", () => {
+    expect(SELECTION_SYSTEM_PROMPT).toContain(
+      "- Choose a fact only if it actually answers the question. A fact about a different subject never answers it, even when it is the only fact listed for a company; returning no facts is fine."
     );
   });
 
