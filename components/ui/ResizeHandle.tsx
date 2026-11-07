@@ -4,7 +4,9 @@
  * use it; the page owns the width, its limits and where it is stored). Drag with a
  * mouse, pen or finger (pointer events; no text selection and a col-resize cursor
  * while dragging), or focus it and press ←/→ (16px a press); a double-click resets.
- * Invisible until hovered, focused or dragged, when a subtle line shows. Exposed as
+ * Invisible until hovered, focused from the keyboard or dragged, when a subtle line
+ * shows (tracked in state, not CSS :hover / :focus-visible, which a browser can leave
+ * on after a drag ends away from the strip). Exposed as
  * role="separator" with its value and limits. Also small localStorage helpers for
  * remembering a width per browser (every access in try/catch; defaults otherwise).
  * First used by the Data Room (components/tempo/stages/ProspectingDataRoom.tsx).
@@ -26,6 +28,24 @@ export function resizeKeyDelta(key: string, growsTo: "right" | "left", step: num
   const handleMove = key === "ArrowRight" ? step : key === "ArrowLeft" ? -step : 0;
   return growsTo === "right" ? handleMove : -handleMove;
 }
+
+/** How the handle's line shows: strong while dragging or focused from the keyboard, soft under the pointer, else hidden. */
+export function resizeLineState(state: {
+  isDragging: boolean;
+  isKeyboardFocused: boolean;
+  isHovered: boolean;
+}): "strong" | "soft" | "hidden" {
+  if (state.isDragging || state.isKeyboardFocused) {
+    return "strong";
+  }
+  return state.isHovered ? "soft" : "hidden";
+}
+
+const LINE_CLASS: Record<ReturnType<typeof resizeLineState>, string> = {
+  strong: "bg-secondary",
+  soft: "bg-secondary/50",
+  hidden: "bg-transparent",
+};
 
 /** A remembered width, or the fallback when there is none, it isn't a number, or storage is unavailable. */
 export function readStoredWidth(storageKey: string, fallback: number): number {
@@ -86,7 +106,11 @@ export function ResizeHandle({
   className = "",
 }: ResizeHandleProps): React.ReactElement {
   const dragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
+  // Set by a press so the focus it brings doesn't count as keyboard focus.
+  const isPointerFocusRef = useRef(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
+  const [isKeyboardFocused, setIsKeyboardFocused] = useState(false);
 
   // While dragging: no text selection and the resize cursor everywhere (the pointer
   // can leave the thin strip); both are restored afterwards.
@@ -111,9 +135,20 @@ export function ResizeHandle({
     }
     dragRef.current = null;
     setIsDragging(false);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
+    const handle = event.currentTarget;
+    if (handle.hasPointerCapture(event.pointerId)) {
+      handle.releasePointerCapture(event.pointerId);
     }
+    // The pointer may have been let go away from the strip (past a limit): only a
+    // pointer still over it keeps the soft line.
+    const box = handle.getBoundingClientRect();
+    setIsHovered(
+      event.pointerType !== "touch" &&
+        event.clientX >= box.left &&
+        event.clientX <= box.right &&
+        event.clientY >= box.top &&
+        event.clientY <= box.bottom
+    );
     onResizeEnd();
   };
 
@@ -126,7 +161,26 @@ export function ResizeHandle({
       aria-valuemin={min}
       aria-valuemax={max}
       tabIndex={0}
+      onPointerEnter={(event) => {
+        if (event.pointerType !== "touch") {
+          setIsHovered(true);
+        }
+      }}
+      onPointerLeave={() => {
+        // During a drag the captured strip keeps the events; it's checked when the drag ends.
+        if (!dragRef.current) {
+          setIsHovered(false);
+        }
+      }}
+      onFocus={() => {
+        setIsKeyboardFocused(!isPointerFocusRef.current);
+        isPointerFocusRef.current = false;
+      }}
+      onBlur={() => setIsKeyboardFocused(false)}
       onPointerDown={(event) => {
+        // A press focuses the strip, but that isn't keyboard focus: no lasting line.
+        isPointerFocusRef.current = true;
+        setIsKeyboardFocused(false);
         // Main button only for a mouse; any touch or pen.
         if (event.pointerType === "mouse" && event.button !== 0) {
           return;
@@ -152,6 +206,8 @@ export function ResizeHandle({
           return;
         }
         event.preventDefault();
+        // Resizing from the keyboard shows where the edge is.
+        setIsKeyboardFocused(true);
         onResize(value + delta);
         onResizeEnd();
       }}
@@ -159,12 +215,13 @@ export function ResizeHandle({
         onReset();
         onResizeEnd();
       }}
-      className={`group absolute inset-y-0 z-10 w-2 cursor-col-resize touch-none select-none outline-none ${className}`}
+      className={`absolute inset-y-0 z-10 w-2 cursor-col-resize touch-none select-none outline-none ${className}`}
     >
       <span
         aria-hidden="true"
+        data-line={resizeLineState({ isDragging, isKeyboardFocused, isHovered })}
         className={`pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors duration-150 motion-reduce:transition-none ${
-          isDragging ? "bg-secondary" : "bg-transparent group-hover:bg-secondary/50 group-focus-visible:bg-secondary"
+          LINE_CLASS[resizeLineState({ isDragging, isKeyboardFocused, isHovered })]
         }`}
       />
     </div>

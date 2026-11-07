@@ -135,7 +135,10 @@ describe("ResizeHandle", () => {
     }
     expect(markup).toContain("cursor-col-resize");
     expect(markup).toContain("touch-none");
-    expect(markup).toContain("bg-transparent group-hover:bg-secondary/50");
+    // The line starts hidden; hover, keyboard focus and drags are tracked in state (tests/resize-handle.test.ts).
+    expect(markup).toContain('data-line="hidden"');
+    expect(markup).toContain("bg-transparent");
+    expect(markup).not.toContain("group-hover");
   });
 
   it("remembered widths: a stored number, else the fallback; storage that throws or is missing never breaks", () => {
