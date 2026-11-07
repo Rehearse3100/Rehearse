@@ -9,13 +9,15 @@
  * the placeholder by mode; "Search all companies" (only under the latest reply that
  * offers it; asks the same question in All companies mode, then is gone); 2026-11-07:
  * a reply's line sources and note are kept for the reply body (malformed ones are
- * dropped, so the reply shows as text), and history sent back stays text only.
+ * dropped, so the reply shows as text), and history sent back stays text only; a
+ * company name in a reply opens that company (onOpenCompany), for companies in the
+ * current list only, without touching the draft or the transcript.
  */
 
 import * as React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DataRoomCompany } from "@/app/api/student/data-room/route";
-import { SearchAllCompaniesButton } from "@/components/tempo/stages/DataRoomChatAnswer";
+import { DataRoomChatAnswer, SearchAllCompaniesButton } from "@/components/tempo/stages/DataRoomChatAnswer";
 import {
   ProspectingDataRoomChat,
   ScopeHint,
@@ -419,5 +421,118 @@ describe("line sources and the note (2026-11-07)", () => {
     const history = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)).history as Array<Record<string, unknown>>;
     expect(JSON.stringify(history)).not.toContain("source");
     expect(JSON.stringify(history)).not.toContain("note");
+  });
+});
+
+describe("opening a company from its name in a reply (2026-11-07)", () => {
+  const onOpenCompany = vi.fn<(companyId: string) => void>();
+
+  /** Renders the pane with an opener, as the Data Room does. */
+  function renderWithOpener(open: ((companyId: string) => void) | null = onOpenCompany): Element {
+    hooks.index = 0;
+    return ProspectingDataRoomChat({
+      attemptId: "attempt-1",
+      companies: COMPANIES,
+      openCompanyId: "summit",
+      onOpenCompany: open ?? undefined,
+    }) as Element;
+  }
+
+  /** The tree with every function component called (the hooks stand-in serves their hooks). */
+  function expand(node: unknown): unknown {
+    if (Array.isArray(node)) {
+      return node.map(expand);
+    }
+    if (node && typeof node === "object" && "props" in node) {
+      const element = node as Element;
+      if (typeof element.type === "function") {
+        return expand((element.type as (props: unknown) => unknown)(element.props));
+      }
+      return { ...element, props: { ...element.props, children: expand(element.props.children) } };
+    }
+    return node;
+  }
+
+  /** The "Open …" buttons in the replies, as rendered. */
+  const nameButtons = (tree: Element): Element[] =>
+    findAll(
+      findAll(tree, (element) => element.type === DataRoomChatAnswer).map(expand),
+      (element) => element.type === "button" && String(element.props["aria-label"] ?? "").startsWith("Open ")
+    );
+
+  beforeEach(() => {
+    onOpenCompany.mockReset();
+  });
+
+  it("list, table and compare replies: clicking a name opens that company; a company outside the list is plain text", async () => {
+    replyWith({
+      intro: "Here's the public overview of these companies.",
+      items: [
+        { companyId: "summit", companyName: "Summit Dental Group", text: "Dental" },
+        { companyId: "gone", companyName: "Gone Clinic", text: "Dental" },
+      ],
+    });
+    replyWith({
+      intro: "2 companies match.",
+      layout: "table",
+      items: ["falcon", "maple"].map((companyId) => ({
+        companyId,
+        companyName: COMPANIES.find((company) => company.id === companyId)?.name ?? "",
+        text: "x",
+        card: { industry: "Retail", locations: 3, metro: "Denver, CO", inTerritory: true, onlineBooking: false },
+      })),
+    });
+    replyWith({
+      intro: "Which one to pursue is your call; the facts below can help you compare.",
+      layout: "compare",
+      items: ["maple", "summit"].map((companyId) => ({
+        companyId,
+        companyName: COMPANIES.find((company) => company.id === companyId)?.name ?? "",
+        text: "x",
+        card: { industry: "Dental", locations: 3, metro: "Boulder, CO", inTerritory: true, onlineBooking: false },
+        signals: [],
+      })),
+    });
+    for (const question of ["Tell me about them", "Which are retail?", "Compare them"]) {
+      type(question);
+      await send();
+    }
+    const buttons = nameButtons(renderWithOpener());
+    expect(buttons.map((button) => button.props["aria-label"])).toEqual([
+      "Open Summit Dental Group",
+      "Open Falcon Market",
+      "Open Maple Family Dentistry",
+      "Open Maple Family Dentistry",
+      "Open Summit Dental Group",
+    ]);
+    expect(buttons.every((button) => button.props.type === "button")).toBe(true);
+    ["summit", "falcon", "maple", "maple", "summit"].forEach((id, i) => {
+      (buttons[i]?.props.onClick as () => void)();
+      expect(onOpenCompany).toHaveBeenLastCalledWith(id);
+    });
+    expect(onOpenCompany).toHaveBeenCalledTimes(5);
+  });
+
+  it("a click changes nothing in the chat: no request, the same transcript, the draft kept; the open company's own name is harmless", async () => {
+    replyWith({ intro: "Here's the public overview of this company.", items: [{ companyId: "summit", companyName: "Summit Dental Group", text: "Dental" }] });
+    type("Tell me about them");
+    await send();
+    type("What about their budget");
+    const transcript = JSON.stringify(hooks.values[0]);
+    const [button] = nameButtons(renderWithOpener());
+    // Summit is the open company: the click just opens it again.
+    (button?.props.onClick as () => void)();
+    expect(onOpenCompany).toHaveBeenCalledWith("summit");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(hooks.values[0])).toBe(transcript);
+    expect(theInput(renderWithOpener()).props.value).toBe("What about their budget");
+  });
+
+  it("no opener passed → the names are plain text (no buttons)", async () => {
+    replyWith({ intro: "x", items: [{ companyId: "summit", companyName: "Summit Dental Group", text: "Dental" }] });
+    type("Tell me about them");
+    await send();
+    expect(nameButtons(renderWithOpener(null))).toEqual([]);
+    expect(nameButtons(render())).toEqual([]);
   });
 });

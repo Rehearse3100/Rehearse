@@ -15,7 +15,9 @@
  * compare table (DataRoomChatAnswer.tsx), with a "Research" or "Public" tag before
  * research findings and public signals (each line's source, when the reply has it) and
  * an optional note in small text under the answer; replies saved before either
- * existed show as before. A filter question about one company offers
+ * existed show as before. A company's name in a reply opens that company in the
+ * middle screen (onOpenCompany, the same as a click in the left list) when it is in
+ * the current company list; otherwise it is plain text. A filter question about one company offers
  * "Search all companies", which asks it again in All companies mode. The input takes at
  * most 500 characters, with an "N / 500" counter past 400 (lib/data-room-chat-guard.ts).
  */
@@ -524,6 +526,11 @@ type ProspectingDataRoomChatProps = {
   openCompanyId: string | null;
   /** Shown as a close button on narrow screens (slide-over). */
   onClose?: () => void;
+  /**
+   * Opens a company in the middle screen, as a click in the left company list does; a
+   * company name in a reply calls it. Omitted → names in replies stay plain text.
+   */
+  onOpenCompany?: (companyId: string) => void;
 };
 
 /**
@@ -535,6 +542,7 @@ export function ProspectingDataRoomChat({
   companies,
   openCompanyId,
   onClose,
+  onOpenCompany,
 }: ProspectingDataRoomChatProps): React.ReactElement {
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
   const [hasRestored, setHasRestored] = useState(false);
@@ -583,6 +591,9 @@ export function ProspectingDataRoomChat({
       ),
     [companies]
   );
+
+  // The companies a name in a reply can open: the current list (an old chat's other companies stay plain text).
+  const openableCompanyIds = useMemo((): ReadonlySet<string> => new Set(companies.map((company) => company.id)), [companies]);
 
   // Restore after mount (browser storage is client-only), then mirror every change.
   useEffect(() => {
@@ -975,7 +986,7 @@ export function ProspectingDataRoomChat({
                     message.isError ? "border-error/40" : "border-outline-variant"
                   }`}
                 >
-                  <DataRoomChatAnswer answer={message} />
+                  <DataRoomChatAnswer answer={message} onOpenCompany={onOpenCompany} openableCompanyIds={openableCompanyIds} />
                   {!isLoading && searchAllRequest(messages, message.id) ? (
                     <SearchAllCompaniesButton onClick={() => searchAllCompanies(message.id)} />
                   ) : null}

@@ -9,7 +9,8 @@
  * (components/ui/ResizeHandle.tsx; ←/→ too, double-click resets): the list 220–400px,
  * the assistant 360–640px, and the company page between them keeps at least 420px
  * (clampDataRoomPanelWidths). Defaults are 260px and 436px; each width is
- * remembered per browser.
+ * remembered per browser. A company name in an assistant reply opens that company
+ * the same way a click in the list does (onSelectCompany).
  * Shortlisting still goes through ProspectingShortlistForm and the crm-leads routes.
  */
 
@@ -718,6 +719,7 @@ export function ProspectingDataRoom({
           companies={companies}
           openCompanyId={selected?.id ?? null}
           onClose={() => setIsAssistantOpen(false)}
+          onOpenCompany={onSelectCompany}
         />
       </aside>
 

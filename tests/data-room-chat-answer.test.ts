@@ -8,7 +8,9 @@
  * whose pill slides), its hint line, the keys it answers and the placeholder by mode.
  * 2026-11-07: "Research" and "Public" tags before research findings and public
  * signals, card facts untagged, the note in small text under the answer, and old
- * saved replies (no sources, no note) exactly as before.
+ * saved replies (no sources, no note) exactly as before. 2026-11-07: company names
+ * are buttons that open the company (table cell, compare headers, list headings)
+ * when the pane can open them; otherwise, and without the prop, plain text as before.
  */
 
 import * as React from "react";
@@ -17,6 +19,7 @@ import { describe, expect, it } from "vitest";
 import {
   AnswerLines,
   answerLayoutOf,
+  CompanyName,
   CompareTable,
   DataRoomChatAnswer,
   ResultTable,
@@ -353,5 +356,82 @@ describe("line tags and the note (2026-11-07)", () => {
     const markup = html(React.createElement(AnswerLines, { item: TAGGED, config: other }));
     expect(markup).toContain(">Findings<");
     expect(markup).toContain(">Signals<");
+  });
+});
+
+describe("company names open the company (2026-11-07)", () => {
+  const open = { onOpenCompany: (): void => undefined, openableCompanyIds: new Set(["summit", "northview", "c1", "c2"]) };
+  /** Every "Open …" button in the markup, by its label. */
+  const openButtons = (markup: string): string[] =>
+    Array.from(markup.matchAll(/<button type="button" aria-label="Open ([^"]+)"/g), (match) => match[1] ?? "");
+  const BUTTON_CLASS =
+    "text-left cursor-pointer rounded-sm hover:text-primary hover:underline underline-offset-2 transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-secondary focus-visible:ring-offset-1";
+
+  it("the name is a real button: type button, 'Open {name}', primary + underline on hover, a focus ring; same size and weight", () => {
+    const markup = html(React.createElement(CompanyName, { item: SUMMIT, ...open }));
+    expect(markup).toBe(`<button type="button" aria-label="Open Summit Dental Group" class="${BUTTON_CLASS}">Summit Dental Group</button>`);
+    // No size or weight of its own: it takes the heading's or cell's.
+    expect(BUTTON_CLASS).not.toMatch(/text-\[|font-/);
+  });
+
+  it("list (one company or several): each heading is a button for a known company, plain text for an unknown id", () => {
+    const one: ChatAnswer = { intro: "Here's the public overview of this company.", items: [SUMMIT] };
+    expect(openButtons(html(React.createElement(DataRoomChatAnswer, { answer: one, ...open })))).toEqual(["Summit Dental Group"]);
+    const several: ChatAnswer = { intro: "", items: [SUMMIT, NORTHVIEW, FALCON] };
+    const markup = html(React.createElement(DataRoomChatAnswer, { answer: several, ...open }));
+    expect(openButtons(markup)).toEqual(["Summit Dental Group", "Northview Family Dentistry"]);
+    // Falcon isn't in the list: its heading is exactly as before.
+    expect(markup).toContain('<p class="text-[12px] font-semibold text-on-surface mb-1">Falcon Market</p>');
+    expect(markup).toContain('<p class="text-[12px] font-semibold text-on-surface mb-1"><button type="button" aria-label="Open Summit Dental Group"');
+  });
+
+  it("table: the name in the Company cell is a button; its tags stay plain; an unknown id is plain text", () => {
+    const answer: ChatAnswer = { intro: "3 companies match.", layout: "table", items: [row(1), row(2), row(3)] };
+    const markup = html(React.createElement(DataRoomChatAnswer, { answer, ...open }));
+    expect(openButtons(markup)).toEqual([row(1).companyName, row(2).companyName]);
+    expect(markup).toContain(`<div class="text-[12px] font-medium text-on-surface leading-snug">${row(3).companyName}</div>`);
+    // The tags are outside the button.
+    expect(markup).not.toMatch(/<button[^>]*>[^<]*<span/);
+    expect(markup).toContain(">In territory</span>");
+  });
+
+  it("compare: each column header is a button; the sticky label column, widths and scrolling are unchanged", () => {
+    const items = [SUMMIT, NORTHVIEW, FALCON];
+    const withOpen = html(React.createElement(CompareTable, { items, ...open }));
+    const plain = html(React.createElement(CompareTable, { items }));
+    expect(openButtons(withOpen)).toEqual(["Summit Dental Group", "Northview Family Dentistry"]);
+    // Only the headers' contents change: the same markup once the buttons are unwrapped.
+    expect(withOpen.replace(/<button[^>]*>([^<]*)<\/button>/g, "$1")).toBe(plain);
+    expect(withOpen).toContain("sticky left-0 z-20");
+    expect(withOpen).toContain("overflow-x-auto");
+    expect(withOpen).toContain("width:145px;min-width:145px");
+  });
+
+  it("no prop (any other use of the answer body) → no buttons, exactly today's markup", () => {
+    for (const answer of [
+      { intro: "x", items: [SUMMIT, NORTHVIEW] },
+      { intro: "2 companies match.", layout: "table", items: [row(1), row(2)] },
+      { intro: "", layout: "compare", items: [SUMMIT, NORTHVIEW] },
+    ] satisfies ChatAnswer[]) {
+      const markup = html(React.createElement(DataRoomChatAnswer, { answer }));
+      expect(markup).not.toContain("<button");
+      // The ids alone, or the opener alone, change nothing either.
+      expect(html(React.createElement(DataRoomChatAnswer, { answer, openableCompanyIds: open.openableCompanyIds }))).toBe(markup);
+      expect(html(React.createElement(DataRoomChatAnswer, { answer, onOpenCompany: open.onOpenCompany }))).toBe(markup);
+    }
+  });
+
+  it("an old saved reply (companies no longer in the list), an error and a reply with no companies render exactly as before", () => {
+    const old: ChatAnswer = {
+      intro: "Here's what's on record.",
+      items: [{ companyId: "gone-1", companyName: "Old Company", text: "In territory.\nNo online booking." }],
+    };
+    const error: ChatAnswer = { intro: "Sorry, I couldn't respond right now.", items: [], isError: true };
+    const none: ChatAnswer = { intro: "I can only help with researching these companies.", items: [] };
+    for (const answer of [old, error, none]) {
+      expect(html(React.createElement(DataRoomChatAnswer, { answer, ...open })), answer.intro).toBe(
+        html(React.createElement(DataRoomChatAnswer, { answer }))
+      );
+    }
   });
 });

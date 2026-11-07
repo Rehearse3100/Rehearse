@@ -10,9 +10,13 @@
  * block without sources, or with card facts only, shows its text as before. Tables
  * only use the card values the server sends with each item
  * (lib/data-room-chat-scope.ts AnswerCard); a reply without them falls back to the
- * text blocks. Also the "Search all companies" pill offered under a filter question
- * about one company. Column, row and tag labels come from the simulation's chat
- * config (lib/data-room-chat-config.ts). Design: Stitch chat pane components 2–4.
+ * text blocks. Every company name (the table's Company cell, each compare column
+ * header, each text block's heading) is a button that opens that company, as a click
+ * in the left company list does, when the pane passes onOpenCompany and the company
+ * is in its current list (openableCompanyIds); otherwise the name is plain text,
+ * exactly as before. Also the "Search all companies" pill offered under a filter
+ * question about one company. Column, row and tag labels come from the simulation's
+ * chat config (lib/data-room-chat-config.ts). Design: Stitch chat pane components 2–4.
  */
 
 "use client";
@@ -59,6 +63,43 @@ export function answerLayoutOf(answer: ChatAnswer): AnswerLayout {
 
 const MISSING = "—";
 
+// ── Company names that open the company ───
+
+/** What a reply needs to open a company from its name: the opener and the companies it can open. */
+export type CompanyOpenProps = {
+  /** Opens the company in the middle screen (the left list's click); omitted → names stay plain text. */
+  onOpenCompany?: (companyId: string) => void;
+  /** The companies in the pane's current list; a name is a button only when its id is here. */
+  openableCompanyIds?: ReadonlySet<string>;
+};
+
+/**
+ * One company's name in a reply: a button that opens the company (same size and
+ * weight as the text around it; primary colour and an underline on hover, a focus
+ * ring for the keyboard) when it can be opened, otherwise the plain name exactly as
+ * before (an old saved chat's company that is no longer in the list, or a reply
+ * shown without onOpenCompany).
+ */
+export function CompanyName({
+  item,
+  onOpenCompany,
+  openableCompanyIds,
+}: CompanyOpenProps & { item: Pick<ScopedAnswerItem, "companyId" | "companyName"> }): React.ReactElement {
+  if (!onOpenCompany || !openableCompanyIds?.has(item.companyId)) {
+    return <>{item.companyName}</>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => onOpenCompany(item.companyId)}
+      aria-label={`Open ${item.companyName}`}
+      className="text-left cursor-pointer rounded-sm hover:text-primary hover:underline underline-offset-2 transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-secondary focus-visible:ring-offset-1"
+    >
+      {item.companyName}
+    </button>
+  );
+}
+
 type CardLabels = DataRoomChatConfig["cardLabels"];
 
 function territoryLabel(card: AnswerCard, labels: CardLabels): string | null {
@@ -82,7 +123,9 @@ const HEADER_CELL =
 export function ResultTable({
   items,
   config = getDataRoomChatConfig(),
-}: {
+  onOpenCompany,
+  openableCompanyIds,
+}: CompanyOpenProps & {
   items: readonly ScopedAnswerItem[];
   /** The simulation's labels (lib/data-room-chat-config.ts); Tempo's by default. */
   config?: DataRoomChatConfig;
@@ -123,7 +166,9 @@ export function ResultTable({
               return (
                 <tr key={item.companyId} className="hover:bg-surface/60 transition-colors motion-reduce:transition-none">
                   <td className="py-2 px-2 align-top">
-                    <div className="text-[12px] font-medium text-on-surface leading-snug">{item.companyName}</div>
+                    <div className="text-[12px] font-medium text-on-surface leading-snug">
+                      <CompanyName item={item} onOpenCompany={onOpenCompany} openableCompanyIds={openableCompanyIds} />
+                    </div>
                     {tags.length > 0 ? (
                       <div className="flex flex-wrap gap-1 mt-1">
                         {tags.map((tag) => (
@@ -222,7 +267,9 @@ export function CompareTable({
   items,
   rows = [],
   config = getDataRoomChatConfig(),
-}: {
+  onOpenCompany,
+  openableCompanyIds,
+}: CompanyOpenProps & {
   items: readonly ScopedAnswerItem[];
   rows?: readonly CompareRowKey[];
   /** The simulation's labels (lib/data-room-chat-config.ts); Tempo's by default. */
@@ -255,7 +302,7 @@ export function CompareTable({
                     }`}
                     style={{ width: COMPARE_COMPANY_COLUMN_PX, minWidth: COMPARE_COMPANY_COLUMN_PX }}
                   >
-                    {item.companyName}
+                    <CompanyName item={item} onOpenCompany={onOpenCompany} openableCompanyIds={openableCompanyIds} />
                   </th>
                 ))}
               </tr>
@@ -342,16 +389,20 @@ export function AnswerLines({
  * One reply's body: the intro, then the companies as text blocks (exactly as before
  * tables existed, with source tags when the lines carry them), a result table or a
  * compare table (answerLayoutOf), then the note, if any. Rendered inside the reply
- * bubble, whose spacing separates the parts.
+ * bubble, whose spacing separates the parts. With onOpenCompany, each company name
+ * the pane can open is a button (CompanyName); without it, every name is plain text.
  */
 export function DataRoomChatAnswer({
   answer,
   config = getDataRoomChatConfig(),
-}: {
+  onOpenCompany,
+  openableCompanyIds,
+}: CompanyOpenProps & {
   answer: ChatAnswer;
   /** The simulation's labels for the tables; Tempo's by default. */
   config?: DataRoomChatConfig;
 }): React.ReactElement {
+  const open: CompanyOpenProps = { onOpenCompany, openableCompanyIds };
   const layout = answerLayoutOf(answer);
   return (
     <>
@@ -366,12 +417,14 @@ export function DataRoomChatAnswer({
           {answer.intro}
         </p>
       ) : null}
-      {layout === "table" ? <ResultTable items={answer.items} config={config} /> : null}
-      {layout === "compare" ? <CompareTable items={answer.items} rows={answer.compareRows} config={config} /> : null}
+      {layout === "table" ? <ResultTable items={answer.items} config={config} {...open} /> : null}
+      {layout === "compare" ? <CompareTable items={answer.items} rows={answer.compareRows} config={config} {...open} /> : null}
       {layout === "list"
         ? answer.items.map((item) => (
             <div key={item.companyId}>
-              <p className="text-[12px] font-semibold text-on-surface mb-1">{item.companyName}</p>
+              <p className="text-[12px] font-semibold text-on-surface mb-1">
+                <CompanyName item={item} {...open} />
+              </p>
               <AnswerLines item={item} config={config} />
             </div>
           ))
