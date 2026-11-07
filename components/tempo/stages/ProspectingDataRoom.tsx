@@ -5,6 +5,11 @@
  * place when the shortlist changes), the open company's page with a single
  * shortlist action, and the AI Research Assistant. Below 1360px wide the assistant
  * becomes a right slide-over (same motion as the Reference Library drawer).
+ * The company list and the assistant can be resized by dragging their inner edge
+ * (components/ui/ResizeHandle.tsx; ←/→ too, double-click resets): the list 220–400px,
+ * the assistant 360–640px, and the company page between them keeps at least 420px
+ * (clampDataRoomPanelWidths). Defaults are 260px and 436px; each width is
+ * remembered per browser.
  * Shortlisting still goes through ProspectingShortlistForm and the crm-leads routes.
  */
 
@@ -14,6 +19,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { ProspectingDataRoomChat } from "@/components/tempo/stages/ProspectingDataRoomChat";
 import { ProspectingShortlistForm } from "@/components/tempo/stages/ProspectingShortlistForm";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
+import { readStoredWidth, ResizeHandle, storeWidth } from "@/components/ui/ResizeHandle";
 import type { DataRoomCompany } from "@/app/api/student/data-room/route";
 import type { CrmLead } from "@/types";
 
@@ -21,6 +27,59 @@ import type { CrmLead } from "@/types";
 const SHORTLIST_SIZE = 3;
 
 const CARD_CLASS = "bg-white border border-outline-variant rounded-xl p-5 shadow-sm";
+
+// ── Panel widths ───
+
+/** The company list's width: today's 260px by default, resizable within these limits. */
+export const LIST_WIDTH = { default: 260, min: 220, max: 400 } as const;
+/** The assistant's width: today's 436px by default, resizable within these limits. */
+export const CHAT_WIDTH = { default: 436, min: 360, max: 640 } as const;
+/** The company page between them never gets narrower than this because of a resize. */
+export const MIDDLE_MIN_WIDTH = 420;
+/** From this window width the assistant is docked beside the page (min-[1360px] below); narrower, it slides over. */
+const CHAT_DOCKED_MEDIA_QUERY = "(min-width: 1360px)";
+
+const LIST_WIDTH_STORAGE_KEY = "rehearse:data-room:list-width";
+const CHAT_WIDTH_STORAGE_KEY = "rehearse:data-room:chat-width";
+
+export type DataRoomPanelWidths = { list: number; chat: number };
+
+/**
+ * The widths to show. Each is kept within its limits (list 220–400px, assistant
+ * 360–640px), rounded to whole pixels. Then the company page keeps at least 420px
+ * of the measured container: the list and, when docked, the assistant give back
+ * width until it fits — the panel being resized first (active), otherwise the
+ * assistant first. A panel never gives back below its default (or below a narrower
+ * width the student chose), so the default layout never changes. containerWidth null
+ * (not measured yet): limits only.
+ */
+export function clampDataRoomPanelWidths(
+  widths: DataRoomPanelWidths,
+  layout: { containerWidth: number | null; isChatDocked: boolean; active?: "list" | "chat" }
+): DataRoomPanelWidths {
+  const within = (value: number, limits: { min: number; max: number }): number =>
+    Math.round(Math.min(limits.max, Math.max(limits.min, Number.isFinite(value) ? value : limits.min)));
+  const next = { list: within(widths.list, LIST_WIDTH), chat: within(widths.chat, CHAT_WIDTH) };
+  if (layout.containerWidth === null) {
+    return next;
+  }
+  let over = next.list + (layout.isChatDocked ? next.chat : 0) - (layout.containerWidth - MIDDLE_MIN_WIDTH);
+  const order: Array<"list" | "chat"> = layout.active === "list" ? ["list", "chat"] : ["chat", "list"];
+  for (const panel of order) {
+    if (over <= 0) {
+      break;
+    }
+    if (panel === "chat" && !layout.isChatDocked) {
+      continue; // The slide-over covers the page; it takes nothing from it.
+    }
+    const limits = panel === "list" ? LIST_WIDTH : CHAT_WIDTH;
+    const floor = Math.max(limits.min, Math.min(next[panel], limits.default));
+    const cut = Math.min(over, next[panel] - floor);
+    next[panel] -= cut;
+    over -= cut;
+  }
+  return next;
+}
 
 /** Company cards slide to their new place in the list after a shortlist change. */
 const REORDER_ANIMATION_MS = 220;
@@ -83,6 +142,78 @@ export function ProspectingDataRoom({
   const [removingLeadId, setRemovingLeadId] = useState<string | null>(null);
   // Slide-over state; only used below 1360px (the assistant is docked above that).
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
+  // The widths the student set (defaults until a drag, or until remembered ones load);
+  // what shows is these clamped to the measured space (clampDataRoomPanelWidths).
+  const [panelWidths, setPanelWidths] = useState<DataRoomPanelWidths>({
+    list: LIST_WIDTH.default,
+    chat: CHAT_WIDTH.default,
+  });
+  const [containerWidth, setContainerWidth] = useState<number | null>(null);
+  const [isChatDocked, setIsChatDocked] = useState(false);
+  // Bumped when a resize ends, so the widths are remembered after they've updated.
+  const [widthSaveCount, setWidthSaveCount] = useState(0);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // Remembered widths (browser storage is client-only, so after mount).
+  useEffect(() => {
+    setPanelWidths({
+      list: readStoredWidth(LIST_WIDTH_STORAGE_KEY, LIST_WIDTH.default),
+      chat: readStoredWidth(CHAT_WIDTH_STORAGE_KEY, CHAT_WIDTH.default),
+    });
+  }, []);
+
+  useEffect(() => {
+    if (widthSaveCount === 0) {
+      return;
+    }
+    // A default width is forgotten rather than stored, so it follows future defaults.
+    storeWidth(LIST_WIDTH_STORAGE_KEY, panelWidths.list === LIST_WIDTH.default ? null : panelWidths.list);
+    storeWidth(CHAT_WIDTH_STORAGE_KEY, panelWidths.chat === CHAT_WIDTH.default ? null : panelWidths.chat);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [widthSaveCount]);
+
+  // The space the three panes share, and whether the assistant is docked beside them.
+  useEffect(() => {
+    const root = rootRef.current;
+    const docked = window.matchMedia(CHAT_DOCKED_MEDIA_QUERY);
+    const updateDocked = (): void => setIsChatDocked(docked.matches);
+    updateDocked();
+    docked.addEventListener("change", updateDocked);
+    if (!root || typeof ResizeObserver === "undefined") {
+      return () => docked.removeEventListener("change", updateDocked);
+    }
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (typeof width === "number") {
+        setContainerWidth(width);
+      }
+    });
+    observer.observe(root);
+    return () => {
+      observer.disconnect();
+      docked.removeEventListener("change", updateDocked);
+    };
+  }, []);
+
+  const shownWidths = clampDataRoomPanelWidths(panelWidths, { containerWidth, isChatDocked });
+
+  /** A new width for one panel while resizing: clamped with that panel giving way first. */
+  const resizePanel = (panel: "list" | "chat", width: number): void => {
+    const clamped = clampDataRoomPanelWidths(
+      { ...shownWidths, [panel]: width },
+      { containerWidth, isChatDocked, active: panel }
+    );
+    setPanelWidths((previous) => ({ ...previous, [panel]: clamped[panel] }));
+  };
+
+  const resetPanel = (panel: "list" | "chat"): void => {
+    setPanelWidths((previous) => ({
+      ...previous,
+      [panel]: panel === "list" ? LIST_WIDTH.default : CHAT_WIDTH.default,
+    }));
+  };
+
+  const rememberPanelWidths = (): void => setWidthSaveCount((count) => count + 1);
 
   const syncShortlistFromLeads = useCallback(
     (leads: CrmLead[], roster: DataRoomCompany[]): ShortlistEntry[] => {
@@ -291,9 +422,24 @@ export function ProspectingDataRoom({
   );
 
   return (
-    <div className="relative flex h-full min-h-0 overflow-hidden bg-surface">
+    <div ref={rootRef} className="relative flex h-full min-h-0 overflow-hidden bg-surface">
       {/* ── a) Company list ─── */}
-      <section className="w-[260px] shrink-0 flex flex-col min-h-0 bg-surface-container-lowest border-r border-outline-variant">
+      <section
+        className="relative shrink-0 flex flex-col min-h-0 bg-surface-container-lowest border-r border-outline-variant"
+        style={{ width: shownWidths.list }}
+      >
+        {/* Drag the right edge to resize (over the border; invisible until hovered). */}
+        <ResizeHandle
+          label="Resize company list"
+          value={shownWidths.list}
+          min={LIST_WIDTH.min}
+          max={LIST_WIDTH.max}
+          growsTo="right"
+          onResize={(width) => resizePanel("list", width)}
+          onResizeEnd={rememberPanelWidths}
+          onReset={() => resetPanel("list")}
+          className="-right-1"
+        />
         <div className="p-3 border-b border-surface-container shrink-0">
           <div className="relative">
             <MaterialIcon
@@ -546,12 +692,27 @@ export function ProspectingDataRoom({
       />
       <aside
         aria-label="AI Research Assistant"
-        className={`absolute inset-y-0 right-0 z-30 w-[436px] max-w-full flex flex-col min-h-0 bg-surface-container-lowest border-l border-outline-variant shadow-[-8px_0_24px_rgba(0,0,0,0.08)] motion-reduce:transition-none ${
+        // Width from the resize handle (436px by default); the slide uses translate-x-full,
+        // its own width, so it opens and closes the same at any width.
+        style={{ width: shownWidths.chat }}
+        className={`absolute inset-y-0 right-0 z-30 max-w-full flex flex-col min-h-0 bg-surface-container-lowest border-l border-outline-variant shadow-[-8px_0_24px_rgba(0,0,0,0.08)] motion-reduce:transition-none ${
           isAssistantOpen
             ? "visible translate-x-0 transition-transform duration-[220ms] ease-[cubic-bezier(0.32,0.72,0,1)]"
             : "invisible translate-x-full transition-[transform,visibility] duration-[180ms] ease-in"
-        } min-[1360px]:static min-[1360px]:z-auto min-[1360px]:shrink-0 min-[1360px]:visible min-[1360px]:translate-x-0 min-[1360px]:shadow-none min-[1360px]:transition-none`}
+        } min-[1360px]:relative min-[1360px]:z-auto min-[1360px]:shrink-0 min-[1360px]:visible min-[1360px]:translate-x-0 min-[1360px]:shadow-none min-[1360px]:transition-none`}
       >
+        {/* Drag the left edge to resize; it moves with the slide-over. */}
+        <ResizeHandle
+          label="Resize chat"
+          value={shownWidths.chat}
+          min={CHAT_WIDTH.min}
+          max={CHAT_WIDTH.max}
+          growsTo="left"
+          onResize={(width) => resizePanel("chat", width)}
+          onResizeEnd={rememberPanelWidths}
+          onReset={() => resetPanel("chat")}
+          className="-left-1"
+        />
         <ProspectingDataRoomChat
           attemptId={attemptId}
           companies={companies}
