@@ -19,6 +19,7 @@ import {
   answerFilter,
   matchCountIntro,
   industryNames,
+  isNegativeFilter,
   matchesFilter,
   matchesFilters,
   META_ALL_MODE_REPLY,
@@ -798,5 +799,94 @@ describe("industries from the roster (2026-11-08)", () => {
       sort: { field: "name", direction: "asc" },
     };
     expect(names(answerAllCompanies(decision, ROSTER_B, ["a", "b"]))).toEqual(["a"]);
+  });
+});
+
+describe("negative conditions: not, outside, except (2026-11-08)", () => {
+  const TX: FilterCompany = { id: "lone", name: "Lone Star Clinics", industry: "Dental", locations: 5, metro: "Austin, TX", inTerritory: false, onlineBooking: false };
+  const WITH_TX = [...ROSTER, TX];
+  const ids = (filters: unknown[], companies: readonly FilterCompany[] = WITH_TX): string[] => {
+    const parsed = parseRosterFilters(filters, undefined);
+    expect(parsed, JSON.stringify(filters)).not.toBeNull();
+    return answerFilter(parsed ?? [], companies).items.map((item) => item.companyId);
+  };
+
+  it("parses ne / not_contains (and common spellings) for industry, metro and state; a negative yes/no flips the value", () => {
+    expect(parseRosterFilter({ field: "state", op: "ne", value: "Colorado" })).toEqual({ field: "state", op: "ne", value: "CO" });
+    expect(parseRosterFilter({ field: "state", op: "not in", value: "CO" })).toEqual({ field: "state", op: "ne", value: "CO" });
+    expect(parseRosterFilter({ field: "metro", op: "not_contains", value: "Denver" })).toEqual({ field: "metro", op: "not_contains", value: "Denver" });
+    expect(parseRosterFilter({ field: "industry", op: "!=", value: "Dental" })).toEqual({ field: "industry", op: "not_contains", value: "Dental" });
+    expect(parseRosterFilter({ field: "industry", op: "doesn't contain", value: "dent" })).toEqual({ field: "industry", op: "not_contains", value: "dent" });
+    expect(parseRosterFilter({ field: "territory", op: "ne", value: true })).toEqual({ field: "territory", op: "eq", value: false });
+    expect(parseRosterFilter({ field: "online_booking", op: "not", value: "yes" })).toEqual({ field: "online_booking", op: "eq", value: false });
+    // Positive ops are read as before.
+    expect(parseRosterFilter({ field: "state", op: "eq", value: "CO" })).toEqual({ field: "state", op: "eq", value: "CO" });
+    expect(parseRosterFilter({ field: "industry", op: "eq", value: "Dental" })).toEqual({ field: "industry", op: "contains", value: "Dental" });
+    // Locations keep their comparisons: "ne" is not one.
+    expect(parseRosterFilter({ field: "locations", op: "ne", value: 3 })).toBeNull();
+    expect(isNegativeFilter({ field: "state", op: "ne", value: "CO" })).toBe(true);
+    expect(isNegativeFilter({ field: "state", op: "eq", value: "CO" })).toBe(false);
+  });
+
+  it('"outside Colorado" lists only the companies in other (known) states', () => {
+    expect(ids([{ field: "state", op: "ne", value: "CO" }])).toEqual(["lone", "outdoor"]);
+    // Aspen has no metro on record: an unknown state is not "outside Colorado".
+    expect(ids([{ field: "state", op: "ne", value: "CO" }])).not.toContain("aspen");
+  });
+
+  it("industry: a negative listed name excludes exactly that industry; any other value excludes what contains it", () => {
+    expect(ids([{ field: "industry", op: "ne", value: "Dental" }])).toEqual(["aspen", "falcon", "outdoor"]);
+    expect(ids([{ field: "industry", op: "not_contains", value: "tail" }])).toEqual(["aspen", "lone", "maple", "summit"]);
+  });
+
+  it("metro: not_contains excludes metros containing it (a missing metro never matches)", () => {
+    // (A–Z by name: Summit Dental Group before Summit Outdoor Gear.)
+    expect(ids([{ field: "metro", op: "not_contains", value: "Denver" }])).toEqual(["lone", "maple", "summit", "outdoor"]);
+  });
+
+  it("within a field: one positive is enough, every negative must hold; different fields all hold", () => {
+    // Positives Boulder or Denver, but not Boulder → Denver only.
+    expect(
+      ids([
+        { field: "metro", op: "contains", value: "Boulder" },
+        { field: "metro", op: "contains", value: "Denver" },
+        { field: "metro", op: "not_contains", value: "Boulder" },
+      ])
+    ).toEqual(["falcon"]);
+    // "not in Colorado or Idaho" excludes both.
+    expect(
+      ids([
+        { field: "state", op: "ne", value: "CO" },
+        { field: "state", op: "ne", value: "ID" },
+      ])
+    ).toEqual(["lone"]);
+    // "dental or vet, not in Colorado".
+    expect(
+      ids([
+        { field: "industry", op: "eq", value: "Dental" },
+        { field: "industry", op: "eq", value: "Veterinary" },
+        { field: "state", op: "ne", value: "CO" },
+      ])
+    ).toEqual(["lone"]);
+  });
+
+  it('"dental, not in Colorado" with no such company → "No companies match that."', () => {
+    const filters = parseRosterFilters(
+      [
+        { field: "industry", op: "eq", value: "Dental" },
+        { field: "state", op: "ne", value: "CO" },
+      ],
+      undefined
+    );
+    expect(answerAllCompanies(decision({ filters, criteriaCount: 2 }), ROSTER)).toEqual({ intro: NO_FILTER_MATCHES_REPLY, items: [] });
+  });
+
+  it("the partial count line still names the fields of negative conditions", () => {
+    expect(
+      partialMatchCountIntro(1, [
+        { field: "industry", op: "contains", value: "Dental" },
+        { field: "state", op: "ne", value: "CO" },
+      ])
+    ).toBe("1 company matches the filters I could apply (industry and state).");
   });
 });

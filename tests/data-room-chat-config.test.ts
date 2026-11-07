@@ -102,8 +102,9 @@ describe("strings built from the config are exactly today's", () => {
       // since on purpose (who-decides → ownership, traps as meta; 2026-11-07: small_talk,
       // name_query, unfiltered, standalone_question and is_follow_up, the repeated meta
       // rule and the range note removed; 2026-11-08: industry names picked from the
-      // message's list, locked-in → current_tools, more acknowledgement examples).
-      router: "19e1f06092b9935a04affec8537c25fffa9c90d20ed78dec60410ef65149db87",
+      // message's list, locked-in → current_tools, more acknowledgement examples; then
+      // negative conditions, typos never inappropriate).
+      router: "081566497f0e70e26d862ea2807291927b93937f6a21b66d410739153129edb4",
       // Changed on purpose since: indirect answers (rules, contracts, mandates) count.
       selection: "98f8701b4d6d3e5ed84066b70671527d0a41ac12fbebd5186cb0c218ec3a62e7",
       opening: "a41a805ae91ecd7886ef4d027f503b573b1aad81069d646675a260097a8bdd68",

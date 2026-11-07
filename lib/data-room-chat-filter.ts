@@ -4,10 +4,13 @@
  * All companies mode no model picks or reads company data: the router returns the
  * question's conditions (filters, as many as it asks for) over public roster
  * attributes, this module validates them against a whitelist and runs them over the
- * roster in code (different fields must all match; two conditions on the same field
- * mean either one, except locations, where both must hold; an industry condition
- * that names one of the roster's industries exactly, any case, matches only that
- * industry, any other industry value matches as "contains"), and the answer lists
+ * roster in code (different fields must all match; within a field, a company must
+ * match one of its positive conditions, if there are any, and none of its negative
+ * ones ("ne" / "not_contains": "not in Colorado", "outside", "except"), so two
+ * positives mean either one and two negatives exclude both, except locations, where
+ * every comparison must hold; an industry condition that names one of the roster's
+ * industries exactly, any case, matches only that industry, any other industry value
+ * matches as "contains"), and the answer lists
  * every matching company from the database, A–Z or in the order the question asked
  * for (by locations or name; never by fit), under a count line and with no opening
  * sentence (as a table: layout "table", each item with its card values). A request
@@ -88,7 +91,7 @@ export function totalCountReply(count: number): string {
 export const FILTER_FIELDS = ["industry", "metro", "state", "locations", "territory", "online_booking"] as const;
 export type FilterField = (typeof FILTER_FIELDS)[number];
 
-export const FILTER_OPS = ["eq", "contains", "gt", "gte", "lt", "lte"] as const;
+export const FILTER_OPS = ["eq", "contains", "ne", "not_contains", "gt", "gte", "lt", "lte"] as const;
 export type FilterOp = (typeof FILTER_OPS)[number];
 
 export type RosterFilter = { field: FilterField; op: FilterOp; value: string | number | boolean };
@@ -220,15 +223,49 @@ function textValue(value: unknown): string {
   return typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
 }
 
+/** Spellings of a negative comparison ("is not", "doesn't contain"), after locationOpKey and dropping apostrophes. */
+const NEGATIVE_OPS: ReadonlySet<string> = new Set([
+  "ne",
+  "!=",
+  "<>",
+  "neq",
+  "not",
+  "not_eq",
+  "not_equal",
+  "not_equals",
+  "is_not",
+  "not_contains",
+  "not_contain",
+  "does_not_contain",
+  "doesnt_contain",
+  "excludes",
+  "exclude",
+  "not_in",
+  "except",
+]);
+
+/** True when the router's op is a negative comparison (any common spelling). */
+function isNegativeOp(op: unknown): boolean {
+  return NEGATIVE_OPS.has(locationOpKey(op).replace(/['’]/g, ""));
+}
+
+/** True for a negative condition ("ne" / "not_contains"): the company must not match it. */
+export function isNegativeFilter(filter: RosterFilter): boolean {
+  return filter.op === "ne" || filter.op === "not_contains";
+}
+
 /**
  * Validates the router's filter, forgiving wherever the meaning is clear: industry
- * and metro always match as case-insensitive "contains" (eq or contains); state
- * takes eq or contains with a two-letter code or a full name, any case; territory
- * and online booking take true/false or "true"/"false"/"yes"/"no"; locations takes
- * a number or a numeric string (0 or more) with eq/gt/gte/lt/lte (or a common
- * spelling such as "fewer_than", "under", "at_most", "<", "<="). A field outside
- * the whitelist, a missing value, or a locations comparison it doesn't recognise
- * (never read as "equals") gives null.
+ * and metro always match as case-insensitive "contains" (eq or contains), or, with a
+ * negative op ("ne", "not_contains", "!=", "excludes"…), as "doesn't contain"
+ * (not_contains); state takes eq or contains with a two-letter code or a full name,
+ * any case, or a negative op (ne: "not in"); territory and online booking take
+ * true/false or "true"/"false"/"yes"/"no" (a negative op flips the value, so "not in
+ * territory" is never read as "in territory"); locations takes a number or a numeric
+ * string (0 or more) with eq/gt/gte/lt/lte (or a common spelling such as
+ * "fewer_than", "under", "at_most", "<", "<="). A field outside the whitelist, a
+ * missing value, or a locations comparison it doesn't recognise (never read as
+ * "equals") gives null.
  */
 export function parseRosterFilter(raw: unknown): RosterFilter | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
@@ -242,11 +279,11 @@ export function parseRosterFilter(raw: unknown): RosterFilter | null {
     case "industry":
     case "metro": {
       const text = textValue(value);
-      return text ? { field, op: "contains", value: text } : null;
+      return text ? { field, op: isNegativeOp(op) ? "not_contains" : "contains", value: text } : null;
     }
     case "state": {
       const text = textValue(value);
-      return text ? { field, op: "eq", value: stateCode(text) } : null;
+      return text ? { field, op: isNegativeOp(op) ? "ne" : "eq", value: stateCode(text) } : null;
     }
     case "locations": {
       const text = textValue(value);
@@ -256,7 +293,7 @@ export function parseRosterFilter(raw: unknown): RosterFilter | null {
     }
     default: {
       const flag = typeof value === "boolean" ? value : BOOLEAN_WORDS[textValue(value).toLowerCase()];
-      return typeof flag === "boolean" ? { field, op: "eq", value: flag } : null;
+      return typeof flag === "boolean" ? { field, op: "eq", value: isNegativeOp(op) ? !flag : flag } : null;
     }
   }
 }
@@ -348,18 +385,39 @@ function matchesIndustry(actual: string, expected: string, knownIndustries?: Rea
 }
 
 /**
- * True when the company matches the filter. A missing (unknown) value never matches.
+ * True when the company matches the filter. A missing (unknown) value never matches,
+ * for a negative condition too (an unknown state is not "outside Colorado").
  * knownIndustries: the roster's industry names, lowercased (industry conditions that
- * name one match it exactly; without them every industry value is "contains").
+ * name one match it exactly; without them every industry value is "contains"). A
+ * negative condition matches when the company is known and doesn't match its
+ * positive form: industry not_contains a listed name excludes exactly that industry,
+ * any other value excludes industries containing it; metro not_contains excludes
+ * metros containing it; state ne excludes that state.
  */
 export function matchesFilter(company: FilterCompany, filter: RosterFilter, knownIndustries?: ReadonlySet<string>): boolean {
+  const isNegative = isNegativeFilter(filter);
   switch (filter.field) {
-    case "industry":
-      return matchesIndustry(company.industry, String(filter.value), knownIndustries);
-    case "metro":
-      return matchesText(company.metro, String(filter.value));
-    case "state":
-      return stateOfMetro(company.metro) === filter.value;
+    case "industry": {
+      if (!company.industry.trim()) {
+        return false;
+      }
+      const matches = matchesIndustry(company.industry, String(filter.value), knownIndustries);
+      return isNegative ? !matches : matches;
+    }
+    case "metro": {
+      if (!company.metro?.trim()) {
+        return false;
+      }
+      const matches = matchesText(company.metro, String(filter.value));
+      return isNegative ? !matches : matches;
+    }
+    case "state": {
+      const state = stateOfMetro(company.metro);
+      if (state === null) {
+        return false;
+      }
+      return isNegative ? state !== filter.value : state === filter.value;
+    }
     case "locations":
       return company.locations !== null && compareNumber(company.locations, filter.op, Number(filter.value));
     case "territory":
@@ -371,8 +429,11 @@ export function matchesFilter(company: FilterCompany, filter: RosterFilter, know
 
 /**
  * True when the company matches every condition: conditions on different fields must
- * all match; two on the same field mean either one ("Colorado or Utah"), except
- * locations, where both must hold ("between 3 and 8 locations").
+ * all match. Within one field, the company must match at least one of its positive
+ * conditions (if it has any: "Colorado or Utah" is either one) and every one of its
+ * negative conditions ("not in Colorado or Utah" excludes both; "dental or vet, not
+ * in Colorado" works too); locations, where every comparison must hold ("between 3
+ * and 8 locations").
  */
 export function matchesFilters(
   company: FilterCompany,
@@ -384,9 +445,15 @@ export function matchesFilters(
     if (conditions.length === 0) {
       return true;
     }
-    return field === "locations"
-      ? conditions.every((filter) => matchesFilter(company, filter, knownIndustries))
-      : conditions.some((filter) => matchesFilter(company, filter, knownIndustries));
+    if (field === "locations") {
+      return conditions.every((filter) => matchesFilter(company, filter, knownIndustries));
+    }
+    const positives = conditions.filter((filter) => !isNegativeFilter(filter));
+    const negatives = conditions.filter(isNegativeFilter);
+    return (
+      (positives.length === 0 || positives.some((filter) => matchesFilter(company, filter, knownIndustries))) &&
+      negatives.every((filter) => matchesFilter(company, filter, knownIndustries))
+    );
   });
 }
 

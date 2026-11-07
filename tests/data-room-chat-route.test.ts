@@ -2498,3 +2498,31 @@ describe("industries from the roster, and openings that claim absence (2026-11-0
     );
   });
 });
+
+describe("negative conditions through the route (2026-11-08)", () => {
+  const listFilter = (filters: unknown[]): ReturnType<typeof modelReply> =>
+    modelReply({ intent: "filter_list", topic: null, attribute: null, filters, criteria_count: filters.length, confidence: "high" });
+  const names = (reply: unknown): string[] => (reply as { items: Array<{ companyName: string }> }).items.map((item) => item.companyName);
+
+  it('"filter for companies outside colorado" lists only the companies outside Colorado', async () => {
+    state.classify.mockResolvedValueOnce(listFilter([{ field: "state", op: "ne", value: "CO" }]));
+    const reply = (await ask({ scope: ALL, newMessage: "filter for companies outside colorado" })) as { intro: string };
+    expect(reply.intro).toBe("1 company matches.");
+    expect(names(reply)).toEqual(["Summit Outdoor Gear"]);
+  });
+
+  it('"dental but not in Colorado" → "No companies match that." (every dental company here is in Colorado)', async () => {
+    state.classify.mockResolvedValueOnce(
+      listFilter([
+        { field: "industry", op: "eq", value: "Dental" },
+        { field: "state", op: "ne", value: "CO" },
+      ])
+    );
+    expect(await ask({ scope: ALL, newMessage: "dental but not in Colorado" })).toEqual({ intro: "No companies match that.", items: [] });
+  });
+
+  it("a real inappropriate message is still refused (the router's label, and moderation before it)", async () => {
+    state.classify.mockResolvedValueOnce(routerReply("inappropriate"));
+    expect(await ask({ scope: ONE, newMessage: "Is Dana single?" })).toEqual(guardReply("flagged"));
+  });
+});

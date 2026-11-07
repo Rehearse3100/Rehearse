@@ -80,7 +80,8 @@ describe("classifier input", () => {
       "current_tools (software, systems, vendors, contracts, recent rollouts)",
       "industry, locations, metro, territory, online_booking, size, contacts",
       "filters (set them only when the scope is all companies and the intent is filter_list; otherwise null)",
-      'field "state": op "eq", value the two-letter state code',
+      // 2026-11-08: state also takes "ne" for a negative condition (was: op "eq" only).
+      'field "state": op "eq", or "ne" for a negative condition, value the two-letter state code',
       "criteria_count: how many separate conditions the question asks to filter by",
       'Questions phrased as "how many…", "which are…" or "list the…" with one or more conditions are filter_list; read them charitably',
       '"how many are located retail?" is filter_list with filters [{"field": "industry", "op": "contains", "value": "retail"}]',
@@ -332,8 +333,10 @@ describe("unlimited conditions, ranges, the total count and inappropriate questi
   });
 
   it("an inappropriate intent, with one prompt line of examples", () => {
+    // 2026-11-08: only clearly sexual, abusive or personal content in English; never a
+    // message about companies, filters or research (was: the examples alone).
     expect(ROUTER_SYSTEM_PROMPT).toContain(
-      "- inappropriate: sexual or romantic questions, comments on someone's looks, personal-life questions about a person (for example their home address, family or relationships) and insults."
+      "- inappropriate: only clearly sexual, abusive or personal content in English: sexual or romantic questions, comments on someone's looks, personal-life questions about a person (for example their home address, family or relationships) and insults. A message about companies, filters or research is never inappropriate."
     );
     expect(parseRouterReply(reply({ intent: "inappropriate", topic: null, attribute: null, confidence: "high" }))).toMatchObject({
       intent: "inappropriate",
@@ -830,5 +833,31 @@ describe("industries, locked-in and short acknowledgements (2026-11-08)", () => 
     expect(
       parseRouterReply(reply({ intent: "specific_research", topic: "current_tools", attribute: null, confidence: "high" }))
     ).toMatchObject({ intent: "specific_research", topic: "current_tools" });
+  });
+});
+
+describe("negations and typos (2026-11-08)", () => {
+  it("one generic negation rule, with neutral examples; never a positive condition", () => {
+    for (const text of [
+      '- field "industry" or "metro" (a city or area): op "eq" or "contains", or "ne" or "not_contains" for a negative condition, value a word or phrase;',
+      'A negation ("not", "outside", "except", "other than", "excluding", "besides") becomes a negative condition: op "ne" or "not_contains", or value false for territory or online booking ("outside Texas" is {"field": "state", "op": "ne", "value": "TX"}; "not in Texas or Ohio" is two state conditions with op "ne", and both are excluded). Never turn a negation into a positive condition. If a negation can\'t be expressed with these fields, leave that condition out and set unfiltered to true.',
+    ]) {
+      expect(ROUTER_SYSTEM_PROMPT, text).toContain(text);
+    }
+    // The router's negative condition parses as one.
+    expect(
+      parseRouterReply(
+        reply({ intent: "filter_list", topic: null, attribute: null, filters: [{ field: "state", op: "ne", value: "TX" }], criteria_count: 1, confidence: "high" }),
+        "all"
+      ).filters
+    ).toEqual([{ field: "state", op: "ne", value: "TX" }]);
+  });
+
+  it("typos are read as the word they look like and never make a message inappropriate", () => {
+    expect(ROUTER_SYSTEM_PROMPT).toContain(
+      '- A word that looks like a typo of a normal word is read as that word (for example "fliter" or "folter" is "filter"); a typo never makes a message inappropriate.'
+    );
+    expect(ROUTER_SYSTEM_PROMPT).toContain("A message about companies, filters or research is never inappropriate.");
+    expect(ROUTER_SYSTEM_PROMPT.length).toBeGreaterThanOrEqual(MIN_ROUTER_PROMPT_CHARS);
   });
 });
