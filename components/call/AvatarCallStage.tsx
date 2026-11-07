@@ -27,7 +27,6 @@ type AvatarCallStageProps = {
   simulation: Simulation;
   attemptId: string;
   stage: SimulationStage;
-  stageHint: string;
   openingGreeting: string;
   scoreStage: "discovery" | "objections";
   runningTotalScore?: number;
@@ -67,7 +66,6 @@ export function AvatarCallStage({
   simulation,
   attemptId,
   stage,
-  stageHint,
   openingGreeting,
   scoreStage,
   runningTotalScore = 0,
@@ -96,9 +94,10 @@ export function AvatarCallStage({
   getAudioStreamRef.current = videoCall.getAudioStream;
   primeUserGestureRef.current = videoCall.primeUserGesture;
 
+  // The simulation's own persona, built on the server with this stage's hint.
   const voice = useSimulationVoiceSession({
-    systemPrompt: simulation.persona_system_prompt,
-    stageHint,
+    persona: "simulation",
+    chatStage: scoreStage,
     openingGreeting,
     isMutedRef: videoCall.isMutedRef,
     attemptId,

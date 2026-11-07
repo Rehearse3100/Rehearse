@@ -37,7 +37,6 @@ export function CloseStage({
       attemptId={attemptId}
       callStage="close"
       scoreStage="close"
-      stageHint="CLOSE STAGE: The student should ask for the sale clearly. Push back with realistic hesitation. Stay in character."
       openingGreeting={`Alright — if you want me to move forward, convince me it's worth it.`}
       runningTotalScore={runningTotalScore}
       priorStagesSummary={priorSummary.length > 0 ? priorSummary : undefined}

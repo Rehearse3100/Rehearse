@@ -236,10 +236,16 @@ export type ElevenLabsAlignment = {
   character_end_times_seconds?: number[];
 };
 
+/**
+ * POST /api/chat body: a persona key (lib/chat-personas.ts), never a prompt — the
+ * server builds it. stage: the legacy call stage, for persona "simulation".
+ */
 export type ChatRequestBody = {
-  messages?: ChatMessage[];
+  attemptId?: unknown;
+  persona?: unknown;
+  stage?: unknown;
+  messages?: unknown;
   newMessage: string;
-  systemPrompt?: string;
 };
 
 export type TtsRequestBody = {

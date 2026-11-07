@@ -1,13 +1,16 @@
 /**
  * route.ts — /api/tts
- * ElevenLabs text-to-speech with character alignment timestamps.
+ * ElevenLabs text-to-speech with character alignment timestamps. Signed-in students
+ * only (paid service); the text is at most TTS_MAX_TEXT_CHARS (1,000) characters.
  */
 
 import { NextResponse } from "next/server";
+import { requireStudentApi } from "@/lib/api-auth";
 import {
   ELEVENLABS_MODEL_ID,
   ELEVENLABS_SIMILARITY_BOOST,
   ELEVENLABS_STABILITY,
+  TTS_MAX_TEXT_CHARS,
 } from "@/lib/constants";
 import { timingsFromAlignment } from "@/lib/elevenLabsTimings";
 import type { TtsRequestBody, TtsResponseBody } from "@/types";
@@ -43,6 +46,11 @@ function elevenLabsErrorMessage(status: number, bodyText: string): string {
  * POST /api/tts — synthesizes speech for avatar or phone UI.
  */
 export async function POST(req: Request): Promise<NextResponse> {
+  const auth = await requireStudentApi();
+  if (!auth.ok) {
+    return auth.response;
+  }
+
   try {
     const voiceId = process.env.ELEVENLABS_VOICE_ID?.trim();
     const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
@@ -64,6 +72,9 @@ export async function POST(req: Request): Promise<NextResponse> {
     const trimmedText = text.trim();
     if (!trimmedText) {
       return NextResponse.json({ error: "text is required." }, { status: 400 });
+    }
+    if (trimmedText.length > TTS_MAX_TEXT_CHARS) {
+      return NextResponse.json({ error: `text can be at most ${TTS_MAX_TEXT_CHARS} characters.` }, { status: 400 });
     }
 
     const response = await fetch(

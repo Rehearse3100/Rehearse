@@ -17,6 +17,7 @@ import { useAudioWaveform } from "@/hooks/useAudioWaveform";
 import { useProspectingVoice } from "@/hooks/useProspectingVoice";
 import { useVideoCall } from "@/hooks/useVideoCall";
 import { completeStage, fetchStageScore } from "@/lib/attempt-actions";
+import { parseLegacyChatStage } from "@/lib/chat-personas";
 import type { Simulation, SimulationStage } from "@/types";
 
 type PhonePhase = "lobby" | "connecting" | "active" | "scoring" | "scored";
@@ -24,7 +25,6 @@ type PhonePhase = "lobby" | "connecting" | "active" | "scoring" | "scored";
 type PhoneCallStageProps = {
   simulation: Simulation;
   attemptId: string;
-  stageHint: string;
   openingGreeting?: string;
   onAdvance: () => void;
   /** UI stage badge — defaults to prospecting. */
@@ -43,7 +43,6 @@ type PhoneCallStageProps = {
 export function PhoneCallStage({
   simulation,
   attemptId,
-  stageHint,
   openingGreeting,
   onAdvance,
   callStage = "prospecting",
@@ -65,10 +64,12 @@ export function PhoneCallStage({
   const getAudioStreamRef = useRef(videoCall.getAudioStream);
   getAudioStreamRef.current = videoCall.getAudioStream;
 
+  // The simulation's own persona, built on the server with this call stage's hint.
   const voice = useProspectingVoice({
-    systemPrompt: simulation.persona_system_prompt,
+    attemptId,
+    persona: "simulation",
+    chatStage: parseLegacyChatStage(callStage) ?? undefined,
     personaName: simulation.persona_name,
-    stageHint,
     openingGreeting,
     isMutedRef: videoCall.isMutedRef,
   });

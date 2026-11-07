@@ -18,11 +18,7 @@ import {
   parseDiscoveryTranscript,
   type DiscoveryTranscriptEntry,
 } from "@/lib/tempo-discovery";
-import {
-  DANA_REYES_SYSTEM_PROMPT,
-  TEMPO_DISCOVERY_OPENING_GREETING,
-  TEMPO_DISCOVERY_STAGE_HINT,
-} from "@/lib/constants";
+import { TEMPO_DISCOVERY_OPENING_GREETING } from "@/lib/constants";
 import { resumePlaybackContext } from "@/lib/audio-playback";
 import { useSimulationVoiceSession } from "@/hooks/useSimulationVoiceSession";
 import type { AvatarRef } from "@/types";
@@ -96,8 +92,8 @@ export function DiscoveryCallSession({
   const activeVideoStreamRef = useRef<MediaStream | null>(videoStream);
 
   const voice = useSimulationVoiceSession({
-    systemPrompt: DANA_REYES_SYSTEM_PROMPT,
-    stageHint: TEMPO_DISCOVERY_STAGE_HINT,
+    // Dana: the server builds her prompt from this key.
+    persona: "tempo_discovery",
     openingGreeting: TEMPO_DISCOVERY_OPENING_GREETING,
     isMutedRef,
     attemptId,

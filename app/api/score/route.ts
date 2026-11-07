@@ -1,11 +1,17 @@
 /**
  * route.ts — /api/score
- * GPT-4o sales coach scoring for each simulation stage.
+ * GPT-4o sales coach scoring for each simulation stage (legacy simulations).
+ * Signed-in students only. Every text that goes into the scoring prompt is capped:
+ * transcript, pitch, prior-stages summary, product context and lead-gen answers at
+ * SCORE_MAX_TEXT_CHARS, persona name / role and product name at
+ * SCORE_MAX_SHORT_TEXT_CHARS (longer → 400). simulationContext.personaSystemPrompt is
+ * sent by the browser but never used here.
  */
 
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
-import { MAX_SCORE_TOKENS } from "@/lib/constants";
+import { requireStudentApi } from "@/lib/api-auth";
+import { MAX_SCORE_TOKENS, SCORE_MAX_SHORT_TEXT_CHARS, SCORE_MAX_TEXT_CHARS } from "@/lib/constants";
 import {
   buildScoringPrompt,
   formatLeadGenAnswers,
@@ -40,6 +46,29 @@ function toScoringContext(body: ScoreRequestBody): ScoringContext {
   };
 }
 
+/** True when any text the scoring prompt uses is over its cap. */
+function exceedsScoreLimits(body: ScoreRequestBody): boolean {
+  const isOver = (value: unknown, max: number): boolean => typeof value === "string" && value.length > max;
+  const longTexts = [
+    body.transcript,
+    body.pitchText,
+    body.priorStagesSummary,
+    body.simulationContext?.productContext,
+    body.studentAnswers?.fit,
+    body.studentAnswers?.painPoints,
+    body.studentAnswers?.openingApproach,
+  ];
+  const shortTexts = [
+    body.simulationContext?.personaName,
+    body.simulationContext?.personaRole,
+    body.simulationContext?.productName,
+  ];
+  return (
+    longTexts.some((value) => isOver(value, SCORE_MAX_TEXT_CHARS)) ||
+    shortTexts.some((value) => isOver(value, SCORE_MAX_SHORT_TEXT_CHARS))
+  );
+}
+
 /**
  * Calls GPT-4o once with the scoring prompt.
  */
@@ -60,6 +89,11 @@ async function requestScore(
  * POST /api/score — returns numeric score and written feedback.
  */
 export async function POST(req: Request): Promise<NextResponse> {
+  const auth = await requireStudentApi();
+  if (!auth.ok) {
+    return auth.response;
+  }
+
   try {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
@@ -71,6 +105,9 @@ export async function POST(req: Request): Promise<NextResponse> {
 
     if (!stage || !simulationContext) {
       return NextResponse.json({ error: "stage and simulationContext are required." }, { status: 400 });
+    }
+    if (exceedsScoreLimits(body)) {
+      return NextResponse.json({ error: "A field is too long to score." }, { status: 400 });
     }
 
     console.log("[/api/score] scoring stage:", stage);

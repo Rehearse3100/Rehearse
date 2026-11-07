@@ -9,11 +9,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Avatar } from "@/components/Avatar";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
-import {
-  DR_KIM_SYSTEM_PROMPT,
-  TEMPO_OBJECTIONS_OPENING_GREETING,
-  TEMPO_OBJECTIONS_STAGE_HINT,
-} from "@/lib/constants";
+import { TEMPO_OBJECTIONS_OPENING_GREETING } from "@/lib/constants";
 import { resumePlaybackContext } from "@/lib/audio-playback";
 import {
   deriveObjectionTracker,
@@ -97,8 +93,8 @@ export function ObjectionHandlingCallSession({
   const activeVideoStreamRef = useRef<MediaStream | null>(videoStream);
 
   const voice = useSimulationVoiceSession({
-    systemPrompt: DR_KIM_SYSTEM_PROMPT,
-    stageHint: TEMPO_OBJECTIONS_STAGE_HINT,
+    // Dr. Kim: the server builds his prompt from this key.
+    persona: "tempo_objections",
     openingGreeting: TEMPO_OBJECTIONS_OPENING_GREETING,
     isMutedRef,
     attemptId,

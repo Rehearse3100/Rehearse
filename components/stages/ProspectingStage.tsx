@@ -31,7 +31,6 @@ export function ProspectingStage({
       <PhoneCallStage
         simulation={simulation}
         attemptId={attemptId}
-        stageHint="PROSPECTING STAGE: You are on a short cold call. Be busy but fair."
         onAdvance={() => onComplete("discovery")}
       />
     </div>

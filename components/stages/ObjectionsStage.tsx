@@ -32,7 +32,6 @@ export function ObjectionsStage({
       simulation={simulation}
       attemptId={attemptId}
       stage="objections"
-      stageHint={`OBJECTIONS STAGE: The student pitched: """${pitchText}""" Raise ${OBJECTIONS_COUNT} specific objections (price, timing, fit). Push back realistically.`}
       openingGreeting={`I read your pitch. I've got a few concerns — let's hear how you handle them.`}
       scoreStage="objections"
       runningTotalScore={runningTotalScore}

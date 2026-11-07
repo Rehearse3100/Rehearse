@@ -1,6 +1,7 @@
 /**
  * useSimulationVoiceSession.ts
- * Anam custom-LLM voice stages: Anam STT/TTS/avatar + GPT via /api/chat.
+ * Anam custom-LLM voice stages: Anam STT/TTS/avatar + GPT via /api/chat (the call
+ * sends a persona key and the attempt id; the server builds the system prompt).
  * Does not acquire media — caller supplies the lobby MediaStream on join.
  */
 
@@ -8,13 +9,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MessageRole, type Message } from "@anam-ai/js-sdk";
-import {
-  DANA_REYES_SYSTEM_PROMPT,
-  DR_KIM_SYSTEM_PROMPT,
-  SIMULATION_POST_SPEAK_COOLDOWN_MS,
-} from "@/lib/constants";
+import type { ChatPersona, LegacyChatStage } from "@/lib/chat-personas";
+import { SIMULATION_POST_SPEAK_COOLDOWN_MS } from "@/lib/constants";
 import { buildDefaultOpeningGreeting } from "@/lib/persona";
-import { buildVoiceSystemPrompt } from "@/lib/persona-voice";
 import {
   getAvatarInitError,
   setAvatarSessionConfig,
@@ -25,9 +22,11 @@ import {
 import type { AvatarRef, ChatMessage } from "@/types";
 
 export type SimulationVoiceConfig = {
-  systemPrompt: string;
+  /** Who the persona is; /api/chat builds its system prompt from this key on the server. */
+  persona: ChatPersona;
+  /** For persona "simulation": the legacy call stage whose hint the server appends. */
+  chatStage?: LegacyChatStage;
   openingGreeting?: string;
-  stageHint?: string;
   isMutedRef?: React.MutableRefObject<boolean>;
   attemptId?: string;
   anamStage?: AnamSessionStage;
@@ -66,16 +65,16 @@ function resolveAttemptId(configAttemptId?: string): string {
 }
 
 function resolveAnamStage(
-  systemPrompt: string,
+  persona: ChatPersona,
   configStage?: AnamSessionStage
 ): AnamSessionStage | null {
   if (configStage) {
     return configStage;
   }
-  if (systemPrompt === DANA_REYES_SYSTEM_PROMPT) {
+  if (persona === "tempo_discovery") {
     return "discovery";
   }
-  if (systemPrompt === DR_KIM_SYSTEM_PROMPT) {
+  if (persona === "tempo_objections") {
     return "objections";
   }
   return null;
@@ -93,7 +92,7 @@ export function useSimulationVoiceSession(
 ): SimulationVoiceReturn {
   // Synchronous — must be set before any connect effect calls startSession.
   const initialAttemptId = resolveAttemptId(config.attemptId);
-  const initialStage = resolveAnamStage(config.systemPrompt, config.anamStage);
+  const initialStage = resolveAnamStage(config.persona, config.anamStage);
   if (initialAttemptId && initialStage) {
     setAvatarSessionConfig({ attemptId: initialAttemptId, stage: initialStage });
   }
@@ -134,7 +133,7 @@ export function useSimulationVoiceSession(
 
   useEffect(() => {
     const attemptId = resolveAttemptId(config.attemptId);
-    const stage = resolveAnamStage(config.systemPrompt, config.anamStage);
+    const stage = resolveAnamStage(config.persona, config.anamStage);
     if (!attemptId || !stage) {
       return;
     }
@@ -142,7 +141,7 @@ export function useSimulationVoiceSession(
     setAvatarSessionConfig({ attemptId, stage });
     const avatar = getExtendedAvatar(avatarRef.current);
     avatar?.configureSession({ attemptId, stage });
-  }, [config.attemptId, config.anamStage, config.systemPrompt]);
+  }, [config.attemptId, config.anamStage, config.persona]);
 
   const appendTranscript = useCallback((speaker: string, text: string): void => {
     transcriptLinesRef.current.push(`${speaker}: ${text}`);
@@ -253,17 +252,16 @@ export function useSimulationVoiceSession(
       const llmEpoch = llmEpochRef.current;
 
       try {
-        const systemPrompt = buildVoiceSystemPrompt(
-          configRef.current.systemPrompt,
-          configRef.current.stageHint
-        );
+        // The persona key only: the server builds the system prompt.
         const chatRes = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            attemptId: resolveAttemptId(configRef.current.attemptId),
+            persona: configRef.current.persona,
+            stage: configRef.current.chatStage,
             messages: prior,
             newMessage: trimmed,
-            systemPrompt,
           }),
         });
 
@@ -387,7 +385,7 @@ export function useSimulationVoiceSession(
 
       const attemptId = resolveAttemptId(configRef.current.attemptId);
       const stage = resolveAnamStage(
-        configRef.current.systemPrompt,
+        configRef.current.persona,
         configRef.current.anamStage
       );
       if (!attemptId || !stage) {

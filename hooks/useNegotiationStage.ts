@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { completeStage } from "@/lib/attempt-actions";
-import { SCENARIO_A_SYSTEM_PROMPT, SCENARIO_B_SYSTEM_PROMPT } from "@/lib/constants";
+import type { ChatPersona } from "@/lib/chat-personas";
 import {
   canSubmitNegotiation,
   createInitialNegotiationData,
@@ -208,7 +208,8 @@ export function useNegotiationStage({
 
     setIsLoadingTurn(true);
     try {
-      const systemPrompt = scenario === "A" ? SCENARIO_A_SYSTEM_PROMPT : SCENARIO_B_SYSTEM_PROMPT;
+      // The scenario's persona key only: the server builds Dr. Kim's prompt.
+      const persona: ChatPersona = scenario === "A" ? "tempo_negotiation_a" : "tempo_negotiation_b";
       const messages = buildChatHistory(scenarioData.turns, turnIndex);
       const isLastTurn = turnIndex === 2;
 
@@ -216,9 +217,10 @@ export function useNegotiationStage({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          attemptId,
+          persona,
           messages,
           newMessage: responseText,
-          systemPrompt,
         }),
       });
 
@@ -278,7 +280,7 @@ export function useNegotiationStage({
     } finally {
       setIsLoadingTurn(false);
     }
-  }, [currentResponse, data, isLoadingTurn, persistData, testBypass]);
+  }, [attemptId, currentResponse, data, isLoadingTurn, persistData, testBypass]);
 
   const handleSubmit = useCallback(async (): Promise<void> => {
     let submitData = data;

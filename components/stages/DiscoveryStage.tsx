@@ -29,7 +29,6 @@ export function DiscoveryStage({
       simulation={simulation}
       attemptId={attemptId}
       stage="discovery"
-      stageHint="DISCOVERY STAGE: Answer the student's questions in character. Do not agree to buy yet."
       openingGreeting={`Yeah? I'm ${simulation.persona_name} — what do you want to know?`}
       scoreStage="discovery"
       runningTotalScore={runningTotalScore}

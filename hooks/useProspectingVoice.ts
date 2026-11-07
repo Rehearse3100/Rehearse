@@ -16,16 +16,20 @@ import {
   VOICE_ENDPOINTING_MS,
   VOICE_UTTERANCE_END_MS,
 } from "@/lib/constants";
+import type { ChatPersona, LegacyChatStage } from "@/lib/chat-personas";
 import { createDeepgramConnection } from "@/lib/deepgram";
-import { buildVoiceSystemPrompt } from "@/lib/persona-voice";
 import { createUtteranceBuffer } from "@/lib/voice-utterance-buffer";
 import type { ChatMessage, TtsResponseBody } from "@/types";
 
 export type ProspectingVoiceConfig = {
-  systemPrompt: string;
+  /** The attempt this call is part of (/api/chat checks it is the student's). */
+  attemptId: string;
+  /** Who the persona is; /api/chat builds its system prompt from this key on the server. */
+  persona: ChatPersona;
+  /** For persona "simulation": the legacy call stage whose hint the server appends. */
+  chatStage?: LegacyChatStage;
   openingGreeting?: string;
   personaName: string;
-  stageHint?: string;
   isMutedRef?: React.MutableRefObject<boolean>;
 };
 
@@ -136,17 +140,16 @@ export function useProspectingVoice(config: ProspectingVoiceConfig): Prospecting
       setStatusText("Thinking...");
 
       try {
-        const systemPrompt = buildVoiceSystemPrompt(
-          configRef.current.systemPrompt,
-          configRef.current.stageHint
-        );
+        // The persona key only: the server builds the system prompt.
         const chatRes = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            attemptId: configRef.current.attemptId,
+            persona: configRef.current.persona,
+            stage: configRef.current.chatStage,
             messages: messagesRef.current,
             newMessage: text,
-            systemPrompt,
           }),
         });
         if (!chatRes.ok) throw new Error("Chat failed");
