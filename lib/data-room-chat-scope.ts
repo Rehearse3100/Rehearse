@@ -904,6 +904,10 @@ export type AnswerCard = {
 /** How the chat pane shows an answer: "table" (a filter list), "compare" (side by side); none or "list": text blocks. */
 export type AnswerLayout = "list" | "table" | "compare";
 
+/** The rows of a compare table, in the order they show. */
+export const COMPARE_ROW_KEYS = ["industry", "locations", "city", "territory", "online_booking", "signals"] as const;
+export type CompareRowKey = (typeof COMPARE_ROW_KEYS)[number];
+
 /**
  * One company's block. text is always the full answer as lines (the fallback the
  * pane shows when it doesn't use a table); card and signals are only on table and
@@ -928,5 +932,7 @@ export type ScopedAnswer = {
   intro: string;
   items: ScopedAnswerItem[];
   layout?: AnswerLayout;
+  /** A compare limited to some details ("only for locations"): just those rows; omitted → every row. */
+  compareRows?: CompareRowKey[];
   suggestAllCompanies?: boolean;
 };

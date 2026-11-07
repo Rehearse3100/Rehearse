@@ -287,7 +287,8 @@ describe("the opening sentence (written from the finished answer)", () => {
   it("the prompt: one short sentence that may summarise the answer; no new facts, judgments or names; the call is the student's", () => {
     for (const line of [
       '{"opening": string}',
-      '- opening: ONE short, friendly sentence (at most 30 words) that introduces the answer. It may summarise what the answer shows (for example "Four dental companies in Colorado offer online booking.").',
+      // 2026-11-06: the example is neutral (no ICP industry or territory state).
+      '- opening: ONE short, friendly sentence (at most 30 words) that introduces the answer. It may summarise what the answer shows (for example "Four fitness studios in Texas offer online booking.").',
       "- Never add a fact, number or detail that isn't in the answer.",
       '- For a list, use the total from the "N companies match" line, never the number of companies shown.',
       '- When the answer is about one company, call it "this company", never "one company" or "the company below".',

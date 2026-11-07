@@ -6,8 +6,11 @@
  * attributes, this module validates them against a whitelist and runs them over the
  * roster in code (different fields must all match; two conditions on the same field
  * mean either one, except locations, where both must hold), and the answer lists
- * every matching company A–Z from the database, under a count line and with no
- * opening sentence (as a table: layout "table", each item with its card values). A "how many companies are there?" question (no conditions) gets
+ * every matching company from the database, A–Z or in the order the question asked
+ * for (by locations or name; never by fit), under a count line and with no opening
+ * sentence (as a table: layout "table", each item with its card values). A request
+ * for the previous list again in another order keeps that list's companies (all of
+ * its conditions), re-sorted. A "how many companies are there?" question (no conditions) gets
  * the roster total; an answer-key or rule-breaking question its own reply; any other
  * All-companies question one fixed reply. Used by lib/data-room-chat-router.ts
  * (filter validation) and POST /api/student/data-room-chat.
@@ -47,6 +50,73 @@ export const FILTER_OPS = ["eq", "contains", "gt", "gte", "lt", "lte"] as const;
 export type FilterOp = (typeof FILTER_OPS)[number];
 
 export type RosterFilter = { field: FilterField; op: FilterOp; value: string | number | boolean };
+
+/** An order for a list answer: by number of locations or by name (never by fit). The default is name A–Z. */
+export type RosterSort = { field: "locations" | "name"; direction: "asc" | "desc" };
+
+/** Field spellings a model may use for a sort. */
+const SORT_FIELDS: Record<string, RosterSort["field"]> = {
+  locations: "locations",
+  location: "locations",
+  loc: "locations",
+  name: "name",
+  names: "name",
+  company: "name",
+  company_name: "name",
+};
+
+/** Direction spellings a model may use; a missing direction is ascending. */
+const SORT_DIRECTIONS: Record<string, RosterSort["direction"]> = {
+  asc: "asc",
+  ascending: "asc",
+  increasing: "asc",
+  desc: "desc",
+  descending: "desc",
+  decreasing: "desc",
+};
+
+/**
+ * A sort from the router's reply ({"field", "direction"}), or null when it is
+ * missing or names something else (only locations and name can order a list).
+ */
+export function parseRosterSort(raw: unknown): RosterSort | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  const { field, direction } = raw as Record<string, unknown>;
+  const sortField = typeof field === "string" ? SORT_FIELDS[field.trim().toLowerCase()] : undefined;
+  if (!sortField) {
+    return null;
+  }
+  if (direction === undefined || direction === null || direction === "") {
+    return { field: sortField, direction: "asc" };
+  }
+  const sortDirection = typeof direction === "string" ? SORT_DIRECTIONS[direction.trim().toLowerCase()] : undefined;
+  return sortDirection ? { field: sortField, direction: sortDirection } : null;
+}
+
+/**
+ * The companies in the list's order: by name A–Z when there is no sort; by name
+ * (A–Z or Z–A) or by number of locations (ties by name A–Z, companies with no
+ * number on record last). Sorting by locations or name is not ranking fit.
+ */
+export function sortCompanies<T extends { name: string; locations: number | null }>(
+  companies: readonly T[],
+  sort?: RosterSort | null
+): T[] {
+  const byName = (a: T, b: T): number => a.name.localeCompare(b.name);
+  if (!sort || sort.field === "name") {
+    const sorted = [...companies].sort(byName);
+    return sort?.direction === "desc" ? sorted.reverse() : sorted;
+  }
+  return [...companies].sort((a, b) => {
+    if (a.locations === null || b.locations === null) {
+      return a.locations === b.locations ? byName(a, b) : a.locations === null ? 1 : -1;
+    }
+    const difference = sort.direction === "asc" ? a.locations - b.locations : b.locations - a.locations;
+    return difference !== 0 ? difference : byName(a, b);
+  });
+}
 
 /** Number comparisons for locations, with the spellings a model may use; anything else is invalid. */
 const LOCATION_OPS: Record<string, FilterOp> = {
@@ -241,19 +311,27 @@ export function matchesFilters(company: FilterCompany, filters: readonly RosterF
 
 /**
  * The answer for one condition or several (matchesFilters): the count intro
- * (matchCountIntro), then every matching company A–Z (no other order, no ranking,
- * no cap), each "{Industry} · {N} locations · {Metro}" under its name from the database.
+ * (matchCountIntro), then every matching company (no cap, no ranking) A–Z, or in the
+ * order the question asked for (sort: by locations or name), each "{Industry} · {N}
+ * locations · {Metro}" under its name from the database.
  * It is shown as a table (layout "table"): each item also carries its card values
  * (industry, locations, metro, territory, online booking); the text stays the fallback.
  */
 export function answerFilter(
   filter: RosterFilter | readonly RosterFilter[],
-  companies: readonly FilterCompany[]
+  companies: readonly FilterCompany[],
+  sort?: RosterSort | null
 ): ScopedAnswer {
   const filters: readonly RosterFilter[] = Array.isArray(filter) ? filter : [filter as RosterFilter];
-  const matches = companies
-    .filter((company) => matchesFilters(company, filters))
-    .sort((a, b) => a.name.localeCompare(b.name));
+  return listAnswer(
+    companies.filter((company) => matchesFilters(company, filters)),
+    sort
+  );
+}
+
+/** A list answer for these companies, in the list's order (sortCompanies): the count line and the table. */
+function listAnswer(companies: readonly FilterCompany[], sort?: RosterSort | null): ScopedAnswer {
+  const matches = sortCompanies(companies, sort);
   if (matches.length === 0) {
     return { intro: NO_FILTER_MATCHES_REPLY, items: [] };
   }
@@ -285,10 +363,24 @@ export function answerFilter(
  * - an answer-key or rule-breaking question (meta_or_bulk) gets META_ALL_MODE_REPLY;
  * - everything else gets ALL_MODE_REPLY.
  */
-export function answerAllCompanies(decision: RouterDecision, companies: readonly FilterCompany[]): ScopedAnswer {
-  const { intent, filters, criteriaCount } = decision;
+export function answerAllCompanies(
+  decision: RouterDecision,
+  companies: readonly FilterCompany[],
+  previousListIds: readonly string[] = []
+): ScopedAnswer {
+  const { intent, filters, criteriaCount, sort } = decision;
   if (intent === "meta_or_bulk") {
     return { intro: META_ALL_MODE_REPLY, items: [] };
+  }
+  // The previous list again in another order ("give this again by locations"): the
+  // same companies, so every one of its conditions is kept, re-sorted; a condition
+  // the router read narrows it further.
+  if (sort && previousListIds.length > 0 && (intent === "filter_list" || intent === "overview")) {
+    const ids = new Set(previousListIds);
+    const listed = companies.filter((company) => ids.has(company.id));
+    if (listed.length > 0) {
+      return listAnswer(filters ? listed.filter((company) => matchesFilters(company, filters)) : listed, sort);
+    }
   }
   if (intent === "filter_list" && filters === null && criteriaCount === 0) {
     return { intro: totalCountReply(companies.length), items: [] };
@@ -296,7 +388,42 @@ export function answerAllCompanies(decision: RouterDecision, companies: readonly
   const isComplete =
     filters !== null && filters.length > 0 && (criteriaCount === null || criteriaCount <= filters.length);
   if (intent === "filter_list" && filters && isComplete) {
-    return answerFilter(filters, companies);
+    return answerFilter(filters, companies, sort);
   }
   return { intro: ALL_MODE_REPLY, items: [] };
+}
+
+// ── Follow-ups about the previous list ───
+
+/** Words that point back at the previous answer's list ("give this again", "sort them", "those, by name"). */
+const PREVIOUS_LIST_REFERENCE = /\b(?:this|these|them|those|again|same)\b/i;
+
+/** True when the question points back at the previous list (PREVIOUS_LIST_REFERENCE). */
+export function refersToPreviousList(text: string): boolean {
+  return PREVIOUS_LIST_REFERENCE.test(text);
+}
+
+/**
+ * The companies the previous answer listed, from the client-sent history: the ids
+ * of the last entry when it is an All-companies answer ({ role: "assistant", scope:
+ * { mode: "all" }, items }); empty otherwise. Only ids, which the caller matches
+ * against the roster.
+ */
+export function parsePreviousListIds(history: unknown): string[] {
+  if (!Array.isArray(history) || history.length === 0) {
+    return [];
+  }
+  const last: unknown = history[history.length - 1];
+  if (!last || typeof last !== "object") {
+    return [];
+  }
+  const { role, scope, items } = last as Record<string, unknown>;
+  const isAllScope = Boolean(scope) && typeof scope === "object" && (scope as { mode?: unknown }).mode === "all";
+  if (role !== "assistant" || !isAllScope || !Array.isArray(items)) {
+    return [];
+  }
+  return items.flatMap((item: unknown): string[] => {
+    const companyId = item && typeof item === "object" ? (item as { companyId?: unknown }).companyId : undefined;
+    return typeof companyId === "string" ? [companyId] : [];
+  });
 }

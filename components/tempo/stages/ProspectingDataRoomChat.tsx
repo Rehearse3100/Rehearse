@@ -26,6 +26,7 @@ import { answerLayoutOf, DataRoomChatAnswer, SearchAllCompaniesButton } from "@/
 import { DATA_ROOM_CHAT_COUNTER_FROM, DATA_ROOM_CHAT_MAX_CHARS } from "@/lib/data-room-chat-guard";
 import {
   buildScopeIndex,
+  COMPARE_ROW_KEYS,
   insertPickedName,
   previewScope,
   resolveSendScope,
@@ -35,6 +36,7 @@ import {
   type AnswerCard,
   type AnswerLayout,
   type ChatScope,
+  type CompareRowKey,
   type LastQuestion,
   type ScopeCompany,
   type ScopeDecision,
@@ -84,6 +86,8 @@ export type AssistantMessage = {
   items: AnswerItem[];
   /** "table" or "compare" from the server; missing on replies saved before tables (shown as text). */
   layout?: AnswerLayout;
+  /** A compare limited to some details: only these rows. */
+  compareRows?: CompareRowKey[];
   /** A filter question about one company: "Search all companies" is offered under it. */
   suggestAllCompanies?: boolean;
   /** "Search all companies" was used on this reply, so it isn't offered again. */
@@ -98,6 +102,7 @@ type ChatReply = {
   intro?: unknown;
   items?: unknown;
   layout?: unknown;
+  compareRows?: unknown;
   suggestAllCompanies?: unknown;
   error?: unknown;
 };
@@ -269,6 +274,15 @@ export function parseAnswerItems(value: unknown): AnswerItem[] {
 /** The server's layout, or undefined (text blocks). */
 function parseAnswerLayout(value: unknown): AnswerLayout | undefined {
   return value === "list" || value === "table" || value === "compare" ? value : undefined;
+}
+
+/** The compare rows the server sent (known keys only), or undefined (every row). */
+function parseCompareRows(value: unknown): CompareRowKey[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const rows = COMPARE_ROW_KEYS.filter((key) => value.includes(key));
+  return rows.length > 0 ? rows : undefined;
 }
 
 /** History entry sent to the server: ids and text only, never company names. */
@@ -752,6 +766,7 @@ export function ProspectingDataRoomChat({
         throw new Error(typeof body?.error === "string" ? body.error : "AI request failed");
       }
       const layout = parseAnswerLayout(body.layout);
+      const compareRows = parseCompareRows(body.compareRows);
       setMessages([
         ...withQuestion,
         {
@@ -761,6 +776,7 @@ export function ProspectingDataRoomChat({
           intro: sanitizeAiResearchReply(body.intro),
           items: parseAnswerItems(body.items),
           ...(layout ? { layout } : {}),
+          ...(compareRows ? { compareRows } : {}),
           ...(body.suggestAllCompanies === true ? { suggestAllCompanies: true } : {}),
         },
       ]);

@@ -326,3 +326,51 @@ describe("Search all companies", () => {
     expect(reply.items[1]?.card).toBeUndefined();
   });
 });
+
+describe("after All-companies lists, back in Selected: the question goes where the hint says", () => {
+  /** The company ids the hint line names (empty when it names none). */
+  const hintIds = (tree: Element): string[] => {
+    const preview = theHint(tree).props.preview as { kind: string; companies?: Array<{ id: string }> };
+    return preview.kind === "companies" ? (preview.companies ?? []).map((c) => c.id) : [];
+  };
+  const switchTo = (isAll: boolean): void => (theSwitch(render()).props.onChange as (value: boolean) => void)(isAll);
+
+  async function listThen(listIds: string[]): Promise<void> {
+    switchTo(true);
+    replyWith({
+      intro: `${listIds.length} companies match.`,
+      layout: "table",
+      items: listIds.map((id) => ({ companyId: id, companyName: id, text: "Dental · 3 locations · Denver, CO" })),
+    });
+    type("which are in colorado");
+    await send();
+    switchTo(false);
+  }
+
+  it("the real case: 'which ones have online boookinh?' → the company the hint names (the open one), not a listed row", async () => {
+    await listThen(["falcon", "maple"]);
+    type("which ones have online boookinh?");
+    const tree = render();
+    expect(hintIds(tree)).toEqual(["summit"]);
+    await send();
+    expect(sent(1).scope).toEqual({ mode: "companies", companyIds: hintIds(tree) });
+  });
+
+  it("the same holds for the other rules: a named company, 'it' after a one-company list, and a plural 'which ones' after it", async () => {
+    await listThen(["maple"]);
+    for (const [text, expected] of [
+      ["What does it sell?", ["maple"]],
+      ["which ones have online booking?", ["summit"]],
+      ["What about Falcon Market?", ["falcon"]],
+    ] as const) {
+      type(text);
+      const tree = render();
+      expect(hintIds(tree), text).toEqual(expected);
+      const calls = fetchMock.mock.calls.length;
+      await send();
+      expect(sent(calls).scope, text).toEqual({ mode: "companies", companyIds: [...expected] });
+      // Back to the list as the latest exchange for the next case.
+      await listThen(["maple"]);
+    }
+  });
+});

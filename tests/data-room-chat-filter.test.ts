@@ -19,8 +19,12 @@ import {
   matchesFilters,
   META_ALL_MODE_REPLY,
   NO_FILTER_MATCHES_REPLY,
+  parsePreviousListIds,
   parseRosterFilter,
   parseRosterFilters,
+  parseRosterSort,
+  refersToPreviousList,
+  sortCompanies,
   totalCountReply,
   type FilterCompany,
   type RosterFilter,
@@ -536,5 +540,133 @@ describe("locations comparisons", () => {
     expect(
       answerAllCompanies(decision({ filters: parseRosterFilters([{ field: "locations", op: "about", value: 3 }], undefined) }), ROSTER)
     ).toEqual({ intro: ALL_MODE_REPLY, items: [] });
+  });
+});
+
+describe("sorting a list (by locations or name; never by fit)", () => {
+  const names = (companies: readonly FilterCompany[]): string[] => companies.map((company) => company.name);
+
+  it("the default stays A–Z; name Z–A; locations up or down, ties by name, no number on record last", () => {
+    expect(names(sortCompanies(ROSTER))).toEqual([
+      "Aspen Vet Clinic",
+      "Falcon Market",
+      "Maple Family Dentistry",
+      "Summit Dental Group",
+      "Summit Outdoor Gear",
+    ]);
+    expect(names(sortCompanies(ROSTER, { field: "name", direction: "desc" }))).toEqual([
+      "Summit Outdoor Gear",
+      "Summit Dental Group",
+      "Maple Family Dentistry",
+      "Falcon Market",
+      "Aspen Vet Clinic",
+    ]);
+    expect(names(sortCompanies(ROSTER, { field: "locations", direction: "asc" }))).toEqual([
+      "Falcon Market",
+      "Summit Outdoor Gear",
+      "Maple Family Dentistry",
+      "Summit Dental Group",
+      "Aspen Vet Clinic",
+    ]);
+    expect(names(sortCompanies(ROSTER, { field: "locations", direction: "desc" }))).toEqual([
+      "Summit Dental Group",
+      "Maple Family Dentistry",
+      "Summit Outdoor Gear",
+      "Falcon Market",
+      "Aspen Vet Clinic",
+    ]);
+    const tied: FilterCompany[] = [
+      { ...ROSTER[0]!, id: "b", name: "Bravo", locations: 4 },
+      { ...ROSTER[0]!, id: "a", name: "Alpha", locations: 4 },
+    ];
+    expect(names(sortCompanies(tied, { field: "locations", direction: "desc" }))).toEqual(["Alpha", "Bravo"]);
+  });
+
+  it("the sort the router sends: locations or name, asc or desc (a few spellings); anything else is no sort", () => {
+    expect(parseRosterSort({ field: "locations", direction: "asc" })).toEqual({ field: "locations", direction: "asc" });
+    expect(parseRosterSort({ field: "Location", direction: "Decreasing" })).toEqual({ field: "locations", direction: "desc" });
+    expect(parseRosterSort({ field: "name" })).toEqual({ field: "name", direction: "asc" });
+    for (const raw of [null, undefined, "locations", [], { field: "fit", direction: "desc" }, { field: "locations", direction: "best" }]) {
+      expect(parseRosterSort(raw), JSON.stringify(raw)).toBeNull();
+    }
+  });
+
+  it("a filter list in the order asked for; the count line is unchanged", () => {
+    const answer = answerAllCompanies(
+      decision({ filter: { field: "online_booking", op: "eq", value: true }, sort: { field: "locations", direction: "desc" } }),
+      ROSTER
+    );
+    expect(answer.intro).toBe("3 companies match.");
+    expect(answer.items.map((item) => item.companyName)).toEqual(["Maple Family Dentistry", "Summit Outdoor Gear", "Aspen Vet Clinic"]);
+    expect(answerFilter({ field: "online_booking", op: "eq", value: true }, ROSTER).items.map((item) => item.companyName)).toEqual([
+      "Aspen Vet Clinic",
+      "Maple Family Dentistry",
+      "Summit Outdoor Gear",
+    ]);
+  });
+});
+
+describe("the previous list again, in another order", () => {
+  // The real case: "which are in colorado" → "more than 6?" → "give this again but in
+  // increasing order of loc". The router rebuilt only "more than 6" (Colorado dropped).
+  const roster: FilterCompany[] = [
+    ...ROSTER,
+    { id: "peak", name: "Peak Clinics", industry: "Dental", locations: 7, metro: "Denver, CO", inTerritory: true, onlineBooking: false },
+    { id: "basin", name: "Basin Health", industry: "Dental", locations: 9, metro: "Boise, ID", inTerritory: false, onlineBooking: false },
+  ];
+  const coloradoOverSix = ["peak", "summit"];
+  const resort = decision({
+    filters: [{ field: "locations", op: "gt", value: 6 }],
+    sort: { field: "locations", direction: "asc" },
+  });
+
+  it("keeps every condition of the previous list (the same companies), re-sorted; the count line counts them", () => {
+    const answer = answerAllCompanies(resort, roster, coloradoOverSix);
+    expect(answer.intro).toBe("2 companies match.");
+    expect(answer.items.map((item) => item.companyName)).toEqual(["Peak Clinics", "Summit Dental Group"]);
+    expect(answer.layout).toBe("table");
+    // Without the previous list, the router's partial conditions bring Basin (Idaho) in.
+    expect(answerAllCompanies(resort, roster).items.map((item) => item.companyName)).toEqual([
+      "Peak Clinics",
+      "Summit Dental Group",
+      "Basin Health",
+    ]);
+  });
+
+  it("with no conditions from the router, the whole previous list; a condition it adds narrows it", () => {
+    expect(
+      answerAllCompanies(decision({ filters: null, criteriaCount: 0, sort: { field: "name", direction: "desc" } }), roster, coloradoOverSix).items.map(
+        (item) => item.companyName
+      )
+    ).toEqual(["Summit Dental Group", "Peak Clinics"]);
+    expect(
+      answerAllCompanies(
+        decision({ filters: [{ field: "locations", op: "gte", value: 8 }], sort: { field: "locations", direction: "asc" } }),
+        roster,
+        coloradoOverSix
+      ).items.map((item) => item.companyName)
+    ).toEqual(["Summit Dental Group"]);
+  });
+
+  it("only for a sort request: without a sort the question is answered as usual", () => {
+    expect(answerAllCompanies(decision({ filters: [{ field: "locations", op: "gt", value: 6 }] }), roster, coloradoOverSix).intro).toBe(
+      "3 companies match."
+    );
+  });
+
+  it("the question must point back at the list; the previous list is the last entry when it was an All-companies answer", () => {
+    for (const text of ["give this again but in increasing order of loc", "sort them by name", "those, largest first", "same list by locations"]) {
+      expect(refersToPreviousList(text), text).toBe(true);
+    }
+    for (const text of ["which are in Texas, largest first?", "sort by name"]) {
+      expect(refersToPreviousList(text), text).toBe(false);
+    }
+    const ALL = { mode: "all" };
+    const list = { role: "assistant", intro: "2 companies match.", items: [{ companyId: "peak", text: "x" }, { companyId: "summit", text: "y" }], scope: ALL };
+    expect(parsePreviousListIds([{ role: "user", content: "more than 6?", scope: ALL }, list])).toEqual(["peak", "summit"]);
+    expect(parsePreviousListIds([list, { role: "user", content: "next", scope: ALL }])).toEqual([]);
+    expect(parsePreviousListIds([{ ...list, scope: { mode: "companies", companyIds: ["peak"] } }])).toEqual([]);
+    expect(parsePreviousListIds("nope")).toEqual([]);
+    expect(parsePreviousListIds([{ ...list, items: [{ companyId: 7 }, null, { companyId: "peak" }] }])).toEqual(["peak"]);
   });
 });

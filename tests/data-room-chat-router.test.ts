@@ -13,8 +13,11 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { OPENING_SYSTEM_PROMPT, SELECTION_SYSTEM_PROMPT } from "@/lib/data-room-chat-render";
 import {
   buildRouterMessages,
+  hasEnglishFunctionWords,
+  isCompareRequest,
   isFollowUpQuestion,
   OVERVIEW_DECISION,
   parseFollowUpContext,
@@ -351,25 +354,52 @@ describe("prompt examples stay neutral", () => {
   /** Whole word or phrase, any case: "CO" never matches "company". */
   const wholeWord = (term: string): RegExp =>
     new RegExp(`(^|[^a-z0-9])${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^a-z0-9])`, "i");
+  /** A state code as written in prose: uppercase, whole word ("ID" is Idaho; "id" is an ordinary word). */
+  const stateCode = (code: string): RegExp => new RegExp(`(^|[^A-Za-z0-9])${code}($|[^A-Za-z0-9])`);
 
-  it("names no ICP industry (the config's list, plus vet and PT)", () => {
-    for (const term of [...TEMPO_ICP.verticals, "vet", "PT"]) {
-      expect(ROUTER_SYSTEM_PROMPT, term).not.toMatch(wholeWord(term));
+  // 2026-11-06: every Data Room chat prompt, not only the router's.
+  const PROMPTS: Record<string, string> = {
+    router: ROUTER_SYSTEM_PROMPT,
+    selection: SELECTION_SYSTEM_PROMPT,
+    opening: OPENING_SYSTEM_PROMPT,
+  };
+
+  it("no prompt names an ICP industry (the config's list, plus vet and PT)", () => {
+    for (const [name, prompt] of Object.entries(PROMPTS)) {
+      for (const term of [...TEMPO_ICP.verticals, "vet", "PT"]) {
+        expect(prompt, `${name}: ${term}`).not.toMatch(wholeWord(term));
+      }
     }
   });
 
-  it("names no territory city, state or state code", () => {
+  it("no prompt names a territory city, state or state code", () => {
     expect(codes.every((code) => STATE_NAMES[code]), "every territory state has a name to check").toBe(true);
-    for (const term of [...metros.map((metro) => metro.city), ...codes, ...codes.map((code) => STATE_NAMES[code] ?? code)]) {
-      expect(ROUTER_SYSTEM_PROMPT, term).not.toMatch(wholeWord(term));
+    for (const [name, prompt] of Object.entries(PROMPTS)) {
+      for (const term of [...metros.map((metro) => metro.city), ...codes.map((code) => STATE_NAMES[code] ?? code)]) {
+        expect(prompt, `${name}: ${term}`).not.toMatch(wholeWord(term));
+      }
+      for (const code of codes) {
+        expect(prompt, `${name}: ${code}`).not.toMatch(stateCode(code));
+      }
+    }
+    // The router's prompt never had a state code in any case.
+    for (const code of codes) {
+      expect(ROUTER_SYSTEM_PROMPT, code).not.toMatch(wholeWord(code));
     }
   });
 
-  it("uses no ICP location bound in an example range", () => {
+  it("no prompt uses an ICP location bound in an example range", () => {
     const { minLocations: min, maxLocations: max } = TEMPO_ICP;
-    expect(ROUTER_SYSTEM_PROMPT).not.toMatch(new RegExp(`\\b${min}\\s*(?:and|to|-|–)\\s*\\d+\\b`));
-    expect(ROUTER_SYSTEM_PROMPT).not.toMatch(new RegExp(`\\b\\d+\\s*(?:and|to|-|–)\\s*${max}\\b`));
-    expect(ROUTER_SYSTEM_PROMPT).not.toMatch(new RegExp(`\\bgte ${min}\\b|\\blte ${max}\\b`));
+    for (const [name, prompt] of Object.entries(PROMPTS)) {
+      expect(prompt, name).not.toMatch(new RegExp(`\\b${min}\\s*(?:and|to|-|–)\\s*\\d+\\b`));
+      expect(prompt, name).not.toMatch(new RegExp(`\\b\\d+\\s*(?:and|to|-|–)\\s*${max}\\b`));
+      expect(prompt, name).not.toMatch(new RegExp(`\\bgte ${min}\\b|\\blte ${max}\\b`));
+    }
+  });
+
+  it("the opening prompt's example is neutral (it used to name a dental group in Colorado)", () => {
+    expect(OPENING_SYSTEM_PROMPT).toContain('(for example "Four fitness studios in Texas offer online booking.")');
+    expect(OPENING_SYSTEM_PROMPT).not.toContain("dental");
   });
 
   it("keeps the neutral examples, each with the same field and op as before", () => {
@@ -483,5 +513,83 @@ describe("follow-ups", () => {
       earlierQuestions: [],
       shownLines: new Map(),
     });
+  });
+});
+
+describe("English, read from the words (typos aren't another language)", () => {
+  it("two different common English function words make it English", () => {
+    for (const text of [
+      "comoare the 3 only for locations",
+      "which ones have online boookinh?",
+      "waht is the budegt for them?",
+      "tell me about them",
+    ]) {
+      expect(hasEnglishFunctionWords(text), text).toBe(true);
+    }
+  });
+
+  it("one, none, or another language is not enough", () => {
+    for (const text of ["¿Qué software usan?", "me gustaría saber más", "budget", "locations?", "", "Quel logiciel utilisent-ils ?"]) {
+      expect(hasEnglishFunctionWords(text), text).toBe(false);
+    }
+  });
+});
+
+describe("compare, read from the words", () => {
+  it("'compare', a one-letter typo of it, 'comparison', 'vs' / 'versus' and 'side by side'", () => {
+    for (const text of [
+      "just compare the signals for the 3",
+      "comoare the 3 only for locations",
+      "compre them",
+      "comapre these",
+      "How do they compare?",
+      "a comparison of the two",
+      "Summit vs Falcon",
+      "show them side by side",
+      "side-by-side please",
+    ]) {
+      expect(isCompareRequest(text), text).toBe(true);
+    }
+  });
+
+  it("other questions are not ('company', 'compete', 'companies' are other words)", () => {
+    for (const text of ["What are their risks?", "company size?", "who do they compete with?", "which companies have online booking?", "tell me about them"]) {
+      expect(isCompareRequest(text), text).toBe(false);
+    }
+  });
+});
+
+describe("sort (list questions)", () => {
+  it("one prompt line, with neutral examples", () => {
+    expect(ROUTER_SYSTEM_PROMPT).toContain(
+      'sort (list questions only; otherwise null): {"field": "locations" | "name", "direction": "asc" | "desc"} when the question asks for an order, for example "fewest locations first" is {"field": "locations", "direction": "asc"} and "sort by name, Z to A" is {"field": "name", "direction": "desc"}; a request to show the previous list again in another order is filter_list with that sort.'
+    );
+    expect(ROUTER_SYSTEM_PROMPT).toContain('"sort": object | null');
+  });
+
+  it("a valid sort is kept; anything else is left out (A–Z); it never changes the rest of the decision", () => {
+    const base = { intent: "filter_list", topic: null, attribute: null, filters: [{ field: "state", op: "eq", value: "TX" }], criteria_count: 1, confidence: "high" };
+    expect(parseRouterReply(reply({ ...base, sort: { field: "locations", direction: "asc" } }), "all").sort).toEqual({
+      field: "locations",
+      direction: "asc",
+    });
+    expect(parseRouterReply(reply({ ...base, sort: { field: "name", direction: "descending" } }), "all").sort).toEqual({
+      field: "name",
+      direction: "desc",
+    });
+    expect(parseRouterReply(reply({ ...base, sort: { field: "locations" } }), "all").sort).toEqual({ field: "locations", direction: "asc" });
+    for (const sort of [null, { field: "fit", direction: "desc" }, { field: "locations", direction: "sideways" }, "locations", []]) {
+      const decision = parseRouterReply(reply({ ...base, sort }), "all");
+      expect(decision, JSON.stringify(sort)).not.toHaveProperty("sort");
+      expect(decision.filters).toEqual([{ field: "state", op: "eq", value: "TX" }]);
+    }
+  });
+
+  it("All companies: a filter_list with only a sort is used even at low confidence (a re-sort request)", () => {
+    const decision = parseRouterReply(
+      reply({ intent: "filter_list", topic: null, attribute: null, filters: null, criteria_count: 0, sort: { field: "locations", direction: "desc" }, confidence: "low" }),
+      "all"
+    );
+    expect(decision).toMatchObject({ intent: "filter_list", filters: null, sort: { field: "locations", direction: "desc" } });
   });
 });

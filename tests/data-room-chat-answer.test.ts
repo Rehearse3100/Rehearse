@@ -185,6 +185,16 @@ describe("the compare table (layout 'compare')", () => {
     expect(markup.match(/>—</g)?.length).toBeGreaterThanOrEqual(5);
   });
 
+  it("a compare limited to some details shows only those rows (plus the company headers)", () => {
+    const markup = html(React.createElement(CompareTable, { items: [SUMMIT, NORTHVIEW], rows: ["locations"] }));
+    const labels = Array.from(markup.matchAll(/<th scope="row"[^>]*>([^<]*)<\/th>/g), (match) => match[1]);
+    expect(labels).toEqual(["Locations"]);
+    expect(markup).toContain(">Summit Dental Group<");
+    expect(markup).toContain(">Northview Family Dentistry<");
+    const two = html(React.createElement(DataRoomChatAnswer, { answer: { intro: "", layout: "compare", compareRows: ["signals", "industry"], items: [SUMMIT, NORTHVIEW] } }));
+    expect(Array.from(two.matchAll(/<th scope="row"[^>]*>([^<]*)<\/th>/g), (match) => match[1])).toEqual(["Industry", "Signals"]);
+  });
+
   it("the label column stays fixed while the companies scroll sideways; the hint only once it overflows", () => {
     const markup = html(React.createElement(CompareTable, { items: [SUMMIT, NORTHVIEW] }));
     expect(markup).toContain("overflow-x-auto");

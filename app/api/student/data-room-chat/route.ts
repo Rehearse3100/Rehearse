@@ -22,11 +22,16 @@
  * Flow: unselected-company mention or company-names question → server
  * reply; otherwise a router call (lib/data-room-chat-router.ts; sees only the
  * redacted question, recent questions and scope kind) labels the question; an
- * "inappropriate" label gets the moderation reply. All companies: no model picks or
+ * "inappropriate" label gets the moderation reply; a "not English" label is ignored
+ * when the message holds two common English function words (typos). A "compare …",
+ * "side by side" or "vs" question about 2–3 companies is a compare (only the rows it
+ * names, if any). All companies: no model picks or
  * reads company data — the question's validated conditions (no limit) run over the
  * roster in code and every match is listed under the count line; a count question
  * with no conditions gets the roster total; an answer-key question its own reply;
- * anything else a fixed reply (lib/data-room-chat-filter.ts). An answer-key question
+ * anything else a fixed reply (lib/data-room-chat-filter.ts); a list can be sorted
+ * by locations or name, and "give this again, by locations" re-sorts the previous
+ * list's companies (all its conditions kept). An answer-key question
  * about open companies gets the public overview under "I can't share hidden or
  * internal information. Here's what's public:".
  * One to three companies: the code-side policy (lib/data-room-chat-policy.ts)
@@ -52,7 +57,12 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { requireStudentApi } from "@/lib/api-auth";
-import { answerAllCompanies, type FilterCompany } from "@/lib/data-room-chat-filter";
+import {
+  answerAllCompanies,
+  parsePreviousListIds,
+  refersToPreviousList,
+  type FilterCompany,
+} from "@/lib/data-room-chat-filter";
 import { allowedFacts, BROAD_QUESTION_TOPICS } from "@/lib/data-room-chat-policy";
 import {
   allowedFindings,
@@ -63,6 +73,7 @@ import {
   buildOpeningMessages,
   buildSelectionMessages,
   checkOpening,
+  compareRowsFor,
   hasFacts,
   isNoFactAnswersReply,
   needsOpening,
@@ -93,6 +104,8 @@ import {
 } from "@/lib/data-room-chat-guard";
 import {
   buildRouterMessages,
+  hasEnglishFunctionWords,
+  isCompareRequest,
   isFollowUpQuestion,
   OVERVIEW_DECISION,
   parseFollowUpContext,
@@ -163,6 +176,14 @@ const SELECTION_MAX_TOKENS = 500;
 const OPENING_TEMPERATURE = 0.3;
 /** Room for one sentence of at most 30 words, in JSON. */
 const OPENING_MAX_TOKENS = 100;
+
+/** Router labels a compare request about 2–3 companies replaces (never meta, off-topic or refused). */
+const COMPARE_OVERRIDABLE_INTENTS: ReadonlySet<RouterDecision["intent"]> = new Set<RouterDecision["intent"]>([
+  "overview",
+  "attribute_lookup",
+  "specific_research",
+  "filter_list",
+]);
 
 /** A broad question topic (risks, fit, recent changes): the policy's list, whose findings it caps. */
 function isBroadTopic(topic: RouterDecision["topic"]): boolean {
@@ -511,17 +532,21 @@ export async function POST(request: Request): Promise<NextResponse> {
     // call: every All-companies answer has its own first line.
     if (scope.mode === "all") {
       const { decision, english } = await classifyQuestion(openai, routerMessages, scopeKind);
-      if (!english) {
+      // Two common English function words make it English whatever the router says (typos).
+      if (!english && !hasEnglishFunctionWords(newMessage)) {
         return NextResponse.json(guardReply("notEnglish"));
       }
       if (decision.intent === "inappropriate") {
         return NextResponse.json(guardReply("flagged"));
       }
-      return NextResponse.json(answerAllCompanies(decision, roster.map(toListCompany)));
+      // "Give this again, by locations": the previous list's companies (every one of
+      // its conditions), re-sorted; only when the question points back at that list.
+      const previousListIds = refersToPreviousList(newMessage) ? parsePreviousListIds(body.history) : [];
+      return NextResponse.json(answerAllCompanies(decision, roster.map(toListCompany), previousListIds));
     }
 
     // One to three companies: the router runs alongside the data loads.
-    const [{ decision, english }, researchResult, contactsResult] = await Promise.all([
+    const [{ decision: routed, english }, researchResult, contactsResult] = await Promise.all([
       classifyQuestion(openai, routerMessages, scopeKind),
       singleCompanyId
         ? supabase
@@ -537,15 +562,22 @@ export async function POST(request: Request): Promise<NextResponse> {
         .in("company_id", scopedIds),
     ]);
 
-    // The router says the question isn't in English (high confidence): fixed reply.
-    if (!english) {
+    // The router says the question isn't in English (high confidence): fixed reply,
+    // unless two common English function words show it is English with typos.
+    if (!english && !hasEnglishFunctionWords(newMessage)) {
       return NextResponse.json(guardReply("notEnglish"));
     }
     // Inappropriate (sexual or romantic, looks, someone's personal life, insults):
     // the moderation reply, with no research and no opening.
-    if (decision.intent === "inappropriate") {
+    if (routed.intent === "inappropriate") {
       return NextResponse.json(guardReply("flagged"));
     }
+    // "Compare …", "side by side", "vs" about 2–3 companies is a compare, whatever
+    // label the router chose (never over an answer-key, off-topic or refused question).
+    const decision: RouterDecision =
+      scope.companyIds.length >= 2 && isCompareRequest(openingQuestion) && COMPARE_OVERRIDABLE_INTENTS.has(routed.intent)
+        ? { ...routed, intent: "compare", topic: null, attribute: null, exactValue: false }
+        : routed;
 
     if (researchResult?.error) {
       console.error("[data-room-chat] research facts", researchResult.error);
@@ -681,9 +713,14 @@ export async function POST(request: Request): Promise<NextResponse> {
           answer = { ...answer, intro: META_PUBLIC_INTRO };
         }
         // Compare about 2–3 companies: the same overviews, with card values and signals
-        // for the side-by-side table (the text stays the fallback).
+        // for the side-by-side table (the text stays the fallback); only the rows the
+        // question names ("only for locations"), or every row when it names none.
         if (decision.intent === "compare") {
-          answer = withCompareLayout(answer, companies.map((company) => company.source));
+          answer = withCompareLayout(
+            answer,
+            companies.map((company) => company.source),
+            compareRowsFor(openingQuestion)
+          );
         }
       }
     }

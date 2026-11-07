@@ -14,7 +14,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
-import type { AnswerCard, AnswerLayout, ScopedAnswerItem } from "@/lib/data-room-chat-scope";
+import type { AnswerCard, AnswerLayout, CompareRowKey, ScopedAnswerItem } from "@/lib/data-room-chat-scope";
 
 /** A result table with this many rows or more scrolls inside the reply (sticky header). */
 export const TABLE_SCROLL_FROM_ROWS = 11;
@@ -28,6 +28,8 @@ export type ChatAnswer = {
   intro: string;
   items: readonly ScopedAnswerItem[];
   layout?: AnswerLayout;
+  /** A compare limited to some details: only these rows (missing or empty → every row). */
+  compareRows?: readonly CompareRowKey[];
   isError?: boolean;
 };
 
@@ -151,18 +153,25 @@ function useHorizontalOverflow(ref: React.RefObject<HTMLElement>): boolean {
   return isOverflowing;
 }
 
-type CompareRow = { label: string; isMono?: boolean; value: (item: ScopedAnswerItem, card: AnswerCard) => React.ReactNode };
+type CompareRow = {
+  key: CompareRowKey;
+  label: string;
+  isMono?: boolean;
+  value: (item: ScopedAnswerItem, card: AnswerCard) => React.ReactNode;
+};
 
 const COMPARE_ROWS: readonly CompareRow[] = [
-  { label: "Industry", value: (_item, card) => card.industry || MISSING },
-  { label: "Locations", isMono: true, value: (_item, card) => card.locations ?? MISSING },
-  { label: "City", value: (_item, card) => card.metro || MISSING },
-  { label: "Territory", value: (_item, card) => territoryLabel(card) ?? MISSING },
+  { key: "industry", label: "Industry", value: (_item, card) => card.industry || MISSING },
+  { key: "locations", label: "Locations", isMono: true, value: (_item, card) => card.locations ?? MISSING },
+  { key: "city", label: "City", value: (_item, card) => card.metro || MISSING },
+  { key: "territory", label: "Territory", value: (_item, card) => territoryLabel(card) ?? MISSING },
   {
+    key: "online_booking",
     label: "Online booking",
     value: (_item, card) => (card.onlineBooking === null ? MISSING : card.onlineBooking ? "Yes" : "No"),
   },
   {
+    key: "signals",
     label: "Signals",
     value: (item) =>
       item.signals && item.signals.length > 0 ? (
@@ -184,11 +193,19 @@ const COMPARE_ROWS: readonly CompareRow[] = [
 
 /**
  * Two or three companies side by side: a label column on the left (Industry,
- * Locations, City, Territory, Online booking, Signals) and one column per company.
+ * Locations, City, Territory, Online booking, Signals; only the rows asked for when
+ * the question named some) and one column per company.
  * Wider than the reply → it scrolls sideways with the label column fixed, and the
  * hint "← Scroll horizontally to compare columns" shows (only then).
  */
-export function CompareTable({ items }: { items: readonly ScopedAnswerItem[] }): React.ReactElement {
+export function CompareTable({
+  items,
+  rows = [],
+}: {
+  items: readonly ScopedAnswerItem[];
+  rows?: readonly CompareRowKey[];
+}): React.ReactElement {
+  const shownRows = rows.length > 0 ? COMPARE_ROWS.filter((row) => rows.includes(row.key)) : COMPARE_ROWS;
   const scrollRef = useRef<HTMLDivElement>(null);
   const isOverflowing = useHorizontalOverflow(scrollRef);
   const minWidth = COMPARE_LABEL_COLUMN_PX + COMPARE_COMPANY_COLUMN_PX * items.length;
@@ -221,8 +238,8 @@ export function CompareTable({ items }: { items: readonly ScopedAnswerItem[] }):
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant text-[12px]">
-              {COMPARE_ROWS.map((row) => (
-                <tr key={row.label}>
+              {shownRows.map((row) => (
+                <tr key={row.key}>
                   <th
                     scope="row"
                     className="sticky left-0 z-10 bg-surface py-1.5 px-2.5 text-[11px] font-semibold text-on-surface-variant border-r border-outline-variant align-top"
@@ -275,7 +292,7 @@ export function DataRoomChatAnswer({ answer }: { answer: ChatAnswer }): React.Re
         </p>
       ) : null}
       {layout === "table" ? <ResultTable items={answer.items} /> : null}
-      {layout === "compare" ? <CompareTable items={answer.items} /> : null}
+      {layout === "compare" ? <CompareTable items={answer.items} rows={answer.compareRows} /> : null}
       {layout === "list"
         ? answer.items.map((item) => (
             <div key={item.companyId}>

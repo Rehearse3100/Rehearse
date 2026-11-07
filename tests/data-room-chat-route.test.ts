@@ -586,10 +586,11 @@ describe("specific research and the selection call", () => {
   it("no company name reaches a selection call; names in the question become refs", async () => {
     state.classify.mockResolvedValue(routerReply("specific_research", "risks"));
     state.create.mockResolvedValue(selection([]));
-    await ask({ scope: TWO, newMessage: "What are Summit Dental Group's risks compared with Falcon Market?" });
+    // 2026-11-06: worded without "compared", which now routes to compare (no selection call).
+    await ask({ scope: TWO, newMessage: "What are Summit Dental Group's risks, and Falcon Market's?" });
     await ask({ scope: ONE });
 
-    expect(selectionMessages(0)[1]?.content.split("\n")[0]).toBe("Question: What are [C1]'s risks compared with [C2]?");
+    expect(selectionMessages(0)[1]?.content.split("\n")[0]).toBe("Question: What are [C1]'s risks, and [C2]'s?");
     for (const call of [0, 1]) {
       const sent = JSON.stringify(selectionMessages(call)).toLowerCase();
       for (const name of ALL_NAMES) {
@@ -1436,6 +1437,121 @@ describe("chat pane fields: tables and the search-all suggestion", () => {
     expect(await ask({ scope: TWO, newMessage: "Tell me about them" })).not.toHaveProperty("layout");
     // A company-names answer stays a list.
     expect(await ask({ scope: ALL, newMessage: "tell me about companies starting with s" })).not.toHaveProperty("layout");
+  });
+});
+
+describe("testing fixes: typos, sorting, compare rows, scope after lists", () => {
+  const THREE = { mode: "companies", companyIds: ["summit-dental", "falcon", "maple"] };
+  const notEnglishRouter = (intent: string): ReturnType<typeof modelReply> =>
+    modelReply({ intent, topic: null, attribute: null, english: false, confidence: "high" });
+
+  it("'comoare the 3 only for locations' (router says not English) → a compare of the 3, Locations row only — not 'Please ask in English.'", async () => {
+    state.classify.mockResolvedValueOnce(notEnglishRouter("overview"));
+    const reply = (await ask({ scope: THREE, newMessage: "comoare the 3 only for locations" })) as {
+      intro: string;
+      layout?: string;
+      compareRows?: string[];
+      items: unknown[];
+    };
+    expect(reply.intro).not.toBe(guardReply("notEnglish").intro);
+    expect(reply.layout).toBe("compare");
+    expect(reply.compareRows).toEqual(["locations"]);
+    expect(reply.items).toHaveLength(3);
+  });
+
+  it("a message in another language still gets 'Please ask in English.' (both modes)", async () => {
+    state.classify.mockResolvedValueOnce(notEnglishRouter("overview"));
+    expect(await ask({ scope: ONE, newMessage: "¿Qué software usan?" })).toEqual(guardReply("notEnglish"));
+    state.classify.mockResolvedValueOnce(notEnglishRouter("filter_list"));
+    expect(await ask({ scope: ALL, newMessage: "¿Cuáles usan reservas?" })).toEqual(guardReply("notEnglish"));
+    // All companies with typos: answered.
+    state.classify.mockResolvedValueOnce(
+      modelReply({ intent: "filter_list", filters: [{ field: "state", op: "eq", value: "ID" }], criteria_count: 1, english: false, confidence: "high" })
+    );
+    expect(((await ask({ scope: ALL, newMessage: "whcih are in the state of idaho" })) as { intro: string }).intro).toBe("1 company matches.");
+  });
+
+  it("the real sort case: 'which are in colorado' → 'more than 6?' → 'give this again but in increasing order of loc' keeps Colorado", async () => {
+    state.roster = [
+      ...ROSTER,
+      { ...ROSTER[0], id: "peak", company_name: "Peak Clinics", locations: 7, metro: "Denver, CO", blurb: null, public_signals: [] },
+      { ...ROSTER[0], id: "basin", company_name: "Basin Health", locations: 9, metro: "Boise, ID", in_territory: false, blurb: null, public_signals: [] },
+    ];
+    const history = [
+      { role: "user", content: "which are in colorado", scope: ALL },
+      { role: "assistant", intro: "6 companies match.", items: [{ companyId: "summit-dental", text: "…" }], scope: ALL },
+      { role: "user", content: "more than 6?", scope: ALL },
+      {
+        role: "assistant",
+        intro: "2 companies match.",
+        items: [
+          { companyId: "peak", text: "Dental · 7 locations · Denver, CO" },
+          { companyId: "summit-dental", text: "Dental · 8 locations · Front Range, CO" },
+        ],
+        scope: ALL,
+      },
+    ];
+    // The router rebuilds only the latest condition (Colorado dropped), plus the order.
+    const resortReply = (): ReturnType<typeof modelReply> =>
+      modelReply({
+        intent: "filter_list",
+        filters: [{ field: "locations", op: "gt", value: 6 }],
+        criteria_count: 1,
+        sort: { field: "locations", direction: "asc" },
+        confidence: "high",
+      });
+    state.classify.mockResolvedValueOnce(resortReply());
+    const names = (reply: unknown): string[] => (reply as { items: Array<{ companyName: string }> }).items.map((item) => item.companyName);
+    const reply = (await ask({ scope: ALL, newMessage: "give this again but in increasing order of loc", history })) as { intro: string };
+    expect(reply.intro).toBe("2 companies match.");
+    expect(names(reply)).toEqual(["Peak Clinics", "Summit Dental Group"]);
+
+    // A sort request that doesn't point back at the list uses the router's conditions as before.
+    state.classify.mockResolvedValueOnce(resortReply());
+    expect(names(await ask({ scope: ALL, newMessage: "more than 6 locations, fewest first", history }))).toEqual([
+      "Peak Clinics",
+      "Summit Dental Group",
+      "Basin Health",
+    ]);
+  });
+
+  it("'just compare the signals for the 3' (router said overview) → the compare table, Signals row only, no selection call", async () => {
+    state.classify.mockResolvedValueOnce(routerReply("overview"));
+    const reply = (await ask({ scope: THREE, newMessage: "just compare the signals for the 3" })) as {
+      layout?: string;
+      compareRows?: string[];
+      items: Array<{ companyName: string; signals?: string[] }>;
+    };
+    expect(reply.layout).toBe("compare");
+    expect(reply.compareRows).toEqual(["signals"]);
+    expect(reply.items.map((item) => item.companyName)).toEqual(["Summit Dental Group", "Falcon Market", "Maple Family Dentistry"]);
+    expect(reply.items[0]?.signals).toEqual(["Opened 8th location three months ago"]);
+    expect(state.create).not.toHaveBeenCalled();
+  });
+
+  it("'side by side' and 'compare' with no detail named → every row; a router label of attribute or research becomes compare too", async () => {
+    state.classify.mockResolvedValueOnce(routerReply("attribute_lookup", null, "locations"));
+    const sideBySide = (await ask({ scope: TWO, newMessage: "show them side by side" })) as Record<string, unknown>;
+    expect(sideBySide.layout).toBe("compare");
+    expect(sideBySide).not.toHaveProperty("compareRows");
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "risks"));
+    expect(((await ask({ scope: TWO, newMessage: "compare these two" })) as { layout?: string }).layout).toBe("compare");
+    expect(state.create).not.toHaveBeenCalled();
+  });
+
+  it("never over one company, an answer-key, off-topic or refused question", async () => {
+    state.classify.mockResolvedValueOnce(routerReply("overview"));
+    expect(await ask({ scope: ONE, newMessage: "compare it to the others" })).not.toHaveProperty("layout");
+    state.classify.mockResolvedValueOnce(routerReply("meta_or_bulk"));
+    expect(((await ask({ scope: TWO, newMessage: "compare their hidden findings" })) as { intro: string }).intro).toBe(META_PUBLIC_INTRO);
+    state.classify.mockResolvedValueOnce(routerReply("off_topic"));
+    expect(await ask({ scope: TWO, newMessage: "compare the weather there" })).toEqual({ intro: OFF_TOPIC_REPLY, items: [] });
+  });
+
+  it("'which ones have online boookinh?' about one company (filter_list) offers Search all companies", async () => {
+    state.classify.mockResolvedValueOnce(routerReply("filter_list"));
+    state.create.mockResolvedValueOnce(selection(["C1:p:online_booking"]));
+    expect(await ask({ scope: ONE, newMessage: "which ones have online boookinh?" })).toMatchObject({ suggestAllCompanies: true });
   });
 });
 

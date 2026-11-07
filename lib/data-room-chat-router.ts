@@ -8,7 +8,10 @@
  * conditions the question asks for (a locations range is one; validated by
  * lib/data-room-chat-filter.ts); in All companies mode valid
  * filters are used even when the router is unsure. The reply also says whether the
- * question is in English (parseRouterEnglish). Follow-ups ("tell me more", "more
+ * question is in English (parseRouterEnglish; a message with two common English
+ * function words counts as English whatever it says, hasEnglishFunctionWords) and, for
+ * a list, the order it asks for (sort: locations or name). "Compare …", "side by
+ * side" and "vs" are read in code (isCompareRequest). Follow-ups ("tell me more", "more
  * about that") about the same 1–3 companies are recognised in code
  * (isFollowUpQuestion) and routed as the earlier question they follow
  * (parseFollowUpContext reads it, and the lines its answer showed, from the
@@ -17,7 +20,7 @@
  * allowed facts and lib/data-room-chat-render.ts into the answer path.
  */
 
-import { parseRosterFilters, type RosterFilter } from "@/lib/data-room-chat-filter";
+import { parseRosterFilters, parseRosterSort, type RosterFilter, type RosterSort } from "@/lib/data-room-chat-filter";
 import {
   FACT_TOPIC_DESCRIPTIONS,
   QUESTION_TOPICS,
@@ -62,6 +65,8 @@ export type RouterDecision = {
   criteriaCount: number | null;
   /** The question asks for one specific detail (a number, amount, count, email or phone, a named vendor or product). */
   exactValue: boolean;
+  /** The order a list question asks for (by locations or name); omitted when it asks for none (A–Z). */
+  sort?: RosterSort;
 };
 
 /** What every unclear or invalid classification becomes: public facts only. */
@@ -103,7 +108,7 @@ const TOPIC_LIST = QUESTION_TOPICS.map(
 /** The classifier's instructions (it never sees company data). */
 export const ROUTER_SYSTEM_PROMPT = [
   "You classify one question a student asks while researching companies in a sales-training Data Room. You never see any company information, only the question. Reply with a single JSON object and nothing else:",
-  '{"intent": string, "topic": string | null, "attribute": string | null, "filters": object[] | null, "criteria_count": number, "exact_value": boolean, "english": boolean, "confidence": "high" | "low"}',
+  '{"intent": string, "topic": string | null, "attribute": string | null, "filters": object[] | null, "criteria_count": number, "sort": object | null, "exact_value": boolean, "english": boolean, "confidence": "high" | "low"}',
   "",
   "intent (pick one):",
   '- overview: a general or open-ended question about the company or companies ("tell me about them", "what should I know?", "tell me everything", "summarize").',
@@ -128,6 +133,8 @@ export const ROUTER_SYSTEM_PROMPT = [
   "If any condition is about anything else (for example software, budget, staffing, reviews, risks or fit), use null.",
   "",
   'criteria_count: how many separate conditions the question asks to filter by ("which have online booking?" is 1; "fitness studios in Phoenix" is 2; a number-of-locations range counts as one condition, so "with 5 to 8 locations" is 1; 0 when it filters by nothing, as in "how many companies are there?", which is filter_list with criteria_count 0).',
+  "",
+  'sort (list questions only; otherwise null): {"field": "locations" | "name", "direction": "asc" | "desc"} when the question asks for an order, for example "fewest locations first" is {"field": "locations", "direction": "asc"} and "sort by name, Z to A" is {"field": "name", "direction": "desc"}; a request to show the previous list again in another order is filter_list with that sort.',
   "",
   "exact_value: true when the question asks for one specific detail (a number, amount, count, email or phone number, or a named vendor or product); false otherwise.",
   "",
@@ -193,7 +200,9 @@ function isOneOf<T extends string>(values: readonly T[], value: unknown): value 
  * "filter", read as a one-item list; no limit on how many); any condition the
  * whitelist can't read makes them null (an All-companies question then gets the
  * fixed reply); a criteria count that isn't a whole number of 0 or more (as a number or
- * numeric string) becomes null. exact_value is true only when it is exactly true.
+ * numeric string) becomes null. exact_value is true only when it is exactly true. A
+ * valid "sort" (locations or name, asc or desc; parseRosterSort) is kept as sort;
+ * anything else leaves it out (A–Z).
  */
 export function parseRouterReply(raw: string | null | undefined, scopeKind?: ScopeKind): RouterDecision {
   let parsed: unknown;
@@ -212,12 +221,15 @@ export function parseRouterReply(raw: string | null | undefined, scopeKind?: Sco
     filters: rawFilters,
     filter: rawFilter,
     criteria_count: criteriaCount,
+    sort: rawSort,
     exact_value: exactValue,
     confidence,
   } = parsed as Record<string, unknown>;
   const filters = parseRosterFilters(rawFilters, rawFilter);
-  // All companies only: valid filters are used even when the router is unsure.
-  const isTrusted = confidence === "high" || (scopeKind === "all" && intent === "filter_list" && filters !== null);
+  const sort = parseRosterSort(rawSort);
+  // All companies only: valid filters (or a valid sort) are used even when the router is unsure.
+  const isTrusted =
+    confidence === "high" || (scopeKind === "all" && intent === "filter_list" && (filters !== null || sort !== null));
   // filter_list never uses topic or attribute, so a stray value there doesn't sink the filters.
   const isStrict = intent !== "filter_list";
   if (
@@ -236,6 +248,7 @@ export function parseRouterReply(raw: string | null | undefined, scopeKind?: Sco
     filters,
     criteriaCount: Number.isInteger(count) && (count as number) >= 0 ? (count as number) : null,
     exactValue: exactValue === true,
+    ...(sort ? { sort } : {}),
   };
   return decision.intent === "specific_research" && decision.topic === null
     ? OVERVIEW_DECISION
@@ -258,6 +271,99 @@ export function parseRouterEnglish(raw: string | null | undefined): boolean {
   } catch {
     return true;
   }
+}
+
+// ── English, read from the words ───
+
+/** Common English function words: two different ones in a message make it English, typos and all. */
+const ENGLISH_FUNCTION_WORDS: ReadonlySet<string> = new Set([
+  "the", "for", "only", "and", "of", "to", "in", "with", "on", "at", "by", "from", "or", "than",
+  "what", "which", "who", "where", "when", "why", "how",
+  "do", "does", "is", "are", "was", "were", "be", "have", "has", "can",
+  "they", "them", "their", "it", "its", "me", "you", "this", "that", "these", "those", "there",
+  "about", "any",
+]);
+
+/** How many different English function words make a message English whatever the router says. */
+export const MIN_ENGLISH_FUNCTION_WORDS = 2;
+
+/**
+ * True when the message holds at least two different common English function words
+ * ("comoare the 3 only for locations": the, only, for). A typo-heavy English question
+ * then never gets "Please ask in English." because the router misread it. The
+ * non-Latin script check runs before this and is unchanged.
+ */
+export function hasEnglishFunctionWords(text: string): boolean {
+  const words = new Set(text.toLowerCase().replace(/['’]/g, "").split(/[^a-z]+/).filter((word) => word.length > 0));
+  let found = 0;
+  words.forEach((word) => {
+    if (ENGLISH_FUNCTION_WORDS.has(word)) {
+      found += 1;
+    }
+  });
+  return found >= MIN_ENGLISH_FUNCTION_WORDS;
+}
+
+// ── Compare, read from the words ───
+
+/** True when the two words differ by at most one letter added, dropped, changed or swapped with its neighbour. */
+function isOneEditAway(word: string, target: string): boolean {
+  if (word === target) {
+    return true;
+  }
+  if (Math.abs(word.length - target.length) > 1) {
+    return false;
+  }
+  if (word.length === target.length) {
+    const diffs: number[] = [];
+    for (let i = 0; i < word.length; i += 1) {
+      if (word[i] !== target[i]) {
+        diffs.push(i);
+      }
+    }
+    if (diffs.length === 1) {
+      return true;
+    }
+    const [first, second] = diffs;
+    return (
+      diffs.length === 2 &&
+      first !== undefined &&
+      second === first + 1 &&
+      word[first] === target[second] &&
+      word[second] === target[first]
+    );
+  }
+  const [shorter, longer] = word.length < target.length ? [word, target] : [target, word];
+  for (let i = 0; i < longer.length; i += 1) {
+    if (longer.slice(0, i) + longer.slice(i + 1) === shorter) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Words of at least this length are checked against "compare" for a one-letter typo ("comoare"). */
+const MIN_COMPARE_TYPO_LETTERS = 6;
+
+/**
+ * True when the question asks to compare: "compare", "compared", "comparison"…
+ * (also with a one-letter typo such as "comoare"), "vs" / "versus", or "side by
+ * side". The route sends such a question about 2–3 companies down the compare path.
+ */
+export function isCompareRequest(text: string): boolean {
+  const lower = text.toLowerCase();
+  if (/\bside[\s-]+by[\s-]+side\b/.test(lower)) {
+    return true;
+  }
+  return lower
+    .split(/[^a-z]+/)
+    .some(
+      (word) =>
+        word === "vs" ||
+        word === "versus" ||
+        word.startsWith("compar") ||
+        (word.length >= MIN_COMPARE_TYPO_LETTERS && isOneEditAway(word, "compare"))
+    );
 }
 
 // ── Follow-ups ───

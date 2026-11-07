@@ -19,16 +19,19 @@
  * (withNothingNewIntro), and so do findings the selection call says don't answer
  * the question (withRelatedFindingsIntro, read with isNoFactAnswersReply). A compare
  * answer about 2–3 companies also carries card values and signals for a side-by-side
- * table (withCompareLayout). Used by POST /api/student/data-room-chat.
+ * table (withCompareLayout), and only the rows the question names ("only for
+ * locations", compareRowsFor). Used by POST /api/student/data-room-chat.
  */
 
 import type { CompanyAllowance } from "@/lib/data-room-chat-policy";
 import type { RouterAttribute, RouterDecision } from "@/lib/data-room-chat-router";
 import {
+  COMPARE_ROW_KEYS,
   redactCompanyMentions,
   textContainsCompanyName,
   toWords,
   type AnswerCard,
+  type CompareRowKey,
   type FirstWordReplacement,
   type ScopedAnswer,
   type ScopeIndex,
@@ -304,13 +307,39 @@ export function compareCard(source: CompanyFactSource): AnswerCard {
   };
 }
 
+/** The words that name each compare row in a question ("only for locations", "just the signals"). */
+const COMPARE_ROW_WORDS: Record<CompareRowKey, RegExp> = {
+  industry: /^(?:industry|industries|vertical|verticals|sector|sectors)$/,
+  locations: /^(?:loc|locs|location|locations)$/,
+  city: /^(?:city|cities|metro|metros)$/,
+  territory: /^(?:territory|territories)$/,
+  online_booking: /^(?:booking|bookings|online)$/,
+  signals: /^(?:signal|signals)$/,
+};
+
+/**
+ * The compare rows a question names, in table order ("compare the 3 only for
+ * locations" → locations; "just the signals" → signals); empty when it names none
+ * or all of them (then every row shows).
+ */
+export function compareRowsFor(question: string): CompareRowKey[] {
+  const words = question.toLowerCase().split(/[^a-z]+/).filter((word) => word.length > 0);
+  const rows = COMPARE_ROW_KEYS.filter((key) => words.some((word) => COMPARE_ROW_WORDS[key].test(word)));
+  return rows.length === COMPARE_ROW_KEYS.length ? [] : rows;
+}
+
 /**
  * A compare answer about two or three companies, shown side by side (layout
  * "compare"): each item also carries its card values and public signals; its text
- * (the overview) stays the fallback. One company, or a company without a source, is
- * left as it is.
+ * (the overview) stays the fallback. rows: the details the question limits it to
+ * (compareRowsFor; empty → every row). One company, or a company without a source,
+ * is left as it is.
  */
-export function withCompareLayout(answer: ScopedAnswer, sources: readonly CompanyFactSource[]): ScopedAnswer {
+export function withCompareLayout(
+  answer: ScopedAnswer,
+  sources: readonly CompanyFactSource[],
+  rows: readonly CompareRowKey[] = []
+): ScopedAnswer {
   if (answer.items.length < 2) {
     return answer;
   }
@@ -321,6 +350,7 @@ export function withCompareLayout(answer: ScopedAnswer, sources: readonly Compan
   return {
     ...answer,
     layout: "compare",
+    ...(rows.length > 0 ? { compareRows: [...rows] } : {}),
     items: answer.items.map((item) => {
       const source = byId.get(item.companyId);
       return source
@@ -468,7 +498,7 @@ export const OPENING_SYSTEM_PROMPT = [
   '{"opening": string}',
   "",
   "Rules:",
-  '- opening: ONE short, friendly sentence (at most 30 words) that introduces the answer. It may summarise what the answer shows (for example "Four dental companies in Colorado offer online booking.").',
+  '- opening: ONE short, friendly sentence (at most 30 words) that introduces the answer. It may summarise what the answer shows (for example "Four fitness studios in Texas offer online booking.").',
   "- Never add a fact, number or detail that isn't in the answer.",
   '- Only say what the facts shown say, in their own words where you can. Never add an action, change, timing or judgment the facts don\'t state (for example "updated", "launched", "recently", "new", "positive" or "strong").',
   '- Lead with the fact that most directly answers the question. When the "Topic:" line says risks, fit or budget, lead with a concern if the answer shows one (an existing contract or vendor, a freeze, a mandate, or something not being what it seems). Never describe a concern as a positive.',
