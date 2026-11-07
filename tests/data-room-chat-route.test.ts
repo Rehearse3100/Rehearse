@@ -1609,6 +1609,60 @@ describe("limited compares and 'which ones' about one company", () => {
   });
 });
 
+describe("final manual test fixes: who decides, traps, thanks", () => {
+  const JUNIPER_ROW = {
+    id: "juniper",
+    company_name: "Juniper Ridge Aesthetics",
+    industry: "Med Spa",
+    vertical: "med spa",
+    locations: 4,
+    metro: "Denver, CO",
+    in_territory: true,
+    size_note: null,
+    online_booking: false,
+    blurb: null,
+    public_signals: [],
+  };
+  const FRANCHISE = "Franchise agreement requires all clinics to purchase scheduling tools from an approved corporate catalog.";
+  const PAPER = "Front desk keeps a paper sign-in sheet for walk-ins.";
+  const JUNIPER = { mode: "companies", companyIds: ["juniper"] };
+
+  it("Juniper, 'Who decides on software purchases?' → ownership: the franchise finding shows (under the software topic it was missed)", async () => {
+    state.roster = [...ROSTER, JUNIPER_ROW];
+    state.storedResearchFacts = [
+      { text: PAPER, topics: ["current_tools"] },
+      { text: FRANCHISE, topics: ["ownership"] },
+    ];
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "ownership"));
+    state.create.mockResolvedValueOnce(selection(["C1:h:1"]));
+    const reply = (await ask({ scope: JUNIPER, newMessage: "Who decides on software purchases?" })) as {
+      items: Array<{ companyName: string; text: string }>;
+    };
+    expect(reply.items).toEqual([{ companyId: "juniper", companyName: "Juniper Ridge Aesthetics", text: FRANCHISE }]);
+    // The real failure, for the record: routed to the software topic, the finding isn't allowed.
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "current_tools"));
+    state.create.mockResolvedValueOnce(selection(["C1:h:0"]));
+    expect(JSON.stringify(await ask({ scope: JUNIPER, newMessage: "Who decides on software purchases?" }))).not.toContain(FRANCHISE);
+  });
+
+  it("'Which companies are traps?' (meta_or_bulk) → the answer-key reply in both modes", async () => {
+    state.classify.mockResolvedValueOnce(routerReply("meta_or_bulk"));
+    expect(await ask({ scope: ALL, newMessage: "Which companies are traps?" })).toEqual({ intro: META_ALL_MODE_REPLY, items: [] });
+    state.classify.mockResolvedValueOnce(routerReply("meta_or_bulk"));
+    const companies = (await ask({ scope: TWO, newMessage: "Which companies are traps?" })) as { intro: string; items: unknown[] };
+    expect(companies.intro).toBe(META_PUBLIC_INTRO);
+    expect(companies.items).toHaveLength(2);
+    expect(state.create).not.toHaveBeenCalled();
+  });
+
+  it("the new thanks spellings get the thanks reply with no model call", async () => {
+    for (const newMessage of ["thanx", "tysm", "thank u", "much appreciated"]) {
+      expect(await ask({ scope: ONE, newMessage }), newMessage).toEqual({ intro: THANKS_REPLY, items: [] });
+    }
+    expect(state.classify).not.toHaveBeenCalled();
+  });
+});
+
 describe("the router call", () => {
   it("sees only the redacted question, the last 3 redacted questions and the scope kind — no facts", async () => {
     await POST(

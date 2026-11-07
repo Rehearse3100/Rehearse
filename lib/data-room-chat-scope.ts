@@ -830,7 +830,20 @@ export const META_PUBLIC_INTRO = "I can't share hidden or internal information. 
 
 /** Whole-message greetings, thanks and small talk, compared with case, spaces, punctuation and emoji removed. */
 const GREETINGS: ReadonlySet<string> = new Set(["hi", "hello", "hey", "hiya", "yo", "goodmorning", "goodafternoon", "goodevening"]);
-const THANKS: ReadonlySet<string> = new Set(["thanks", "thankyou", "thx", "ty", "cheers"]);
+const THANKS: ReadonlySet<string> = new Set([
+  "thanks",
+  "thankyou",
+  "thx",
+  "ty",
+  "cheers",
+  "thanx",
+  "thnx",
+  "tysm",
+  "thanku",
+  "thanksalot",
+  "thankssomuch",
+  "muchappreciated",
+]);
 const SMALL_TALK: ReadonlySet<string> = new Set(["howareyou", "howsitgoing", "whatsup", "sup", "yougood"]);
 const ACKNOWLEDGEMENTS: ReadonlySet<string> = new Set([
   "ok",
@@ -861,7 +874,8 @@ export type GreetingKind = "greeting" | "thanks" | "smallTalk" | "acknowledgemen
 /**
  * The kind of greeting when the whole message, ignoring case, spaces, punctuation
  * and emoji, is just one: "greeting" (hi, hello, hey, hiya, yo, good
- * morning/afternoon/evening), "thanks" (thanks, thank you, thx, ty, cheers),
+ * morning/afternoon/evening), "thanks" (thanks, thank you, thx, ty, cheers, thanx,
+ * thnx, tysm, thank u, thanks a lot, thanks so much, much appreciated),
  * "smallTalk" (how are you, how's it going, what's up, sup, you good),
  * "acknowledgement" (ok, okay, k, sure, cool, got it, great, nice, perfect, alright,
  * sounds good, welcome, yes, yep, no, nope) or "goodbye" (bye, goodbye, see you,

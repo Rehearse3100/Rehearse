@@ -702,3 +702,15 @@ describe("small talk (part 3)", () => {
     expect(GOODBYE_REPLY).toBe("Good luck with your research!");
   });
 });
+
+describe("more thanks spellings", () => {
+  it("thanx, thnx, tysm, thank u, thanks a lot, thanks so much, much appreciated → the thanks reply", () => {
+    for (const text of ["thanx", "Thnx!", "tysm", "thank u", "Thanks a lot!", "thanks so much 🙏", "Much appreciated."]) {
+      expect(parseGreeting(text), text).toBe("thanks");
+      expect(greetingReply(parseGreeting(text) ?? "thanks", { mode: "all" }).intro, text).toBe(THANKS_REPLY);
+    }
+    for (const text of ["thanks, what about their budget?", "thank u for the list, now sort it", "much"]) {
+      expect(parseGreeting(text), text).not.toBe("thanks");
+    }
+  });
+});
