@@ -2,13 +2,14 @@
  * data-room-chat-scope.test.ts
  * Data Room assistant scope helpers: generic words derived from the roster,
  * type-to-pick suggestions, company detection, scope priority on send, request
- * parsing and name redaction, the out-of-scope mention reply, and company-name
- * questions.
+ * parsing and name redaction, the out-of-scope mention reply, company-name
+ * questions, and greetings, thanks and small talk.
  * Fixture roster uses names from the directory generator's real name pools.
  */
 
 import { describe, expect, it } from "vitest";
 import {
+  ACKNOWLEDGEMENT_REPLY,
   buildGenericWords,
   buildOutOfScopeMessage,
   buildRefLabels,
@@ -16,6 +17,7 @@ import {
   detectCompanies,
   findOutOfScopeMentions,
   answerNameQuery,
+  GOODBYE_REPLY,
   GREETING_REPLY_ALL,
   GREETING_REPLY_COMPANIES,
   greetingReply,
@@ -29,6 +31,7 @@ import {
   resolveSendScope,
   SCOPE_NONE_MESSAGE,
   SCOPE_TOO_MANY_MESSAGE,
+  SMALL_TALK_REPLY,
   suggestCompanies,
   textContainsCompanyName,
   THANKS_REPLY,
@@ -636,5 +639,66 @@ describe("greetings and thanks", () => {
       "Hi! I'm your research assistant. Here I can filter every company by industry, city or state, number of locations, territory and online booking. Open a company to research it in depth."
     );
     expect(THANKS_REPLY).toBe("You're welcome! Ask me anything else about these companies.");
+  });
+});
+
+describe("small talk (part 3)", () => {
+  it("each group, as the whole message, ignoring case, spaces, punctuation and emoji", () => {
+    for (const text of ["how are you", "How are you?", "How's it going?", "how’s it going", "what's up", "Whats up!", "sup", "you good?"]) {
+      expect(parseGreeting(text), text).toBe("smallTalk");
+    }
+    for (const text of [
+      "ok",
+      "OK!",
+      "okay",
+      "k",
+      "sure",
+      "cool 😎",
+      "got it",
+      "Got it.",
+      "great",
+      "nice",
+      "perfect",
+      "alright",
+      "sounds good",
+      "welcome",
+      "yes",
+      "yep",
+      "no",
+      "Nope",
+    ]) {
+      expect(parseGreeting(text), text).toBe("acknowledgement");
+    }
+    for (const text of ["bye", "Bye!", "goodbye", "see you", "See you 👋", "later"]) {
+      expect(parseGreeting(text), text).toBe("goodbye");
+    }
+  });
+
+  it("anything longer goes through as a question", () => {
+    for (const text of [
+      "ok what software do they use?",
+      "how are you doing with their budget?",
+      "sure, what about hiring?",
+      "no online booking?",
+      "see you later",
+      "yes please tell me about risks",
+      "great reviews?",
+    ]) {
+      expect(parseGreeting(text), text).toBeNull();
+    }
+  });
+
+  it("the same fixed text in both modes", () => {
+    for (const [kind, intro] of [
+      ["smallTalk", SMALL_TALK_REPLY],
+      ["acknowledgement", ACKNOWLEDGEMENT_REPLY],
+      ["goodbye", GOODBYE_REPLY],
+    ] as const) {
+      expect(greetingReply(kind, { mode: "companies", companyIds: ["a"] })).toEqual({ intro, items: [] });
+      expect(greetingReply(kind, { mode: "all" })).toEqual({ intro, items: [] });
+    }
+    expect(SMALL_TALK_REPLY).toBe("I'm doing well, thanks! What would you like to know about these companies?");
+    expect(ACKNOWLEDGEMENT_REPLY).toBe("Great. What would you like to know next?");
+    expect(GOODBYE_REPLY).toBe("Good luck with your research!");
   });
 });

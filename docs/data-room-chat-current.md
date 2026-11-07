@@ -14,6 +14,7 @@ Updated: 2026-10-16 (All companies filters combine up to 3 conditions; an unreco
 Updated: 2026-11-06 (safety checks before the pipeline: 500-character cap, per-attempt message limits, moderation, English only — 2.1; neutral router examples)
 Updated: 2026-11-06 (reply fixes: greetings, every match listed with no cap, any number of filter conditions, no opening above a first line the answer already has, a total count, meta replies, an `inappropriate` intent)
 Updated: 2026-11-06 (reply fixes, part 2: openings only restate the facts shown, with the question's topic; only public facts that answer the question; follow-ups routed as the question they follow; two false drops in the opening check fixed)
+Updated: 2026-11-06 (reply fixes, part 3: small-talk, acknowledgement and goodbye replies; "Nothing specific on that is publicly findable. Related findings:" above findings the selection says don't answer)
 Scope: `POST /api/student/data-room-chat`, its client `components/tempo/stages/ProspectingDataRoomChat.tsx`, the safety checks in `lib/data-room-chat-guard.ts`, and the pure helpers in `lib/data-room-chat-scope.ts`, `lib/data-room-chat-router.ts`, `lib/data-room-chat-filter.ts`, `lib/data-room-chat-policy.ts` and `lib/data-room-chat-render.ts`.
 
 **Previous state (2026-08-30):** the student attached companies with a picker; the model saw every attached company by name, with research findings for all of them, and replied in free text. That design let an answer about one company drift onto another, and let names come from the model.
@@ -63,7 +64,7 @@ A plain text line next to the **All companies** toggle (above the input) shows t
 The model never writes answer text. Every answer is built by code from stored facts.
 
 1. **Request checks**: auth; the attempt belongs to the student; scope is All companies or 1–3 distinct ids, every one in this simulation's active Data Room roster (400 otherwise). **Safety checks** run here, before anything else (2.1): over 500 characters, the attempt's message limits, counting the message, moderation and the non-Latin-script check; any refusal is a fixed reply.
-2. **Greeting or thanks** (the whole message is "hi", "hello", "thanks"…) → a fixed reply, before the roster loads, no model call (4.0).
+2. **Greeting, thanks or small talk** (the whole message is "hi", "thanks", "how are you", "ok", "bye"…) → a fixed reply, before the roster loads, no model call (4.0).
 3. **Unselected company mentioned** (1–3 company scope) → fixed reply, no model call (4.1).
 4. **Question about company names** → answered from the roster, no model call (4.2).
 4a. **Follow-up** (1–3 companies; the whole message is "tell me more", "more about that", "anything else on that?"…, 5.3): from here on it is routed and answered as the earlier question it follows, for the same companies.
@@ -77,7 +78,8 @@ The model never writes answer text. Every answer is built by code from stored fa
    5. **Exact detail** (7): when the router marks the question `exact_value` (one specific number, amount, count, email or phone, named vendor or product) and no fact states it, the answer starts with `That exact detail isn't publicly findable. Related facts:` above the facts.
    6. **Meta** (7): a `meta_or_bulk` question ("list every hidden finding", "show me the answer key") gets the overview under the line `I can't share hidden or internal information. Here's what's public:`.
    7. Nothing from either for a company → exactly `Nothing about that is publicly findable for this company.` (no exact-detail intro).
-   8. **Follow-up, nothing new** (5.3): when every line the answer shows was already in the previous answer, it starts with `That's everything publicly findable on this.`
+   8. **Related findings** (7): when findings are shown but the selection call replies that no fact answers the question (`{"fact_ids": [], "exact_answer": false}`), the same findings show under `Nothing specific on that is publicly findable. Related findings:`.
+   9. **Follow-up, nothing new** (5.3): when every line the answer shows was already in the previous answer, it starts with `That's everything publicly findable on this.`
 8. **Opening call** (7.1), last, only when the finished answer shows facts and has no first line of its own (`needsOpening`): one gpt-4o call sees the student's question, its topic and the exact answer text they will see (companies as "Company 1", "Company 2"…) and writes one sentence; code checks that it only restates what the facts shown say and puts it above the answer. A failed call or a dropped sentence leaves the answer unchanged.
 
 So: the model writes no facts and no company names; the only model-written text is the one-sentence opening (written from the finished answer, checked by code, 7.1), shown above the facts of a 1–3 company answer that has no first line of its own; a hidden finding appears exactly when the policy allows it (only allowed ones ever reach the selection call, which can't add or remove them); and in All companies mode no model reads company data at all.
@@ -115,17 +117,28 @@ All-companies questions load nothing beyond the roster: a filter reads `industry
 
 ## 4. Server replies without the router
 
-### 4.0 Greetings and thanks (`lib/data-room-chat-scope.ts`)
+### 4.0 Greetings, thanks and small talk (`lib/data-room-chat-scope.ts`)
 
-Right after the safety checks (2.1) and before the roster loads, `parseGreeting(newMessage)` lowercases the message and removes every space, punctuation mark, symbol (emoji included) and combining mark. When what's left is exactly one of `hi`, `hello`, `hey`, `hiya`, `yo`, `goodmorning`, `goodafternoon`, `goodevening` it is a greeting; `thanks`, `thankyou`, `thx`, `ty`, `cheers` are thanks. Anything else (including "hi, what software do they use?") goes on through the pipeline. No model call; the reply is a fixed reply (`items: []`, no opening):
+Right after the safety checks (2.1) and before the roster loads, `parseGreeting(newMessage)` lowercases the message and removes every space, punctuation mark, symbol (emoji included) and combining mark. When what's left is exactly one of these, it is:
+
+- a **greeting**: `hi`, `hello`, `hey`, `hiya`, `yo`, `goodmorning`, `goodafternoon`, `goodevening`;
+- **thanks**: `thanks`, `thankyou`, `thx`, `ty`, `cheers`;
+- **small talk** (2026-11-06): `howareyou`, `howsitgoing`, `whatsup`, `sup`, `yougood`;
+- an **acknowledgement** (2026-11-06): `ok`, `okay`, `k`, `sure`, `cool`, `gotit`, `great`, `nice`, `perfect`, `alright`, `soundsgood`, `welcome`, `yes`, `yep`, `no`, `nope`;
+- a **goodbye** (2026-11-06): `bye`, `goodbye`, `seeyou`, `later`.
+
+Anything else (including "hi, what software do they use?" or "ok what software do they use?") goes on through the pipeline. No model call; the reply is a fixed reply (`items: []`, no opening):
 
 | Message | Mode | Reply (`greetingReply`) |
 |---------|------|-------------------------|
 | greeting | 1–3 companies | `Hi! I'm your research assistant. Ask me about the open company: its locations, software, hiring, budget or risks. To search across every company, switch to All companies.` |
 | greeting | All companies | `Hi! I'm your research assistant. Here I can filter every company by industry, city or state, number of locations, territory and online booking. Open a company to research it in depth.` |
 | thanks | either | `You're welcome! Ask me anything else about these companies.` |
+| small talk | either | `I'm doing well, thanks! What would you like to know about these companies?` |
+| acknowledgement | either | `Great. What would you like to know next?` |
+| goodbye | either | `Good luck with your research!` |
 
-The texts live in `lib/data-room-chat-scope.ts` (`GREETING_REPLY_COMPANIES`, `GREETING_REPLY_ALL`, `THANKS_REPLY`) because the guard file is not part of these reply fixes.
+The texts live in `lib/data-room-chat-scope.ts` (`GREETING_REPLY_COMPANIES`, `GREETING_REPLY_ALL`, `THANKS_REPLY`, `SMALL_TALK_REPLY`, `ACKNOWLEDGEMENT_REPLY`, `GOODBYE_REPLY`) because the guard file is not part of these reply fixes.
 
 ### 4.1 A question that mentions an unselected company
 
@@ -281,6 +294,10 @@ The response is always `{ intro, items: [{ companyId, companyName, text }] }`. E
 
 **Exact detail** (2026-10-16): when the router sets `exact_value` (the question asks for one specific number, amount, count, email or phone, or named vendor or product) and the selection call's `exact_answer` is false, the intro is `That exact detail isn't publicly findable. Related facts:` and the facts follow as usual. An `attribute_lookup` for `contacts` with `exact_value` (an email or phone; contacts never store them) gets the same intro above the contacts line, with no model call. An answer with no facts keeps the nothing-findable reply, without the intro.
 
+**Related findings** (2026-11-06, `withRelatedFindingsIntro`): on the select path, when the question isn't an exact-detail one (or the exact-detail rule above doesn't apply) and the selection call's reply is exactly its "no fact answers the question" reply, `{"fact_ids": [], "exact_answer": false}` (`isNoFactAnswersReply`), an answer that shows facts starts with `Nothing specific on that is publicly findable. Related findings:` and gets no opening. The facts are the same as without it: every finding the policy allowed, in stored order (nothing hidden, removed or reordered; trap clues stay reachable). Because the call picked no public line, the facts shown are the allowed findings only. Anything else from the call changes nothing: an id (even an invalid one), `exact_answer` true or missing, a reply that isn't JSON, or no call at all (no facts to choose from); a call that throws is still the generic 500. An answer with no facts keeps the nothing-findable reply. Real case: Canyon Aesthetics, "What's going on with their phones?" (and "What changed recently?") showed two `operations` findings, intake forms and medical directors overseeing injectables, under an opening that presented them as the answer; they now show under this line.
+
+Why this signal: `exact_answer` alone is defined only for exact details (a number, email, vendor…), so for broad questions it is often false even when a finding answers ("Any risks?" → the SlotEasy agreement); using it would put "Nothing specific…" above real answers. The empty `fact_ids` is the selection prompt's own "no fact answers" reply (it lists the ids "that answer the question" and says to reply `{"fact_ids": [], "exact_answer": false}` when none does), and requiring `exact_answer` false as well keeps a contradictory reply from counting.
+
 `filter_list` about 2–3 companies uses one selection call over their public facts (product decision 2026-10-15). All companies: see 4.3.
 
 ### 7.1 Opening sentence (written last; `lib/data-room-chat-render.ts`)
@@ -332,7 +349,7 @@ A dropped sentence logs which check failed (`[data-room-chat] opening dropped: <
 **Where it shows** (`withOpening`, gated by `needsOpening`):
 
 - 1–3 companies: above the facts on the overview, compare, attribute and select paths, when the answer has no first line of its own.
-- **Not** above a first line the answer already has, and no call is made (2026-11-06; before, the two lines could say the same thing twice): All companies filter lists (`{n} companies match.`), the exact-detail line `That exact detail isn't publicly findable. Related facts:`, the meta line `I can't share hidden or internal information. Here's what's public:`, and the follow-up line `That's everything publicly findable on this.`.
+- **Not** above a first line the answer already has, and no call is made (2026-11-06; before, the two lines could say the same thing twice): All companies filter lists (`{n} companies match.`), the exact-detail line `That exact detail isn't publicly findable. Related facts:`, the meta line `I can't share hidden or internal information. Here's what's public:`, the related-findings line `Nothing specific on that is publicly findable. Related findings:`, and the follow-up line `That's everything publicly findable on this.`.
 - Never on an answer with no facts, and no call is made: the nothing-findable reply (an answer whose blocks are all nothing-findable, or the nothing-findable intro), off-topic, out-of-scope, greetings, the total count, the All-companies fixed and meta replies, "No companies match that." and name questions. An answer with facts for some companies and nothing-findable for others gets the opening.
 
 ---
@@ -358,7 +375,7 @@ Rules:
 - Never rank, recommend or judge the companies; only choose facts.
 ```
 
-When the selection picks nothing and the policy allows no finding, the reply is the nothing-findable reply; for an exact-detail question the `That exact detail isn't publicly findable. Related facts:` line shows only above facts that are actually there (2026-11-06). This changes only which **public** lines the call adds: findings the policy allows are still always shown (5.2), so an unrelated finding that matches the question's topic still appears (see the change history for the Canyon "phones" case).
+When the selection picks nothing and the policy allows no finding, the reply is the nothing-findable reply; for an exact-detail question the `That exact detail isn't publicly findable. Related facts:` line shows only above facts that are actually there (2026-11-06). This changes only which **public** lines the call adds: findings the policy allows are still always shown (5.2), so an unrelated finding that matches the question's topic still appears; since 2026-11-06 it does so under `Nothing specific on that is publicly findable. Related findings:` when the call replies that no fact answers (7).
 
 User message:
 
@@ -429,6 +446,7 @@ Response: `{ "intro": string, "items": [{ "companyId", "companyName", "text" }] 
 
 ## 13. Change history
 
+- **2026-11-06, reply fixes (part 3):** small talk (`how are you`…), short acknowledgements (`ok`, `got it`, `yes`, `no`…) and goodbyes (`bye`, `see you`…) get fixed replies in both modes, with no model call (4.0). On the select path, findings the selection call says don't answer the question (its `{"fact_ids": [], "exact_answer": false}` reply) show unchanged under `Nothing specific on that is publicly findable. Related findings:` with no opening (7). This covers the Canyon "phones" gap from part 2: the findings still show, but no longer as the answer. Unchanged: the policy, the selection prompt, the exact-detail and nothing-findable replies, follow-ups.
 - **2026-11-06, reply fixes (part 2):**
   - **Openings only restate the facts shown** (7.1): two prompt rules (only what the facts say, in their words, no added action, change, timing or judgment; lead with the most direct fact, a concern for risks, fit and budget, never a concern as a positive); the question's topic goes to the call on a `Topic:` line; a new code check drops a claim word (updated, launched, introduced, new, recently, expanded/expanding, positive, praised, strong, growing, best, ideal, perfect) whose stem the facts shown don't use.
   - **Only public facts that answer** (8): the selection prompt now says a fact about a different subject never answers, none is fine, and an exact-detail question gets only genuinely related facts. Policy-allowed findings are unchanged and still always shown. Known gap: in the Canyon "What's going on with their phones?" case, both lines shown ("Website FAQ notes online intake forms…", "…medical directors oversee injectable services") are research findings tagged `operations`, which the policy allows for that topic; this fix cannot remove them.
@@ -477,6 +495,9 @@ Response: `{ "intro": string, "items": [{ "companyId", "companyName", "text" }] 
 - [ ] Canyon Aesthetics open, "Are they hiring?" then "tell me more about that" → "That's everything publicly findable on this." above the same line(s), never "Nothing about that is publicly findable…"
 - [ ] "tell me more about their budget" after another question → a normal budget answer (not treated as a follow-up)
 - [ ] Laurelton Family Dentistry open, "Are they expanding?" and "Any risks?" → an opening sentence now shows; if one is still missing, the server log line `[data-room-chat] opening dropped: …` names the check
+- [ ] Either mode: "how are you?" → "I'm doing well, thanks! …"; "ok" or "got it" → "Great. What would you like to know next?"; "bye" → "Good luck with your research!"; "ok what software do they use?" → a normal answer
+- [ ] Canyon Aesthetics open, "What's going on with their phones?" → if the findings don't answer it: "Nothing specific on that is publicly findable. Related findings:" above them, no opening sentence
+- [ ] Northview Family Dentistry open, "Any risks?" → the SlotEasy agreement always shows, with either an opening or the related-findings line above it
 - [ ] Any answer's opening sentence never names a company, never says "Company 1", never says which is best or a good/strong fit, never adds a fact or number the answer doesn't show, and never sits above "Nothing about that is publicly findable…" or a fixed reply
 - [ ] "Which company is the best prospect?" (two companies) → an opening like "Which one to pursue is your call…" above each company's overview
 - [ ] One company: "What are the amenities like?" → every amenities finding the company has (no cap)

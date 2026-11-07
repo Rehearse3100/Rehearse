@@ -19,7 +19,9 @@
  * request checks. Part 2 fixes (real cases): an opening may only restate the facts
  * shown (Canyon "updated", Northview "positive feedback"), with the question's topic
  * passed to its call; unrelated public facts aren't shown; a follow-up ("tell me more
- * about that") is routed as the earlier question it follows.
+ * about that") is routed as the earlier question it follows. Part 3: small talk gets
+ * fixed texts; findings the selection call says don't answer the question stay as
+ * they are under "Nothing specific on that is publicly findable. Related findings:".
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -31,10 +33,19 @@ import {
   EXACT_DETAIL_MISSING_INTRO,
   NOTHING_FINDABLE_REPLY,
   OPENING_SYSTEM_PROMPT,
+  RELATED_FINDINGS_INTRO,
   SELECTION_SYSTEM_PROMPT,
 } from "@/lib/data-room-chat-render";
 import { ROUTER_SYSTEM_PROMPT } from "@/lib/data-room-chat-router";
-import { GREETING_REPLY_ALL, GREETING_REPLY_COMPANIES, META_PUBLIC_INTRO, THANKS_REPLY } from "@/lib/data-room-chat-scope";
+import {
+  ACKNOWLEDGEMENT_REPLY,
+  GOODBYE_REPLY,
+  GREETING_REPLY_ALL,
+  GREETING_REPLY_COMPANIES,
+  META_PUBLIC_INTRO,
+  SMALL_TALK_REPLY,
+  THANKS_REPLY,
+} from "@/lib/data-room-chat-scope";
 
 // ── Fakes ───
 
@@ -468,9 +479,11 @@ describe("specific research and the selection call", () => {
     state.classify.mockResolvedValueOnce(routerReply("specific_research", "budget", null, true));
     state.create.mockResolvedValueOnce(selection(["C1:h:1"], true));
     expect(await ask(revenue)).toEqual(plain);
+    // No exact detail asked: never the exact-detail intro. (Part 3, 2026-11-06: this
+    // selection is the "no fact answers" reply, so the related-findings line shows.)
     state.classify.mockResolvedValueOnce(routerReply("specific_research", "budget", null, false));
     state.create.mockResolvedValueOnce(selection([], false));
-    expect(await ask(revenue)).toEqual(plain);
+    expect(await ask(revenue)).toEqual({ ...plain, intro: RELATED_FINDINGS_INTRO });
   });
 
   it("an exact detail with no facts at all keeps the nothing-findable reply (no intro)", async () => {
@@ -1028,55 +1041,58 @@ describe("reply fixes: greetings, full lists, any number of conditions, first li
   });
 });
 
+// ── Real cases (Canyon Aesthetics, Northview Family Dentistry; text from the seed pools) ───
+
+const CANYON_ROW = {
+  id: "canyon",
+  company_name: "Canyon Aesthetics",
+  industry: "Med Spa",
+  vertical: "med spa",
+  locations: 2,
+  metro: "Scottsdale, AZ",
+  in_territory: false,
+  size_note: null,
+  online_booking: true,
+  blurb: "Boutique med spa offering injectables and skincare.",
+  public_signals: ["Job listing: Spa Attendant", "Website highlights online intake for new clients"],
+};
+const NORTHVIEW_ROW = {
+  id: "northview",
+  company_name: "Northview Family Dentistry",
+  industry: "Dental",
+  vertical: "dental",
+  locations: 3,
+  metro: "Boulder, CO",
+  in_territory: true,
+  size_note: "3 locations in Boulder County",
+  online_booking: true,
+  blurb: "Family dentistry practice with a mature patient base and digital front desk tools.",
+  public_signals: ["Recently refreshed patient portal branding"],
+};
+const INTAKE = "Website FAQ notes online intake forms for first-time clients.";
+const DIRECTORS = "The website FAQ explains how medical directors oversee injectable services.";
+const CANYON_FINDINGS = [
+  { text: INTAKE, topics: ["current_tools", "operations"] },
+  { text: DIRECTORS, topics: ["operations"] },
+];
+const PRAISE = "Patient forum threads praise the refreshed portal branding.";
+const OUTREACH = "Local newsletter profiled the practice's school outreach program.";
+const EMERGENCY = "Website highlights same-day emergency appointment availability.";
+const SLOTEASY = "Operations team standardized on SlotEasy eighteen months ago with a multi-year agreement.";
+const NORTHVIEW_FINDINGS = [
+  { text: PRAISE, topics: ["customer_feedback", "current_tools"] },
+  { text: OUTREACH, topics: ["amenities"] },
+  { text: EMERGENCY, topics: ["operations"] },
+  { text: SLOTEASY, topics: ["current_tools", "operations"] },
+];
+const CANYON = { mode: "companies", companyIds: ["canyon"] };
+const NORTHVIEW = { mode: "companies", companyIds: ["northview"] };
+const HIRING_HISTORY = [
+  { role: "user", content: "Are they hiring?", scope: CANYON },
+  { role: "assistant", intro: "", items: [{ companyId: "canyon", text: "Job listing: Spa Attendant" }], scope: CANYON },
+];
+
 describe("reply fixes, part 2: openings restate the facts, no unrelated facts, follow-ups", () => {
-  const CANYON_ROW = {
-    id: "canyon",
-    company_name: "Canyon Aesthetics",
-    industry: "Med Spa",
-    vertical: "med spa",
-    locations: 2,
-    metro: "Scottsdale, AZ",
-    in_territory: false,
-    size_note: null,
-    online_booking: true,
-    blurb: "Boutique med spa offering injectables and skincare.",
-    public_signals: ["Job listing: Spa Attendant", "Website highlights online intake for new clients"],
-  };
-  const NORTHVIEW_ROW = {
-    id: "northview",
-    company_name: "Northview Family Dentistry",
-    industry: "Dental",
-    vertical: "dental",
-    locations: 3,
-    metro: "Boulder, CO",
-    in_territory: true,
-    size_note: "3 locations in Boulder County",
-    online_booking: true,
-    blurb: "Family dentistry practice with a mature patient base and digital front desk tools.",
-    public_signals: ["Recently refreshed patient portal branding"],
-  };
-  const INTAKE = "Website FAQ notes online intake forms for first-time clients.";
-  const DIRECTORS = "The website FAQ explains how medical directors oversee injectable services.";
-  const CANYON_FINDINGS = [
-    { text: INTAKE, topics: ["current_tools", "operations"] },
-    { text: DIRECTORS, topics: ["operations"] },
-  ];
-  const PRAISE = "Patient forum threads praise the refreshed portal branding.";
-  const OUTREACH = "Local newsletter profiled the practice's school outreach program.";
-  const EMERGENCY = "Website highlights same-day emergency appointment availability.";
-  const SLOTEASY = "Operations team standardized on SlotEasy eighteen months ago with a multi-year agreement.";
-  const NORTHVIEW_FINDINGS = [
-    { text: PRAISE, topics: ["customer_feedback", "current_tools"] },
-    { text: OUTREACH, topics: ["amenities"] },
-    { text: EMERGENCY, topics: ["operations"] },
-    { text: SLOTEASY, topics: ["current_tools", "operations"] },
-  ];
-  const CANYON = { mode: "companies", companyIds: ["canyon"] };
-  const NORTHVIEW = { mode: "companies", companyIds: ["northview"] };
-  const HIRING_HISTORY = [
-    { role: "user", content: "Are they hiring?", scope: CANYON },
-    { role: "assistant", intro: "", items: [{ companyId: "canyon", text: "Job listing: Spa Attendant" }], scope: CANYON },
-  ];
   const opening = (text: string): ReturnType<typeof modelReply> => modelReply({ opening: text });
   /** The user message of the opening call / router call with this index. */
   const openingUser = (call = 0): string =>
@@ -1091,7 +1107,8 @@ describe("reply fixes, part 2: openings restate the facts, no unrelated facts, f
   it("Canyon, 'What changed recently?': an opening that adds 'updated' is dropped (the log names the check, not the sentence)", async () => {
     state.storedResearchFacts = CANYON_FINDINGS;
     state.classify.mockResolvedValueOnce(routerReply("specific_research", "recent_changes"));
-    state.create.mockResolvedValueOnce(selection([]));
+    // The selection picks a finding (it answers), so the opening is written and checked.
+    state.create.mockResolvedValueOnce(selection(["C1:h:0"]));
     state.open.mockResolvedValueOnce(opening("This company updated its online intake forms."));
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const reply = await ask({ scope: CANYON, newMessage: "What changed recently?" });
@@ -1109,7 +1126,8 @@ describe("reply fixes, part 2: openings restate the facts, no unrelated facts, f
   it("Northview, 'Any risks?': 'positive feedback' over a concern is dropped; an opening that leads with the concern is shown", async () => {
     state.storedResearchFacts = NORTHVIEW_FINDINGS;
     state.classify.mockResolvedValue(routerReply("specific_research", "risks"));
-    state.create.mockResolvedValue(selection([]));
+    // The selection picks the SlotEasy finding (it answers), so the opening is written and checked.
+    state.create.mockResolvedValue(selection(["C1:h:3"]));
     const items = [{ companyId: "northview", companyName: "Northview Family Dentistry", text: `${PRAISE}\n${EMERGENCY}\n${SLOTEASY}` }];
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
 
@@ -1183,6 +1201,126 @@ describe("reply fixes, part 2: openings restate the facts, no unrelated facts, f
     expect(routerUser(1).endsWith("- Are they hiring?\nQuestion: tell me more about that")).toBe(true);
     await ask({ scope: ALL, newMessage: "tell me more about that", history: HIRING_HISTORY });
     expect(routerUser(2).endsWith("Question: tell me more about that")).toBe(true);
+  });
+});
+
+describe("reply fixes, part 3: small talk, and an honest first line for related findings", () => {
+  const OPENING = "Here's what's on record for your question.";
+  const canyonFindings = { companyId: "canyon", companyName: "Canyon Aesthetics", text: `${INTAKE}\n${DIRECTORS}` };
+
+  beforeEach(() => {
+    state.roster = [...ROSTER, CANYON_ROW, NORTHVIEW_ROW];
+    state.open.mockResolvedValue(modelReply({ opening: OPENING }));
+  });
+
+  it("small talk, acknowledgements and goodbyes: the same fixed text in both modes, with no model call or roster query", async () => {
+    for (const [messages, intro] of [
+      [["how are you", "How's it going?", "what's up", "sup", "you good?"], SMALL_TALK_REPLY],
+      [
+        ["ok", "Okay.", "k", "sure", "cool", "Got it!", "great", "nice", "perfect", "alright", "sounds good", "welcome", "yes", "yep", "no", "Nope 👍"],
+        ACKNOWLEDGEMENT_REPLY,
+      ],
+      [["bye", "Goodbye!", "see you", "later"], GOODBYE_REPLY],
+    ] as const) {
+      for (const newMessage of messages) {
+        for (const scope of [ONE, ALL]) {
+          expect(await ask({ scope, newMessage }), `${newMessage} (${scope.mode})`).toEqual({ intro, items: [] });
+        }
+      }
+    }
+    expect(SMALL_TALK_REPLY).toBe("I'm doing well, thanks! What would you like to know about these companies?");
+    expect(ACKNOWLEDGEMENT_REPLY).toBe("Great. What would you like to know next?");
+    expect(GOODBYE_REPLY).toBe("Good luck with your research!");
+    expect(state.classify).not.toHaveBeenCalled();
+    expect(state.open).not.toHaveBeenCalled();
+    expect(state.queries.some((q) => q.table === "crm_prospect_directory")).toBe(false);
+  });
+
+  it('"ok what software do they use?" is a question: it goes to the router as today', async () => {
+    await ask({ scope: ONE, newMessage: "ok what software do they use?" });
+    expect(state.classify).toHaveBeenCalledTimes(1);
+    expect(state.classify.mock.calls[0]?.[0].messages[1]?.content).toContain("Question: ok what software do they use?");
+  });
+
+  it("Canyon, 'What's going on with their phones?': the selection says no fact answers → the honest first line, the same findings, no opening", async () => {
+    state.storedResearchFacts = CANYON_FINDINGS;
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "operations"));
+    state.create.mockResolvedValueOnce(selection([], false));
+    expect(await ask({ scope: CANYON, newMessage: "What's going on with their phones?" })).toEqual({
+      intro: "Nothing specific on that is publicly findable. Related findings:",
+      items: [canyonFindings],
+    });
+    expect(state.open).not.toHaveBeenCalled();
+  });
+
+  it("Canyon, 'What changed recently?': the same, when the selection says no fact answers", async () => {
+    state.storedResearchFacts = CANYON_FINDINGS;
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "recent_changes"));
+    state.create.mockResolvedValueOnce(selection([], false));
+    expect(await ask({ scope: CANYON, newMessage: "What changed recently?" })).toEqual({
+      intro: RELATED_FINDINGS_INTRO,
+      items: [canyonFindings],
+    });
+    expect(state.open).not.toHaveBeenCalled();
+  });
+
+  it("a direct answer (the selection picks a fact) is unchanged: the same findings under the opening", async () => {
+    state.storedResearchFacts = CANYON_FINDINGS;
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "operations"));
+    state.create.mockResolvedValueOnce(selection(["C1:h:0"]));
+    expect(await ask({ scope: CANYON, newMessage: "How do new clients do intake?" })).toEqual({
+      intro: OPENING,
+      items: [canyonFindings],
+    });
+    expect(state.open).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed selection or an unclear reply is unchanged from today (no new line)", async () => {
+    state.storedResearchFacts = CANYON_FINDINGS;
+    state.classify.mockResolvedValue(routerReply("specific_research", "operations"));
+    const today = { intro: OPENING, items: [canyonFindings] };
+    // Not JSON, no exact_answer, exact_answer true, or an id that isn't among the facts given.
+    for (const reply of [
+      modelReply("not json"),
+      modelReply({ fact_ids: [] }),
+      selection([], true),
+      selection(["C1:p:revenue"], false),
+    ]) {
+      state.create.mockResolvedValueOnce(reply);
+      expect(await ask({ scope: CANYON, newMessage: "What's going on with their phones?" })).toEqual(today);
+    }
+    // A selection call that throws is still the generic error, as before.
+    state.create.mockRejectedValueOnce(new Error("selection down"));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const failed = await POST(chatRequest({ scope: CANYON, newMessage: "What's going on with their phones?" }));
+    errorSpy.mockRestore();
+    expect(failed.status).toBe(500);
+    expect(await failed.json()).toEqual({ error: "Could not generate a Data Room response." });
+  });
+
+  it("a trap-style finding still shows, in stored order, under the new line", async () => {
+    state.storedResearchFacts = NORTHVIEW_FINDINGS;
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "risks"));
+    state.create.mockResolvedValueOnce(selection([], false));
+    expect(await ask({ scope: NORTHVIEW, newMessage: "Any risks?" })).toEqual({
+      intro: RELATED_FINDINGS_INTRO,
+      items: [{ companyId: "northview", companyName: "Northview Family Dentistry", text: `${PRAISE}\n${EMERGENCY}\n${SLOTEASY}` }],
+    });
+  });
+
+  it("the exact-detail line and the nothing-findable reply are unchanged", async () => {
+    state.storedResearchFacts = CANYON_FINDINGS;
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "operations", null, true));
+    state.create.mockResolvedValueOnce(selection([], false));
+    expect(((await ask({ scope: CANYON, newMessage: "How many intake forms do they have?" })) as { intro: string }).intro).toBe(
+      EXACT_DETAIL_MISSING_INTRO
+    );
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "budget"));
+    state.create.mockResolvedValueOnce(selection([], false));
+    expect(await ask({ scope: CANYON, newMessage: "What's their budget?" })).toEqual({
+      intro: "",
+      items: [{ companyId: "canyon", companyName: "Canyon Aesthetics", text: NOTHING_FINDABLE_REPLY }],
+    });
   });
 });
 

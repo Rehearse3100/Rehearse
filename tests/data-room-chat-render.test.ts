@@ -26,6 +26,7 @@ import {
   EXACT_DETAIL_MISSING_INTRO,
   FOLLOW_UP_NOTHING_NEW_INTRO,
   hasFacts,
+  isNoFactAnswersReply,
   needsOpening,
   NOTHING_FINDABLE_REPLY,
   OPENING_SYSTEM_PROMPT,
@@ -34,12 +35,14 @@ import {
   parseOpening,
   parseSelection,
   publicFacts,
+  RELATED_FINDINGS_INTRO,
   renderAnswer,
   SELECTION_SYSTEM_PROMPT,
   toSelectableFacts,
   withExactDetailIntro,
   withNothingNewIntro,
   withOpening,
+  withRelatedFindingsIntro,
   type CompanyFactSource,
 } from "@/lib/data-room-chat-render";
 import { buildScopeIndex, type ScopedAnswer } from "@/lib/data-room-chat-scope";
@@ -569,6 +572,48 @@ describe("a follow-up that brings back nothing new", () => {
     expect(withNothingNewIntro(answer, new Map())).toEqual(answer);
     const nothing = { intro: "", items: [{ ...answer.items[0]!, text: NOTHING_FINDABLE_REPLY }] };
     expect(withNothingNewIntro(nothing, new Map([["canyon", new Set([NOTHING_FINDABLE_REPLY])]]))).toEqual(nothing);
+  });
+});
+
+describe("findings that don't directly answer (part 3)", () => {
+  const findings: ScopedAnswer = {
+    intro: "",
+    items: [{ companyId: "canyon", companyName: "Canyon Aesthetics", text: "Website FAQ notes online intake forms for first-time clients." }],
+  };
+
+  it("the selection's 'no fact answers' reply is exactly {fact_ids: [], exact_answer: false}; anything else is not", () => {
+    expect(isNoFactAnswersReply(JSON.stringify({ fact_ids: [], exact_answer: false }))).toBe(true);
+    for (const raw of [
+      JSON.stringify({ fact_ids: [], exact_answer: true }),
+      JSON.stringify({ fact_ids: [] }),
+      JSON.stringify({ fact_ids: [], exact_answer: "false" }),
+      JSON.stringify({ fact_ids: ["C1:h:0"], exact_answer: false }),
+      JSON.stringify({ fact_ids: ["C9:p:invented"], exact_answer: false }),
+      JSON.stringify({ exact_answer: false }),
+      JSON.stringify([]),
+      "not json",
+      "",
+      null,
+      undefined,
+    ]) {
+      expect(isNoFactAnswersReply(raw), String(raw)).toBe(false);
+    }
+  });
+
+  it("the honest first line goes above the same facts (nothing removed or reordered), so no opening", () => {
+    const related = withRelatedFindingsIntro(findings);
+    expect(related).toEqual({ ...findings, intro: RELATED_FINDINGS_INTRO });
+    expect(RELATED_FINDINGS_INTRO).toBe("Nothing specific on that is publicly findable. Related findings:");
+    expect(needsOpening(related)).toBe(false);
+  });
+
+  it("an answer with no facts keeps the nothing-findable reply", () => {
+    for (const answer of [
+      { intro: NOTHING_FINDABLE_REPLY, items: [] },
+      { intro: "", items: [{ companyId: "a", companyName: "A", text: NOTHING_FINDABLE_REPLY }] },
+    ]) {
+      expect(withRelatedFindingsIntro(answer)).toEqual(answer);
+    }
   });
 });
 

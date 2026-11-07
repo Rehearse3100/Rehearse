@@ -6,7 +6,7 @@
  * question text, and the scope priority used on send. Server side: scope and
  * history parsing, ref labels ([C1]…), name redaction for model input, the
  * out-of-scope mention reply, questions about company names answered from the
- * roster (every match, no cap), greetings and thanks answered with fixed texts, and
+ * roster (every match, no cap), greetings, thanks and small talk answered with fixed texts, and
  * the "nothing hidden" first line. Used by ProspectingDataRoomChat (client) and POST
  * /api/student/data-room-chat (server).
  */
@@ -811,30 +811,82 @@ export const GREETING_REPLY_COMPANIES =
 export const GREETING_REPLY_ALL =
   "Hi! I'm your research assistant. Here I can filter every company by industry, city or state, number of locations, territory and online booking. Open a company to research it in depth.";
 export const THANKS_REPLY = "You're welcome! Ask me anything else about these companies.";
+/** "How are you?" and the like (both modes). */
+export const SMALL_TALK_REPLY = "I'm doing well, thanks! What would you like to know about these companies?";
+/** A short acknowledgement such as "ok" or "got it" (both modes). */
+export const ACKNOWLEDGEMENT_REPLY = "Great. What would you like to know next?";
+/** A goodbye (both modes). */
+export const GOODBYE_REPLY = "Good luck with your research!";
 /** First line of the public overview given for an answer-key or rule-breaking question (meta_or_bulk) about open companies. */
 export const META_PUBLIC_INTRO = "I can't share hidden or internal information. Here's what's public:";
 
-/** Whole-message greetings and thanks, compared with case, spaces, punctuation and emoji removed. */
+/** Whole-message greetings, thanks and small talk, compared with case, spaces, punctuation and emoji removed. */
 const GREETINGS: ReadonlySet<string> = new Set(["hi", "hello", "hey", "hiya", "yo", "goodmorning", "goodafternoon", "goodevening"]);
 const THANKS: ReadonlySet<string> = new Set(["thanks", "thankyou", "thx", "ty", "cheers"]);
+const SMALL_TALK: ReadonlySet<string> = new Set(["howareyou", "howsitgoing", "whatsup", "sup", "yougood"]);
+const ACKNOWLEDGEMENTS: ReadonlySet<string> = new Set([
+  "ok",
+  "okay",
+  "k",
+  "sure",
+  "cool",
+  "gotit",
+  "great",
+  "nice",
+  "perfect",
+  "alright",
+  "soundsgood",
+  "welcome",
+  "yes",
+  "yep",
+  "no",
+  "nope",
+]);
+const GOODBYES: ReadonlySet<string> = new Set(["bye", "goodbye", "seeyou", "later"]);
 
 /** Spaces, punctuation, symbols (emoji included) and the invisible marks emoji carry. */
 const NOT_A_WORD_CHARACTER = new RegExp("[\\s\\p{Z}\\p{P}\\p{S}\\p{Mn}\\p{Cf}]", "gu");
 
+/** A whole message that is only a greeting, thanks or small talk. */
+export type GreetingKind = "greeting" | "thanks" | "smallTalk" | "acknowledgement" | "goodbye";
+
 /**
- * "greeting" or "thanks" when the whole message, ignoring case, spaces, punctuation
- * and emoji, is just one (hi, hello, hey, hiya, yo, good morning/afternoon/evening;
- * thanks, thank you, thx, ty, cheers); null for anything else, so "hi, what software
- * do they use?" goes through as a question.
+ * The kind of greeting when the whole message, ignoring case, spaces, punctuation
+ * and emoji, is just one: "greeting" (hi, hello, hey, hiya, yo, good
+ * morning/afternoon/evening), "thanks" (thanks, thank you, thx, ty, cheers),
+ * "smallTalk" (how are you, how's it going, what's up, sup, you good),
+ * "acknowledgement" (ok, okay, k, sure, cool, got it, great, nice, perfect, alright,
+ * sounds good, welcome, yes, yep, no, nope) or "goodbye" (bye, goodbye, see you,
+ * later). Null for anything else, so "hi, what software do they use?" or "ok what
+ * software do they use?" goes through as a question.
  */
-export function parseGreeting(text: string): "greeting" | "thanks" | null {
+export function parseGreeting(text: string): GreetingKind | null {
   const bare = text.toLowerCase().replace(NOT_A_WORD_CHARACTER, "");
-  return GREETINGS.has(bare) ? "greeting" : THANKS.has(bare) ? "thanks" : null;
+  if (GREETINGS.has(bare)) {
+    return "greeting";
+  }
+  if (THANKS.has(bare)) {
+    return "thanks";
+  }
+  if (SMALL_TALK.has(bare)) {
+    return "smallTalk";
+  }
+  if (ACKNOWLEDGEMENTS.has(bare)) {
+    return "acknowledgement";
+  }
+  return GOODBYES.has(bare) ? "goodbye" : null;
 }
 
-/** The fixed reply to a greeting or thanks: the greeting text depends on the mode. */
-export function greetingReply(kind: "greeting" | "thanks", scope: ChatScope): ScopedAnswer {
-  const intro = kind === "thanks" ? THANKS_REPLY : scope.mode === "all" ? GREETING_REPLY_ALL : GREETING_REPLY_COMPANIES;
+/** The fixed reply to a greeting, thanks or small talk: only the greeting text depends on the mode. */
+export function greetingReply(kind: GreetingKind, scope: ChatScope): ScopedAnswer {
+  const replies: Record<Exclude<GreetingKind, "greeting">, string> = {
+    thanks: THANKS_REPLY,
+    smallTalk: SMALL_TALK_REPLY,
+    acknowledgement: ACKNOWLEDGEMENT_REPLY,
+    goodbye: GOODBYE_REPLY,
+  };
+  const intro =
+    kind === "greeting" ? (scope.mode === "all" ? GREETING_REPLY_ALL : GREETING_REPLY_COMPANIES) : replies[kind];
   return { intro, items: [] };
 }
 

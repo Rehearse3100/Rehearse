@@ -18,7 +18,7 @@
  * the attempt's message limits (not in tester mode; fail open); then it is counted;
  * OpenAI moderation (self-harm or other flags; errors carry on); mostly non-Latin
  * letters; and the router's own "not English" verdict where it runs. A message that
- * is only a greeting or thanks then gets a fixed reply (no model call).
+ * is only a greeting, thanks or small talk then gets a fixed reply (no model call).
  * Flow: unselected-company mention or company-names question → server
  * reply; otherwise a router call (lib/data-room-chat-router.ts; sees only the
  * redacted question, recent questions and scope kind) labels the question; an
@@ -38,7 +38,10 @@
  * finding) and whether one states the exact detail asked. When the router says the
  * question asks for one exact detail and no fact states it, the answer starts with
  * "That exact detail isn't publicly findable. Related facts:" (also above a contacts
- * line, which never holds emails or phone numbers). Everything is rendered from the
+ * line, which never holds emails or phone numbers). When findings are shown but the
+ * selection call replies that no fact answers the question, they stay as they are
+ * under "Nothing specific on that is publicly findable. Related findings:" (no
+ * opening). Everything is rendered from the
  * stored text (lib/data-room-chat-render.ts). Company names in answers come from the
  * database; the model sees companies only as refs ([C1]…).
  */
@@ -58,6 +61,7 @@ import {
   buildSelectionMessages,
   checkOpening,
   hasFacts,
+  isNoFactAnswersReply,
   needsOpening,
   openingRejection,
   overviewLines,
@@ -68,6 +72,7 @@ import {
   withExactDetailIntro,
   withNothingNewIntro,
   withOpening,
+  withRelatedFindingsIntro,
   type CompanyBlock,
   type CompanyFacts,
   type SelectableFact,
@@ -254,11 +259,16 @@ async function classifyQuestion(
 /**
  * One selection call (gpt-4o, temperature 0, JSON): the redacted question and the
  * allowed facts in; fact ids and whether one states the exact detail out (only ids
- * among the given facts are kept).
+ * among the given facts are kept), plus whether its reply was the prompt's "no fact
+ * answers the question" reply (isNoFactAnswersReply; false when there was no call).
  */
-async function selectFacts(openai: OpenAI, question: string, facts: SelectableFact[]): Promise<Selection> {
+async function selectFacts(
+  openai: OpenAI,
+  question: string,
+  facts: SelectableFact[]
+): Promise<Selection & { saysNoFactAnswers: boolean }> {
   if (facts.length === 0) {
-    return { facts: [], exactAnswer: false };
+    return { facts: [], exactAnswer: false, saysNoFactAnswers: false };
   }
   const response = await openai.chat.completions.create({
     model: "gpt-4o",
@@ -267,7 +277,8 @@ async function selectFacts(openai: OpenAI, question: string, facts: SelectableFa
     response_format: { type: "json_object" },
     messages: buildSelectionMessages(question, facts),
   });
-  return parseSelection(response.choices[0]?.message?.content, facts);
+  const content = response.choices[0]?.message?.content;
+  return { ...parseSelection(content, facts), saysNoFactAnswers: isNoFactAnswersReply(content) };
 }
 
 /**
@@ -387,7 +398,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       return NextResponse.json(guardReply("notEnglish"));
     }
 
-    // A message that is only a greeting or thanks gets a fixed reply, before the
+    // A message that is only a greeting, thanks or small talk gets a fixed reply, before the
     // router (no model call); "hi, what software do they use?" goes on as a question.
     const greeting = parseGreeting(newMessage);
     if (greeting) {
@@ -643,6 +654,10 @@ export async function POST(request: Request): Promise<NextResponse> {
         );
         if (decision.exactValue && !selection.exactAnswer) {
           answer = withExactDetailIntro(answer);
+        } else if (selection.saysNoFactAnswers) {
+          // The selection call says no fact answers the question: the allowed findings
+          // still show, unchanged, under an honest first line (so no opening sentence).
+          answer = withRelatedFindingsIntro(answer);
         }
         break;
       }

@@ -16,7 +16,9 @@
  * here (checkOpening: it may only restate what the facts shown say) and placed above
  * the facts of an answer with no first line of its own (withOpening). A follow-up
  * that brings back only facts already shown gets a fixed first line instead
- * (withNothingNewIntro). Used by POST /api/student/data-room-chat.
+ * (withNothingNewIntro), and so do findings the selection call says don't answer
+ * the question (withRelatedFindingsIntro, read with isNoFactAnswersReply). Used by
+ * POST /api/student/data-room-chat.
  */
 
 import type { CompanyAllowance } from "@/lib/data-room-chat-policy";
@@ -39,6 +41,13 @@ export const EXACT_DETAIL_MISSING_INTRO = "That exact detail isn't publicly find
 
 /** The intro when a follow-up ("tell me more") brings back only facts the last answer already showed. */
 export const FOLLOW_UP_NOTHING_NEW_INTRO = "That's everything publicly findable on this.";
+
+/**
+ * The intro when findings are shown but the selection call says no fact answers the
+ * question: the findings still show (they are how trap clues stay reachable), under
+ * an honest first line instead of an opening that presents them as the answer.
+ */
+export const RELATED_FINDINGS_INTRO = "Nothing specific on that is publicly findable. Related findings:";
 
 // ── Facts ───
 
@@ -284,6 +293,15 @@ export function renderAnswer(blocks: readonly CompanyBlock[], keepEmpty: boolean
  */
 export function withExactDetailIntro(answer: ScopedAnswer): ScopedAnswer {
   return hasFacts(answer) ? { ...answer, intro: EXACT_DETAIL_MISSING_INTRO } : answer;
+}
+
+/**
+ * Starts the answer with RELATED_FINDINGS_INTRO when it shows at least one fact (the
+ * facts stay exactly as they are: nothing hidden, removed or reordered); an answer
+ * with no facts keeps the nothing-findable reply as it is.
+ */
+export function withRelatedFindingsIntro(answer: ScopedAnswer): ScopedAnswer {
+  return hasFacts(answer) ? { ...answer, intro: RELATED_FINDINGS_INTRO } : answer;
 }
 
 /**
@@ -635,7 +653,8 @@ export function checkOpening(
  * True when the answer gets an opening sentence: it shows facts and has no first
  * line of its own. An answer that already starts with a fixed line (a filter list's
  * "{n} companies match.", the exact-detail line, the "nothing hidden" line, the
- * follow-up's "That's everything publicly findable on this.") or shows no facts (the
+ * related-findings line, the follow-up's "That's everything publicly findable on
+ * this.") or shows no facts (the
  * nothing-findable reply, any fixed reply) gets none, so its first line is never
  * doubled.
  */
@@ -741,4 +760,24 @@ export function parseSelection(raw: string | null | undefined, facts: readonly S
     }
   }
   return { facts: selected, exactAnswer: exactAnswer === true };
+}
+
+/**
+ * True only when the selection call's reply is its "no fact answers the question"
+ * reply, as the prompt words it: {"fact_ids": [], "exact_answer": false} (an empty
+ * id list and exact_answer exactly false). Invalid JSON, a wrong shape, a missing
+ * exact_answer, any id at all (even one that isn't among the facts given) or
+ * exact_answer true → false, so an unclear reply changes nothing.
+ */
+export function isNoFactAnswersReply(raw: string | null | undefined): boolean {
+  try {
+    const parsed: unknown = JSON.parse(raw ?? "");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return false;
+    }
+    const { fact_ids: ids, exact_answer: exactAnswer } = parsed as Record<string, unknown>;
+    return Array.isArray(ids) && ids.length === 0 && exactAnswer === false;
+  } catch {
+    return false;
+  }
 }
