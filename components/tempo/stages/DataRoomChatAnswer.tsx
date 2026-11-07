@@ -13,8 +13,11 @@
  * text blocks. Every company name (the table's Company cell, each compare column
  * header, each text block's heading) is a button that opens that company, as a click
  * in the left company list does, when the pane passes onOpenCompany and the company
- * is in its current list (openableCompanyIds); otherwise the name is plain text,
- * exactly as before. Also the "Search all companies" pill offered under a filter
+ * is in its current list (openableCompanyIds); so is the area around it, for the
+ * mouse: the whole table row (its existing hover), the whole compare column (hover
+ * lights the column) and the whole text block (hover lights the block). Selecting text
+ * there to copy it doesn't open anything. Otherwise names and areas are plain, exactly
+ * as before. Also the "Search all companies" pill offered under a filter
  * question about one company. Column, row and tag labels come from the simulation's
  * chat config (lib/data-room-chat-config.ts). Design: Stitch chat pane components 2–4.
  */
@@ -73,32 +76,73 @@ export type CompanyOpenProps = {
   openableCompanyIds?: ReadonlySet<string>;
 };
 
+/** True when a reply can open this company: an opener is passed and the company is in the pane's list. */
+export function canOpenCompany(open: CompanyOpenProps, companyId: string): boolean {
+  return Boolean(open.onOpenCompany) && (open.openableCompanyIds?.has(companyId) ?? false);
+}
+
+/**
+ * The click of a row, column or block that opens its company, unless the student was
+ * selecting text there (to copy a fact): a drag that selects text ends in a click too.
+ */
+function openUnlessSelecting(onOpenCompany: (companyId: string) => void, companyId: string): () => void {
+  return (): void => {
+    const selected = typeof window !== "undefined" ? window.getSelection()?.toString() ?? "" : "";
+    if (selected.length === 0) {
+      onOpenCompany(companyId);
+    }
+  };
+}
+
 /**
  * One company's name in a reply: a button that opens the company (same size and
  * weight as the text around it; primary colour and an underline on hover, a focus
  * ring for the keyboard) when it can be opened, otherwise the plain name exactly as
  * before (an old saved chat's company that is no longer in the list, or a reply
- * shown without onOpenCompany).
+ * shown without onOpenCompany). isGroupHover: also underlined while the row or block
+ * around it (".group") is hovered; isHighlighted: underlined now (its compare column is
+ * hovered). Its click doesn't reach the row, column or block, which open it too.
  */
 export function CompanyName({
   item,
   onOpenCompany,
   openableCompanyIds,
-}: CompanyOpenProps & { item: Pick<ScopedAnswerItem, "companyId" | "companyName"> }): React.ReactElement {
-  if (!onOpenCompany || !openableCompanyIds?.has(item.companyId)) {
+  isGroupHover = false,
+  isHighlighted = false,
+}: CompanyOpenProps & {
+  item: Pick<ScopedAnswerItem, "companyId" | "companyName">;
+  isGroupHover?: boolean;
+  isHighlighted?: boolean;
+}): React.ReactElement {
+  if (!onOpenCompany || !canOpenCompany({ onOpenCompany, openableCompanyIds }, item.companyId)) {
     return <>{item.companyName}</>;
   }
+  const extra = `${isGroupHover ? " group-hover:text-primary group-hover:underline" : ""}${isHighlighted ? " text-primary underline" : ""}`;
   return (
     <button
       type="button"
-      onClick={() => onOpenCompany(item.companyId)}
+      onClick={(event: React.MouseEvent<HTMLButtonElement>) => {
+        // One open per click: the row, column or block around the name opens it too.
+        event.stopPropagation();
+        onOpenCompany(item.companyId);
+      }}
       aria-label={`Open ${item.companyName}`}
-      className="text-left cursor-pointer rounded-sm hover:text-primary hover:underline underline-offset-2 transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-secondary focus-visible:ring-offset-1"
+      className={`text-left cursor-pointer rounded-sm hover:text-primary hover:underline underline-offset-2 transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-secondary focus-visible:ring-offset-1${extra}`}
     >
       {item.companyName}
     </button>
   );
 }
+
+/** Mouse props that open a company from the area around its name (none when it can't be opened). */
+type OpenAreaProps = Pick<React.HTMLAttributes<HTMLElement>, "onClick" | "onMouseEnter" | "onMouseLeave">;
+
+/**
+ * Light blue over a compare column the mouse is on (it opens that company); a text
+ * block uses the same colour as hover:bg-secondary-fixed/40 (written out in full so
+ * Tailwind generates it).
+ */
+const OPEN_AREA_HOVER = "bg-secondary-fixed/40";
 
 type CardLabels = DataRoomChatConfig["cardLabels"];
 
@@ -158,16 +202,22 @@ export function ResultTable({
           <tbody className="divide-y divide-outline-variant">
             {items.map((item) => {
               const card = item.card;
+              // An openable company: the whole row opens it (keeping the row's hover).
+              const isOpenable = onOpenCompany !== undefined && canOpenCompany({ onOpenCompany, openableCompanyIds }, item.companyId);
               const tags = card
                 ? [territoryLabel(card, config.cardLabels), bookingLabel(card, config.cardLabels)].filter(
                     (tag): tag is string => tag !== null
                   )
                 : [];
               return (
-                <tr key={item.companyId} className="hover:bg-surface/60 transition-colors motion-reduce:transition-none">
+                <tr
+                  key={item.companyId}
+                  className={`hover:bg-surface/60 transition-colors motion-reduce:transition-none${isOpenable ? " group cursor-pointer" : ""}`}
+                  onClick={isOpenable && onOpenCompany ? openUnlessSelecting(onOpenCompany, item.companyId) : undefined}
+                >
                   <td className="py-2 px-2 align-top">
                     <div className="text-[12px] font-medium text-on-surface leading-snug">
-                      <CompanyName item={item} onOpenCompany={onOpenCompany} openableCompanyIds={openableCompanyIds} />
+                      <CompanyName item={item} onOpenCompany={onOpenCompany} openableCompanyIds={openableCompanyIds} isGroupHover />
                     </div>
                     {tags.length > 0 ? (
                       <div className="flex flex-wrap gap-1 mt-1">
@@ -278,7 +328,23 @@ export function CompareTable({
   const shownRows = rows.length > 0 ? COMPARE_ROWS.filter((row) => rows.includes(row.key)) : COMPARE_ROWS;
   const scrollRef = useRef<HTMLDivElement>(null);
   const isOverflowing = useHorizontalOverflow(scrollRef);
+  // The company column the mouse is on: every cell of it lights up (only openable columns).
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const minWidth = COMPARE_LABEL_COLUMN_PX + COMPARE_COMPANY_COLUMN_PX * items.length;
+  const isOpenable = (companyId: string): boolean => canOpenCompany({ onOpenCompany, openableCompanyIds }, companyId);
+  /** Every cell of an openable company's column: hovering any cell lights the column; a click opens the company. */
+  const columnProps = (companyId: string): OpenAreaProps =>
+    onOpenCompany && isOpenable(companyId)
+      ? {
+          onClick: openUnlessSelecting(onOpenCompany, companyId),
+          onMouseEnter: () => setHoveredId(companyId),
+          onMouseLeave: () => setHoveredId((current) => (current === companyId ? null : current)),
+        }
+      : {};
+  // Unchanged classes for a column that can't be opened; a pointer and a colour fade for one that can.
+  const columnBackground = (companyId: string): string => (hoveredId === companyId ? OPEN_AREA_HOVER : "bg-white");
+  const columnExtra = (companyId: string): string =>
+    isOpenable(companyId) ? " cursor-pointer transition-colors duration-150 motion-reduce:transition-none" : "";
   return (
     <div className="space-y-1">
       <div className="border border-outline-variant rounded-lg overflow-hidden bg-white">
@@ -297,12 +363,18 @@ export function CompareTable({
                   <th
                     key={item.companyId}
                     scope="col"
-                    className={`py-2 px-3 text-[12px] font-bold leading-tight text-primary-container align-top bg-white ${
-                      i < items.length - 1 ? "border-r border-outline-variant" : ""
-                    }`}
+                    className={`py-2 px-3 text-[12px] font-bold leading-tight text-primary-container align-top ${columnBackground(
+                      item.companyId
+                    )} ${i < items.length - 1 ? "border-r border-outline-variant" : ""}${columnExtra(item.companyId)}`}
                     style={{ width: COMPARE_COMPANY_COLUMN_PX, minWidth: COMPARE_COMPANY_COLUMN_PX }}
+                    {...columnProps(item.companyId)}
                   >
-                    <CompanyName item={item} onOpenCompany={onOpenCompany} openableCompanyIds={openableCompanyIds} />
+                    <CompanyName
+                      item={item}
+                      onOpenCompany={onOpenCompany}
+                      openableCompanyIds={openableCompanyIds}
+                      isHighlighted={hoveredId === item.companyId}
+                    />
                   </th>
                 ))}
               </tr>
@@ -319,9 +391,10 @@ export function CompareTable({
                   {items.map((item, i) => (
                     <td
                       key={item.companyId}
-                      className={`py-1.5 px-3 text-on-surface bg-white align-top ${row.isMono ? "font-mono" : ""} ${
-                        i < items.length - 1 ? "border-r border-outline-variant" : ""
-                      }`}
+                      className={`py-1.5 px-3 text-on-surface ${columnBackground(item.companyId)} align-top ${
+                        row.isMono ? "font-mono" : ""
+                      } ${i < items.length - 1 ? "border-r border-outline-variant" : ""}${columnExtra(item.companyId)}`}
+                      {...columnProps(item.companyId)}
                     >
                       {item.card ? row.value(item, item.card, config.cardLabels) : MISSING}
                     </td>
@@ -420,14 +493,28 @@ export function DataRoomChatAnswer({
       {layout === "table" ? <ResultTable items={answer.items} config={config} {...open} /> : null}
       {layout === "compare" ? <CompareTable items={answer.items} rows={answer.compareRows} config={config} {...open} /> : null}
       {layout === "list"
-        ? answer.items.map((item) => (
-            <div key={item.companyId}>
-              <p className="text-[12px] font-semibold text-on-surface mb-1">
-                <CompanyName item={item} {...open} />
-              </p>
-              <AnswerLines item={item} config={config} />
-            </div>
-          ))
+        ? answer.items.map((item) =>
+            onOpenCompany && canOpenCompany(open, item.companyId) ? (
+              // An openable company: the whole block (name and lines) lights up and opens it.
+              <div
+                key={item.companyId}
+                onClick={openUnlessSelecting(onOpenCompany, item.companyId)}
+                className="group -mx-2 px-2 py-1 rounded-lg cursor-pointer hover:bg-secondary-fixed/40 transition-colors duration-150 motion-reduce:transition-none"
+              >
+                <p className="text-[12px] font-semibold text-on-surface mb-1">
+                  <CompanyName item={item} {...open} isGroupHover />
+                </p>
+                <AnswerLines item={item} config={config} />
+              </div>
+            ) : (
+              <div key={item.companyId}>
+                <p className="text-[12px] font-semibold text-on-surface mb-1">
+                  <CompanyName item={item} {...open} />
+                </p>
+                <AnswerLines item={item} config={config} />
+              </div>
+            )
+          )
         : null}
       {answer.note ? <p className="text-[12px] leading-snug text-on-surface-variant">{answer.note}</p> : null}
     </>

@@ -400,11 +400,42 @@ describe("company names open the company (2026-11-07)", () => {
     const withOpen = html(React.createElement(CompareTable, { items, ...open }));
     const plain = html(React.createElement(CompareTable, { items }));
     expect(openButtons(withOpen)).toEqual(["Summit Dental Group", "Northview Family Dentistry"]);
-    // Only the headers' contents change: the same markup once the buttons are unwrapped.
-    expect(withOpen.replace(/<button[^>]*>([^<]*)<\/button>/g, "$1")).toBe(plain);
+    // Only the openable columns change (2026-11-07: their cells also get a pointer and a
+    // colour fade): the same markup once the buttons are unwrapped and those classes dropped.
+    expect(
+      withOpen
+        .replace(/<button[^>]*>([^<]*)<\/button>/g, "$1")
+        .replace(/ cursor-pointer transition-colors duration-150 motion-reduce:transition-none/g, "")
+    ).toBe(plain);
     expect(withOpen).toContain("sticky left-0 z-20");
     expect(withOpen).toContain("overflow-x-auto");
     expect(withOpen).toContain("width:145px;min-width:145px");
+  });
+
+  it("compare: every cell of an openable column is clickable (pointer, colour fade); Falcon's column is exactly as before", () => {
+    const items = [SUMMIT, FALCON];
+    const markup = html(React.createElement(CompareTable, { items, ...open }));
+    // Summit: header + one cell per row (6 rows), all with the pointer.
+    expect(markup.match(/cursor-pointer transition-colors duration-150/g)).toHaveLength(1 + 6);
+    // Falcon (not in the list): its cells keep today's classes (no pointer).
+    expect(markup).toContain('<td class="py-1.5 px-3 text-on-surface bg-white align-top  ">Retail</td>');
+  });
+
+  it("table: an openable row is clickable as a whole (its hover kept) and its name underlines with the row; other rows as before", () => {
+    const answer: ChatAnswer = { intro: "2 companies match.", layout: "table", items: [row(1), row(3)] };
+    const markup = html(React.createElement(DataRoomChatAnswer, { answer, ...open }));
+    expect(markup).toContain('<tr class="hover:bg-surface/60 transition-colors motion-reduce:transition-none group cursor-pointer">');
+    expect(markup).toContain('<tr class="hover:bg-surface/60 transition-colors motion-reduce:transition-none">');
+    expect(markup).toContain("group-hover:text-primary group-hover:underline");
+  });
+
+  it("list: an openable company's whole block lights up on hover and is clickable; others are the plain block", () => {
+    const answer: ChatAnswer = { intro: "", items: [SUMMIT, FALCON] };
+    const markup = html(React.createElement(DataRoomChatAnswer, { answer, ...open }));
+    expect(markup).toContain(
+      '<div class="group -mx-2 px-2 py-1 rounded-lg cursor-pointer hover:bg-secondary-fixed/40 transition-colors duration-150 motion-reduce:transition-none"><p class="text-[12px] font-semibold text-on-surface mb-1"><button'
+    );
+    expect(markup).toContain('<div><p class="text-[12px] font-semibold text-on-surface mb-1">Falcon Market</p>');
   });
 
   it("no prop (any other use of the answer body) → no buttons, exactly today's markup", () => {

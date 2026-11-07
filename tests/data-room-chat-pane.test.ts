@@ -507,8 +507,11 @@ describe("opening a company from its name in a reply (2026-11-07)", () => {
     ]);
     expect(buttons.every((button) => button.props.type === "button")).toBe(true);
     ["summit", "falcon", "maple", "maple", "summit"].forEach((id, i) => {
-      (buttons[i]?.props.onClick as () => void)();
+      // 2026-11-07: a real click event (the name stops it, so the row around it doesn't open it twice).
+      const event = { stopPropagation: vi.fn() };
+      (buttons[i]?.props.onClick as (event: unknown) => void)(event);
       expect(onOpenCompany).toHaveBeenLastCalledWith(id);
+      expect(event.stopPropagation).toHaveBeenCalledTimes(1);
     });
     expect(onOpenCompany).toHaveBeenCalledTimes(5);
   });
@@ -521,7 +524,7 @@ describe("opening a company from its name in a reply (2026-11-07)", () => {
     const transcript = JSON.stringify(hooks.values[0]);
     const [button] = nameButtons(renderWithOpener());
     // Summit is the open company: the click just opens it again.
-    (button?.props.onClick as () => void)();
+    (button?.props.onClick as (event: unknown) => void)({ stopPropagation: vi.fn() });
     expect(onOpenCompany).toHaveBeenCalledWith("summit");
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(hooks.values[0])).toBe(transcript);
@@ -534,5 +537,119 @@ describe("opening a company from its name in a reply (2026-11-07)", () => {
     await send();
     expect(nameButtons(renderWithOpener(null))).toEqual([]);
     expect(nameButtons(render())).toEqual([]);
+  });
+});
+
+describe("rows, columns and blocks open the company too (2026-11-07)", () => {
+  const onOpenCompany = vi.fn<(companyId: string) => void>();
+  const card = { industry: "Dental", locations: 3, metro: "Boulder, CO", inTerritory: true, onlineBooking: false };
+
+  function renderWithOpener(): Element {
+    hooks.index = 0;
+    return ProspectingDataRoomChat({ attemptId: "attempt-1", companies: COMPANIES, openCompanyId: "summit", onOpenCompany }) as Element;
+  }
+
+  /** The tree with every function component called (the hooks stand-in serves their hooks). */
+  function expand(node: unknown): unknown {
+    if (Array.isArray(node)) {
+      return node.map(expand);
+    }
+    if (node && typeof node === "object" && "props" in node) {
+      const element = node as Element;
+      if (typeof element.type === "function") {
+        return expand((element.type as (props: unknown) => unknown)(element.props));
+      }
+      return { ...element, props: { ...element.props, children: expand(element.props.children) } };
+    }
+    return node;
+  }
+
+  /** The replies, rendered all the way down. */
+  const replies = (): unknown => findAll(renderWithOpener(), (element) => element.type === DataRoomChatAnswer).map(expand);
+  const clickables = (type: string): Element[] =>
+    findAll(replies(), (element) => element.type === type && typeof element.props.onClick === "function");
+  const className = (element: Element | undefined): string => String(element?.props.className ?? "");
+
+  async function ask(reply: Record<string, unknown>): Promise<void> {
+    replyWith(reply);
+    type("A question");
+    await send();
+  }
+
+  beforeEach(() => {
+    onOpenCompany.mockReset();
+    vi.stubGlobal("window", { getSelection: () => ({ toString: () => "" }) });
+  });
+
+  it("table: clicking anywhere on a row opens its company; a row outside the list has no click", async () => {
+    await ask({
+      intro: "2 companies match.",
+      layout: "table",
+      items: [
+        { companyId: "falcon", companyName: "Falcon Market", text: "x", card },
+        { companyId: "gone", companyName: "Gone Clinic", text: "x", card },
+      ],
+    });
+    const rows = clickables("tr");
+    expect(rows).toHaveLength(1);
+    (rows[0]?.props.onClick as () => void)();
+    expect(onOpenCompany).toHaveBeenCalledWith("falcon");
+  });
+
+  it("compare: every cell of a column opens its company; hovering any of them lights the whole column and underlines its name", async () => {
+    await ask({
+      intro: "",
+      layout: "compare",
+      items: ["summit", "maple"].map((companyId) => ({
+        companyId,
+        companyName: COMPANIES.find((company) => company.id === companyId)?.name ?? "",
+        text: "x",
+        card,
+        signals: [],
+      })),
+    });
+    const cells = [...clickables("th"), ...clickables("td")];
+    // 2 headers + 2 columns × 6 rows.
+    expect(cells).toHaveLength(2 + 12);
+    (clickables("td")[3]?.props.onClick as () => void)();
+    expect(onOpenCompany).toHaveBeenLastCalledWith("maple");
+
+    // Hover a Maple cell: every Maple cell turns light blue, Summit's stay white.
+    const mapleCell = clickables("td").find((cell) => className(cell).includes("bg-white") && cell.key === "maple");
+    (mapleCell?.props.onMouseEnter as () => void)();
+    const lit = (companyId: string): boolean[] =>
+      [...clickables("th"), ...clickables("td")].filter((cell) => cell.key === companyId).map((cell) => className(cell).includes("bg-secondary-fixed/40"));
+    expect(lit("maple")).toEqual(Array(7).fill(true));
+    expect(lit("summit")).toEqual(Array(7).fill(false));
+    const mapleName = findAll(replies(), (element) => element.type === "button" && element.props["aria-label"] === "Open Maple Family Dentistry")[0];
+    expect(className(mapleName)).toContain(" text-primary underline");
+    // Leaving the column: back to white.
+    (clickables("td").find((cell) => cell.key === "maple")?.props.onMouseLeave as () => void)();
+    expect(lit("maple")).toEqual(Array(7).fill(false));
+  });
+
+  it("single company (and each block of several): clicking anywhere on the block opens it; a company outside the list has no click", async () => {
+    await ask({
+      intro: "Here's the public overview of these companies.",
+      items: [
+        { companyId: "maple", companyName: "Maple Family Dentistry", text: "Dental\nIn territory." },
+        { companyId: "gone", companyName: "Gone Clinic", text: "Dental" },
+      ],
+    });
+    const blocks = clickables("div");
+    expect(blocks).toHaveLength(1);
+    expect(className(blocks[0])).toContain("hover:bg-secondary-fixed/40");
+    (blocks[0]?.props.onClick as () => void)();
+    expect(onOpenCompany).toHaveBeenCalledWith("maple");
+  });
+
+  it("selecting text to copy it doesn't open anything; the name button still opens it", async () => {
+    await ask({ intro: "", items: [{ companyId: "maple", companyName: "Maple Family Dentistry", text: "Dental" }] });
+    vi.stubGlobal("window", { getSelection: () => ({ toString: () => "Dental" }) });
+    (clickables("div")[0]?.props.onClick as () => void)();
+    expect(onOpenCompany).not.toHaveBeenCalled();
+    const name = findAll(replies(), (element) => element.type === "button" && element.props["aria-label"] === "Open Maple Family Dentistry")[0];
+    (name?.props.onClick as (event: unknown) => void)({ stopPropagation: vi.fn() });
+    expect(onOpenCompany).toHaveBeenCalledWith("maple");
   });
 });
