@@ -830,3 +830,37 @@ describe("an opening may never claim something is absent (2026-11-08)", () => {
     expect(checkOpening("There's no locked-in contract or vendor mentioned for this company.", "q", overview, index)).toBeNull();
   });
 });
+
+describe("an opening never talks about the answer itself (2026-11-08)", () => {
+  const index = buildScopeIndex([{ id: "canyon", name: "Canyon Aesthetics", industry: "Med Spa" }]);
+  const answer: ScopedAnswer = {
+    intro: "",
+    items: [
+      {
+        companyId: "canyon",
+        companyName: "Canyon Aesthetics",
+        text: "The website FAQ explains how medical directors oversee injectable services.\nWebsite FAQ notes online intake forms for first-time clients.",
+      },
+    ],
+  };
+  const reject = (opening: string): string | null => openingRejection(opening, "How do they run things?", answer, index);
+
+  it("the real case and other ways of pointing at the answer or the facts → dropped", () => {
+    for (const opening of [
+      "The medical director oversees injectable services; the answer also notes online intake forms…",
+      "These facts cover how this company handles intake.",
+      "The information provided covers medical directors and intake forms.",
+      "As shown, this company uses online intake forms.",
+      "This company's intake process is described in the details listed below.",
+      "The following covers this company's intake forms.",
+    ]) {
+      expect(reject(opening), opening).toBe("talks about the answer");
+    }
+  });
+
+  it("an opening that just says what the facts say is fine; so is the compare line itself", () => {
+    expect(reject("Medical directors oversee injectable services at this company.")).toBeNull();
+    expect(reject("This company offers online intake forms for first-time clients.")).toBeNull();
+    expect(reject(COMPARE_FIXED_INTRO)).toBeNull();
+  });
+});

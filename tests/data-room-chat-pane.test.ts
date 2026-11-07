@@ -653,3 +653,103 @@ describe("rows, columns and blocks open the company too (2026-11-07)", () => {
     expect(onOpenCompany).toHaveBeenCalledWith("maple");
   });
 });
+
+describe("'it' after a question about another company, both directions (2026-11-08)", () => {
+  const CASCADE_LIST: DataRoomCompany[] = [
+    company("cascade", "Cascade Attorneys", "Legal Services", "Austin, TX"),
+    company("summit", "Summit Dental Group", "Dental", "Front Range, CO"),
+    company("falcon", "Falcon Market", "Retail", "Denver, CO"),
+  ];
+
+  /** Renders the pane as the Data Room does, with the open company and how many list clicks so far. */
+  function renderOpen(openCompanyId: string, listOpenCount: number): Element {
+    hooks.index = 0;
+    return ProspectingDataRoomChat({ attemptId: "attempt-1", companies: CASCADE_LIST, openCompanyId, listOpenCount }) as Element;
+  }
+  async function sendWith(text: string, openCompanyId: string, listOpenCount: number): Promise<void> {
+    (theInput(renderOpen(openCompanyId, listOpenCount)).props.onChange as (event: unknown) => void)({
+      target: { value: text, selectionStart: text.length },
+    });
+    const button = find(renderOpen(openCompanyId, listOpenCount), (element) => element.props["aria-label"] === "Send message");
+    (button.props.onClick as () => void)();
+    await settle();
+  }
+  /** Picks Summit Dental Group from the suggestions, then sends the question. */
+  async function askAboutSummit(): Promise<void> {
+    (theInput(renderOpen("cascade", 0)).props.onChange as (event: unknown) => void)({ target: { value: "why is summ", selectionStart: 11 } });
+    const summit = options(renderOpen("cascade", 0)).find((option) => String(option.props.id).endsWith("summit"));
+    (summit?.props.onClick as () => void)();
+    await sendWith("why is Summit Dental Group a good choice?", "cascade", 0);
+  }
+
+  it("Cascade open → 'why is summit a good choice?' (Summit picked) → 'why is it not a good choice?' with no click → Summit", async () => {
+    await askAboutSummit();
+    expect(sent(0).scope).toEqual({ mode: "companies", companyIds: ["summit"] });
+    await sendWith("why is it not a good choice?", "cascade", 0);
+    expect(sent(1).scope).toEqual({ mode: "companies", companyIds: ["summit"] });
+  });
+
+  it("the same, but the student opens Cascade Attorneys in the list before the last question → Cascade", async () => {
+    await askAboutSummit();
+    // The list click: Cascade (already open) is opened again.
+    await sendWith("why is it not a good choice?", "cascade", 1);
+    expect(sent(1).scope).toEqual({ mode: "companies", companyIds: ["cascade"] });
+  });
+});
+
+describe("'the other one' follows the conversation (2026-11-08)", () => {
+  const LIST: DataRoomCompany[] = [
+    company("cascade", "Cascade Attorneys", "Legal Services", "Austin, TX"),
+    company("summit", "Summit Dental Group", "Dental", "Front Range, CO"),
+    company("falcon", "Falcon Market", "Retail", "Denver, CO"),
+  ];
+  function renderOpen(openCompanyId: string, listOpenCount = 0): Element {
+    hooks.index = 0;
+    return ProspectingDataRoomChat({ attemptId: "attempt-1", companies: LIST, openCompanyId, listOpenCount }) as Element;
+  }
+  async function sendWith(text: string, openCompanyId = "cascade", listOpenCount = 0): Promise<void> {
+    (theInput(renderOpen(openCompanyId, listOpenCount)).props.onChange as (event: unknown) => void)({
+      target: { value: text, selectionStart: text.length },
+    });
+    const button = find(renderOpen(openCompanyId, listOpenCount), (element) => element.props["aria-label"] === "Send message");
+    (button.props.onClick as () => void)();
+    await settle();
+  }
+
+  it("compare Summit and Cascade → 'im feeling Cascade Attorneys am i right?' → 'then what about the other one?' → Summit", async () => {
+    await sendWith("compare Summit Dental Group and Cascade Attorneys");
+    expect(sent(0).scope).toEqual({ mode: "companies", companyIds: ["summit", "cascade"] });
+    await sendWith("im feeling Cascade Attorneys am i right?");
+    expect(sent(1).scope).toEqual({ mode: "companies", companyIds: ["cascade"] });
+    await sendWith("then what about the other one?");
+    expect(sent(2).scope).toEqual({ mode: "companies", companyIds: ["summit"] });
+  });
+
+  it("the current company is the one opened in the list since, if any: open Summit → 'the other one' is Cascade", async () => {
+    await sendWith("compare Summit Dental Group and Cascade Attorneys");
+    await sendWith("im feeling Cascade Attorneys am i right?");
+    await sendWith("and the other company?", "summit", 1);
+    expect(sent(2).scope).toEqual({ mode: "companies", companyIds: ["cascade"] });
+  });
+
+  it("several left → 'Which one did you mean?' with them; nothing is sent until one is picked", async () => {
+    await sendWith("compare Summit Dental Group, Cascade Attorneys and Falcon Market");
+    await sendWith("tell me about Cascade Attorneys");
+    await sendWith("what about the other two?");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const tree = renderOpen("cascade");
+    expect(find(tree, (element) => element.props.children === "Which one did you mean?")).toBeTruthy();
+    expect(options(tree).map((option) => String(option.props.id).replace(/^.*-option-/, ""))).toEqual(["summit", "falcon"]);
+  });
+
+  it("no earlier 2–3 company question, or a phrase that isn't 'the other one' → today's rules", async () => {
+    await sendWith("tell me about Summit Dental Group");
+    await sendWith("what about the other one?");
+    // No group to take "the other" from: the follow-up rule, as before.
+    expect(sent(1).scope).toEqual({ mode: "companies", companyIds: ["summit"] });
+    await sendWith("compare Summit Dental Group and Cascade Attorneys");
+    await sendWith("tell me about Cascade Attorneys");
+    await sendWith("on the other hand, are they hiring?");
+    expect(sent(4).scope).toEqual({ mode: "companies", companyIds: ["cascade"] });
+  });
+});

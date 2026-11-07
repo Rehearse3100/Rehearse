@@ -15,7 +15,9 @@
  * for (by locations or name; never by fit), under a count line and with no opening
  * sentence (as a table: layout "table", each item with its card values). A request
  * for the previous list again in another order keeps that list's companies (all of
- * its conditions), re-sorted. A question that also asks for something no filter can
+ * its conditions), re-sorted; a question that narrows the previous list (the router's
+ * narrows_previous: "from this list…", "of these…", "greater than 6" right after a
+ * list) runs its new conditions over that list's companies only. A question that also asks for something no filter can
  * express (the router's unfiltered: software, budget, risks…) still gets the list for
  * the conditions it could apply, under a count line naming them (from the config's
  * labels) and a fixed note that research can't be searched across all companies. A
@@ -464,15 +466,16 @@ export function matchesFilters(
  * locations · {Metro}" under its name from the database.
  * It is shown as a table (layout "table"): each item also carries its card values
  * (industry, locations, metro, territory, online booking); the text stays the fallback.
- * The companies' own industry names decide exact industry matches (matchesIndustry).
+ * The companies' own industry names decide exact industry matches (matchesIndustry);
+ * knownIndustries can name the whole roster's instead (when a list is narrowed).
  */
 export function answerFilter(
   filter: RosterFilter | readonly RosterFilter[],
   companies: readonly FilterCompany[],
-  sort?: RosterSort | null
+  sort?: RosterSort | null,
+  knownIndustries: ReadonlySet<string> = industryKeys(companies)
 ): ScopedAnswer {
   const filters: readonly RosterFilter[] = Array.isArray(filter) ? filter : [filter as RosterFilter];
-  const knownIndustries = industryKeys(companies);
   return listAnswer(
     companies.filter((company) => matchesFilters(company, filters, knownIndustries)),
     sort
@@ -504,7 +507,31 @@ function listAnswer(companies: readonly FilterCompany[], sort?: RosterSort | nul
 }
 
 /**
+ * The conditions' list over these companies; when the question also asked for something
+ * no filter can express (unfiltered), under partialMatchCountIntro and unfilteredNote.
+ */
+function filteredAnswer(
+  filters: readonly RosterFilter[],
+  companies: readonly FilterCompany[],
+  sort: RosterSort | null | undefined,
+  isPartial: boolean,
+  knownIndustries: ReadonlySet<string>,
+  config: DataRoomChatConfig
+): ScopedAnswer {
+  const answer = answerFilter(filters, companies, sort, knownIndustries);
+  if (!isPartial) {
+    return answer;
+  }
+  // Only part of the question could be filtered: the same list, saying what was applied.
+  return { ...answer, intro: partialMatchCountIntro(answer.items.length, filters, config), note: unfilteredNote(config) };
+}
+
+/**
  * The answer to an All-companies question:
+ * - narrowing the previous list (narrows_previous, and previousListIds: the companies
+ *   the previous answer listed): the new conditions run over those companies only
+ *   (the count line counts them; a sort works on top; partial questions as below); a
+ *   narrowing question with no condition ("how many of these?") gets that list again;
  * - a filter_list question with valid conditions runs over the roster. When it also
  *   asks for something no filter can express (unfiltered), the list is the same, under
  *   partialMatchCountIntro and with unfilteredNote as its note;
@@ -521,35 +548,35 @@ export function answerAllCompanies(
   previousListIds: readonly string[] = [],
   config: DataRoomChatConfig = getDataRoomChatConfig()
 ): ScopedAnswer {
-  const { intent, filters, criteriaCount, sort, unfiltered } = decision;
+  const { intent, filters, criteriaCount, sort, unfiltered, narrowsPrevious } = decision;
   if (intent === "meta_or_bulk") {
     return { intro: metaAllModeReply(config), items: [] };
+  }
+  const ids = new Set(previousListIds);
+  const listed = companies.filter((company) => ids.has(company.id));
+  // Exact industry names come from the whole roster, also when a list is narrowed.
+  const knownIndustries = industryKeys(companies);
+  // Narrowing the previous list ("from this list, also not fitness", "greater than 6"
+  // right after a list): the new conditions run over that list's companies only.
+  if (narrowsPrevious && intent === "filter_list" && listed.length > 0) {
+    if (filters && filters.length > 0) {
+      return filteredAnswer(filters, listed, sort, unfiltered === true, knownIndustries, config);
+    }
+    if (criteriaCount === 0) {
+      return listAnswer(listed, sort);
+    }
   }
   // The previous list again in another order ("give this again by locations"): the
   // same companies, so every one of its conditions is kept, re-sorted; a condition
   // the router read narrows it further.
-  if (sort && previousListIds.length > 0 && (intent === "filter_list" || intent === "overview")) {
-    const ids = new Set(previousListIds);
-    const listed = companies.filter((company) => ids.has(company.id));
-    if (listed.length > 0) {
-      const knownIndustries = industryKeys(companies);
-      return listAnswer(filters ? listed.filter((company) => matchesFilters(company, filters, knownIndustries)) : listed, sort);
-    }
+  if (sort && listed.length > 0 && (intent === "filter_list" || intent === "overview")) {
+    return listAnswer(filters ? listed.filter((company) => matchesFilters(company, filters, knownIndustries)) : listed, sort);
   }
   if (intent === "filter_list" && filters === null && criteriaCount === 0) {
     return { intro: totalCountReply(companies.length), items: [] };
   }
   if (intent === "filter_list" && filters && filters.length > 0) {
-    const answer = answerFilter(filters, companies, sort);
-    if (!unfiltered) {
-      return answer;
-    }
-    // Only part of the question could be filtered: the same list, saying what was applied.
-    return {
-      ...answer,
-      intro: partialMatchCountIntro(answer.items.length, filters, config),
-      note: unfilteredNote(config),
-    };
+    return filteredAnswer(filters, companies, sort, unfiltered === true, knownIndustries, config);
   }
   return { intro: allModeReply(config), items: [] };
 }

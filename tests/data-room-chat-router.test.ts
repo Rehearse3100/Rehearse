@@ -861,3 +861,23 @@ describe("negations and typos (2026-11-08)", () => {
     expect(ROUTER_SYSTEM_PROMPT.length).toBeGreaterThanOrEqual(MIN_ROUTER_PROMPT_CHARS);
   });
 });
+
+describe("narrows_previous (2026-11-08)", () => {
+  it("one prompt line with a neutral example for each case; read only when exactly true", () => {
+    expect(ROUTER_SYSTEM_PROMPT).toContain('"narrows_previous": boolean');
+    for (const text of [
+      'narrows_previous: true when an all-companies question refines the list in the previous answer instead of starting a new search',
+      '"from this list", "of these", "among them", "which of them", "also"; for example "of these, which are not fitness studios?" is true',
+      '(for example "greater than 6" right after a list is true); then filters hold only the new conditions',
+      'false when it starts a new search (for example "now show me companies in Texas that are fitness studios" after a list is false)',
+    ]) {
+      expect(ROUTER_SYSTEM_PROMPT, text).toContain(text);
+    }
+    const base = { intent: "filter_list", topic: null, attribute: null, filters: [{ field: "locations", op: "gt", value: 6 }], criteria_count: 1, confidence: "high" };
+    expect(parseRouterReply(reply({ ...base, narrows_previous: true }), "all")).toMatchObject({ narrowsPrevious: true });
+    for (const value of [false, "true", 1, null, undefined]) {
+      expect(parseRouterReply(reply({ ...base, narrows_previous: value }), "all"), String(value)).not.toHaveProperty("narrowsPrevious");
+    }
+    expect(ROUTER_SYSTEM_PROMPT.length).toBeGreaterThanOrEqual(MIN_ROUTER_PROMPT_CHARS);
+  });
+});

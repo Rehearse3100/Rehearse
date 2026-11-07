@@ -42,7 +42,8 @@
  * answer-key question its own reply; anything else a fixed reply
  * (lib/data-room-chat-filter.ts); a list can be sorted by locations or name, and
  * "give this again, by locations" re-sorts the previous list's companies (all its
- * conditions kept). An answer-key question about open companies gets the public
+ * conditions kept); a question that narrows the previous list ("from this list, also
+ * not fitness", "greater than 6" right after a list) runs over that list only. An answer-key question about open companies gets the public
  * overview under "I can't share hidden or internal information. Here's what's
  * public:". One to three companies: the code-side policy
  * (lib/data-room-chat-policy.ts) decides which facts are allowed; overview, compare
@@ -582,8 +583,11 @@ export async function POST(request: Request): Promise<NextResponse> {
         return NextResponse.json(fixed);
       }
       // "Give this again, by locations": the previous list's companies (every one of
-      // its conditions), re-sorted; only when the question points back at that list.
-      const previousListIds = refersToPreviousList(newMessage) ? parsePreviousListIds(body.history) : [];
+      // its conditions), re-sorted, when the question points back at that list; and
+      // (narrows_previous) "from this list…" / "greater than 6" right after a list: the
+      // new conditions run over that list's companies only.
+      const previousListIds =
+        refersToPreviousList(newMessage) || decision.narrowsPrevious === true ? parsePreviousListIds(body.history) : [];
       return NextResponse.json(answerAllCompanies(decision, roster.map(toListCompany), previousListIds, chatConfig));
     }
 

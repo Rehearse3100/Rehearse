@@ -4,9 +4,10 @@
  * A sliding "Selected | All companies" switch above the input picks the mode, with
  * a hint line under it. Selected: each question is about a scope worked out live
  * (lib/data-room-chat-scope.ts): companies picked from suggestions or named in the
- * text, the previous question's companies (follow-ups, until a different company is
- * opened; right after an All-companies list, "it" means a listed company), or the
- * open company. Type-to-pick: after 3 letters, matching companies appear in a
+ * text, "the other one" (the most recent 2–3 company question's companies minus the
+ * current one), the previous question's companies (follow-ups, until a company is
+ * opened in the list, even the one already open: listOpenCount; right after an
+ * All-companies list, "it" means a listed company), or the open company. Type-to-pick: after 3 letters, matching companies appear in a
  * dropdown above the input (Enter picks the highlighted one, then Enter sends); "Which one did you
  * mean?" uses the same dropdown. All companies: no name suggestions or highlighting,
  * and every question goes out as typed with scope all (it never leaves the mode).
@@ -89,6 +90,8 @@ export type UserMessage = {
    * the open company now). Missing on questions saved before 2026-10-15.
    */
   openCompanyId?: string | null;
+  /** How many list clicks had opened a company when it was sent; missing on questions saved before 2026-11-08. */
+  listOpenCount?: number;
 };
 
 export type AssistantMessage = {
@@ -531,6 +534,12 @@ type ProspectingDataRoomChatProps = {
    * company name in a reply calls it. Omitted → names in replies stay plain text.
    */
   onOpenCompany?: (companyId: string) => void;
+  /**
+   * How many times a company has been opened in the left list (re-opening the open one
+   * counts too): a follow-up after a list click goes to the opened company. Omitted →
+   * only a change of open company counts, as before.
+   */
+  listOpenCount?: number;
 };
 
 /**
@@ -543,6 +552,7 @@ export function ProspectingDataRoomChat({
   openCompanyId,
   onClose,
   onOpenCompany,
+  listOpenCount,
 }: ProspectingDataRoomChatProps): React.ReactElement {
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
   const [hasRestored, setHasRestored] = useState(false);
@@ -646,10 +656,26 @@ export function ProspectingDataRoomChat({
           message.scope.mode === "all" && reply?.role === "assistant" && !reply.isError
             ? reply.items.map((item) => item.companyId)
             : [];
-        return { scope: message.scope, openCompanyId: openAtSend, listedIds };
+        return {
+          scope: message.scope,
+          openCompanyId: openAtSend,
+          ...(typeof message.listOpenCount === "number" ? { listOpenCount: message.listOpenCount } : {}),
+          listedIds,
+        };
       }
     }
     return null;
+  }, [messages]);
+
+  // "The other one": the companies of the most recent 2–3 company question in this chat.
+  const lastGroupIds = useMemo((): string[] => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message?.role === "user" && message.scope.mode === "companies" && message.scope.companyIds.length >= 2) {
+        return message.scope.companyIds;
+      }
+    }
+    return [];
   }, [messages]);
 
   const fragment = wordFragmentBeforeCaret(input, caret);
@@ -701,7 +727,9 @@ export function ProspectingDataRoomChat({
     allCompanies,
     pickedIds: activePickedIds,
     openCompanyId,
+    listOpenCount,
     lastQuestion,
+    lastGroupIds,
   });
 
   // Selected companies (the ones the hint names) are coloured in the input; none in All companies mode.
@@ -789,6 +817,7 @@ export function ProspectingDataRoomChat({
       content: text,
       scope,
       openCompanyId,
+      ...(typeof listOpenCount === "number" ? { listOpenCount } : {}),
     };
     const withQuestion = [...current, userMessage];
 
@@ -861,7 +890,9 @@ export function ProspectingDataRoomChat({
       allCompanies,
       pickedIds: [...activePickedIds, ...extraPickedIds],
       openCompanyId,
+      listOpenCount,
       lastQuestion,
+      lastGroupIds,
     });
     if (decision.kind === "error") {
       setNotice(decision.message);

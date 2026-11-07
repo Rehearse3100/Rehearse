@@ -610,3 +610,56 @@ describe("small talk (part 3)", () => {
     expect(GOODBYE_REPLY).toBe("Good luck with your research!");
   });
 });
+
+describe("follow-ups after a list click, and 'the other one' (2026-11-08)", () => {
+  const index = buildScopeIndex([
+    { id: "cascade", name: "Cascade Attorneys", industry: "Legal Services" },
+    { id: "summit", name: "Summit Dental Group", industry: "Dental" },
+    { id: "falcon", name: "Falcon Market", industry: "Retail" },
+  ]);
+  const base = { index, allCompanies: false, pickedIds: [] as string[], openCompanyId: "cascade" };
+  const aboutSummit = { scope: { mode: "companies" as const, companyIds: ["summit"] }, openCompanyId: "cascade", listOpenCount: 2 };
+
+  it("a list click since the question (even on the open company) ends the follow-up; a question saved without a count compares companies only", () => {
+    expect(resolveSendScope({ ...base, text: "why is it not good?", listOpenCount: 2, lastQuestion: aboutSummit })).toEqual({
+      kind: "send",
+      scope: { mode: "companies", companyIds: ["summit"] },
+    });
+    expect(resolveSendScope({ ...base, text: "why is it not good?", listOpenCount: 3, lastQuestion: aboutSummit })).toEqual({
+      kind: "send",
+      scope: { mode: "companies", companyIds: ["cascade"] },
+    });
+    const { listOpenCount: _count, ...saved } = aboutSummit;
+    expect(resolveSendScope({ ...base, text: "why is it not good?", listOpenCount: 3, lastQuestion: saved })).toEqual({
+      kind: "send",
+      scope: { mode: "companies", companyIds: ["summit"] },
+    });
+  });
+
+  it("'the other one / company / two / the others / the other?' read generically; 'the other day' and 'on the other hand' are not", () => {
+    const group = ["summit", "cascade"];
+    const lastQuestion = { scope: { mode: "companies" as const, companyIds: ["cascade"] }, openCompanyId: "cascade" };
+    for (const text of ["what about the other one?", "And the other company?", "the others?", "what about the other?", "THE OTHER ONES"]) {
+      expect(resolveSendScope({ ...base, text, lastQuestion, lastGroupIds: group }), text).toEqual({
+        kind: "send",
+        scope: { mode: "companies", companyIds: ["summit"] },
+      });
+    }
+    for (const text of ["what did they do the other day?", "on the other hand, are they hiring?"]) {
+      expect(resolveSendScope({ ...base, text, lastQuestion, lastGroupIds: group }), text).toEqual({
+        kind: "send",
+        scope: { mode: "companies", companyIds: ["cascade"] },
+      });
+    }
+    // The preview (hint line) names the same company.
+    expect(previewScope({ ...base, text: "what about the other one?", lastQuestion, lastGroupIds: group })).toEqual({
+      kind: "companies",
+      companies: [{ id: "summit", name: "Summit Dental Group", industry: "Dental" }],
+    });
+    // A company named in the message wins, as before.
+    expect(resolveSendScope({ ...base, text: "the other one, Falcon Market?", lastQuestion, lastGroupIds: group })).toEqual({
+      kind: "send",
+      scope: { mode: "companies", companyIds: ["falcon"] },
+    });
+  });
+});

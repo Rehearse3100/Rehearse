@@ -890,3 +890,47 @@ describe("negative conditions: not, outside, except (2026-11-08)", () => {
     ).toBe("1 company matches the filters I could apply (industry and state).");
   });
 });
+
+describe("narrowing the previous list (2026-11-08)", () => {
+  const OUTSIDE_IDS = ["outdoor", "aspen"];
+  const narrowing = (overrides: Partial<RouterDecision>): RouterDecision => decision({ narrowsPrevious: true, ...overrides });
+  const ids = (answer: { items: Array<{ companyId: string }> }): string[] => answer.items.map((item) => item.companyId);
+
+  it("the new conditions run over the previous list only; the count line counts them", () => {
+    const answer = answerAllCompanies(narrowing({ filters: [{ field: "online_booking", op: "eq", value: true }] }), ROSTER, OUTSIDE_IDS);
+    expect(ids(answer)).toEqual(["aspen", "outdoor"]);
+    expect(answer.intro).toBe("2 companies match.");
+    // Not narrowing: the whole roster (Maple has online booking too).
+    expect(ids(answerAllCompanies(decision({ filters: [{ field: "online_booking", op: "eq", value: true }] }), ROSTER, OUTSIDE_IDS))).toEqual([
+      "aspen",
+      "maple",
+      "outdoor",
+    ]);
+  });
+
+  it("a negative condition narrows too; a sort works on top; a partial question keeps its line and note", () => {
+    const notVet = { field: "industry", op: "not_contains", value: "Veterinary" } as const;
+    expect(ids(answerAllCompanies(narrowing({ filters: [notVet] }), ROSTER, OUTSIDE_IDS))).toEqual(["outdoor"]);
+    const sorted = answerAllCompanies(
+      narrowing({ filters: [{ field: "locations", op: "gte", value: 1 }], sort: { field: "locations", direction: "desc" } }),
+      ROSTER,
+      ["summit", "maple", "falcon"]
+    );
+    expect(ids(sorted)).toEqual(["summit", "maple", "falcon"]);
+    const partial = answerAllCompanies(narrowing({ filters: [notVet], unfiltered: true }), ROSTER, OUTSIDE_IDS);
+    expect(partial.intro).toBe("1 company matches the filters I could apply (industry).");
+    expect(partial.note).toBeDefined();
+  });
+
+  it("no previous list, or no narrowing → as today; a narrowing question with no condition gets the list again", () => {
+    const greaterThan2 = { field: "locations", op: "gt", value: 2 } as const;
+    expect(ids(answerAllCompanies(narrowing({ filters: [greaterThan2] }), ROSTER, []))).toEqual(["maple", "summit"]);
+    expect(ids(answerAllCompanies(narrowing({ filters: [greaterThan2] }), ROSTER, ["gone"]))).toEqual(["maple", "summit"]);
+    // "How many of these?" right after a list: that list (not the roster total).
+    const again = answerAllCompanies(narrowing({ filters: null, criteriaCount: 0 }), ROSTER, OUTSIDE_IDS);
+    expect(again.intro).toBe("2 companies match.");
+    expect(answerAllCompanies(decision({ filters: null, criteriaCount: 0 }), ROSTER, OUTSIDE_IDS).intro).toBe(
+      `There are ${ROSTER.length} companies in the Data Room.`
+    );
+  });
+});

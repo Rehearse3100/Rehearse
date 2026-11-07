@@ -369,6 +369,8 @@ export function buildOutOfScopeMessage(mention: OutOfScopeMention): string {
 export type LastQuestion = {
   scope: ChatScope;
   openCompanyId: string | null;
+  /** How many times a company had been opened in the list when it was sent; omitted on older questions. */
+  listOpenCount?: number;
   /** The companies its answer listed (an All-companies list answer); empty or omitted otherwise. */
   listedIds?: readonly string[];
 };
@@ -383,8 +385,12 @@ export type ScopeInput = {
   /** Companies picked from suggestions (or from "Which one did you mean?"). */
   pickedIds: readonly string[];
   openCompanyId: string | null;
+  /** How many times a company has been opened in the list so far (re-opening the open one counts too). */
+  listOpenCount?: number;
   /** The previous question, for follow-ups that name no company (null or omitted: none). */
   lastQuestion?: LastQuestion | null;
+  /** The companies of the most recent 2–3 company question in this chat ("the other one"); omitted: none. */
+  lastGroupIds?: readonly string[];
 };
 
 export type ScopeDecision =
@@ -393,14 +399,26 @@ export type ScopeDecision =
   | { kind: "error"; message: string };
 
 /**
+ * True when the student opened a company in the list after the previous question was
+ * sent: a different open company now, or (2026-11-08) more list clicks than then, so
+ * opening the company that was already open counts too. A question saved before the
+ * count existed is compared by the open company only.
+ */
+function hasOpenedSince(last: LastQuestion, input: ScopeInput): boolean {
+  if (last.openCompanyId !== input.openCompanyId) {
+    return true;
+  }
+  return last.listOpenCount !== undefined && input.listOpenCount !== undefined && last.listOpenCount !== input.listOpenCount;
+}
+
+/**
  * Follow-up scope: the previous question's 1–3 companies, as long as the student
- * hasn't opened a different company since it was sent (the open company then is
- * compared with the open company now). Null when it doesn't apply, including when
- * the previous question was about All companies.
+ * hasn't opened a company in the list since it was sent (hasOpenedSince). Null when
+ * it doesn't apply, including when the previous question was about All companies.
  */
 function followUpScopeIds(input: ScopeInput): string[] | null {
   const last = input.lastQuestion;
-  if (!last || last.scope.mode !== "companies" || last.openCompanyId !== input.openCompanyId) {
+  if (!last || last.scope.mode !== "companies" || hasOpenedSince(last, input)) {
     return null;
   }
   const ids = last.scope.companyIds.filter((id) => input.index.byId.has(id));
@@ -436,7 +454,7 @@ function singularBackReference(text: string): string | null {
  */
 function listFollowUp(input: ScopeInput): ScopeDecision | null {
   const last = input.lastQuestion;
-  if (!last || last.scope.mode !== "all" || last.openCompanyId !== input.openCompanyId) {
+  if (!last || last.scope.mode !== "all" || hasOpenedSince(last, input)) {
     return null;
   }
   const listed = (last.listedIds ?? []).filter((id) => input.index.byId.has(id));
@@ -457,13 +475,52 @@ function listFollowUp(input: ScopeInput): ScopeDecision | null {
 }
 
 /**
+ * "The other one", "the other company", "the other ones / companies / two / three",
+ * "the others", or "the other" ending the phrase ("what about the other?"), any case.
+ * Not "the other day" or "on the other hand".
+ */
+const OTHER_REFERENCE =
+  /\bthe\s+other\s+(?:one|ones|company|companies|two|three)\b|\bthe\s+others\b|\bthe\s+other\s*(?=[?.!,;:]|$)/i;
+
+/**
+ * "The other one" with no company name (2026-11-08): the companies of the most recent
+ * 2–3 company question in this chat (lastGroupIds), minus the current company — the
+ * one the message would go to otherwise (the previous question's companies, unless a
+ * company was opened in the list since; then the open company). One left → it;
+ * several → "Which one did you mean?" with them; none, or no earlier 2–3 company
+ * question → null (the usual rules).
+ */
+function otherCompanies(input: ScopeInput): ScopeDecision | null {
+  const reference = input.text.match(OTHER_REFERENCE)?.[0];
+  const group = (input.lastGroupIds ?? []).filter((id) => input.index.byId.has(id));
+  if (!reference || group.length < 2) {
+    return null;
+  }
+  const current =
+    followUpScopeIds(input) ??
+    (input.openCompanyId && input.index.byId.has(input.openCompanyId) ? [input.openCompanyId] : []);
+  const remaining = group.filter((id) => !current.includes(id));
+  if (remaining.length === 0) {
+    return null;
+  }
+  if (remaining.length === 1) {
+    return { kind: "send", scope: { mode: "companies", companyIds: remaining } };
+  }
+  const options = remaining
+    .map((id) => input.index.byId.get(id))
+    .filter((company): company is ScopeCompany => Boolean(company));
+  return { kind: "ask", word: reference.toLowerCase().replace(/\s+/g, " "), options };
+}
+
+/**
  * Scope for sending, in priority order: (0) a singular back-reference right after
  * an All-companies list → the listed companies (see listFollowUp); (1) All
  * companies; (2) picked companies plus companies named in the text (an ambiguous
- * first word asks instead, and more than 3 is an error); (3) the previous
- * question's companies, unless a different company was opened since (with 2–3 of
- * them, a singular back-reference such as "it" asks which one instead); (4) the
- * open company; (5) nothing → error.
+ * first word asks instead, and more than 3 is an error); (2a) "the other one" → the
+ * most recent 2–3 company question's companies minus the current one (see
+ * otherCompanies); (3) the previous question's companies, unless a company was opened
+ * in the list since (with 2–3 of them, a singular back-reference such as "it" asks
+ * which one instead); (4) the open company; (5) nothing → error.
  */
 export function resolveSendScope(input: ScopeInput): ScopeDecision {
   const fromList = listFollowUp(input);
@@ -486,6 +543,10 @@ export function resolveSendScope(input: ScopeInput): ScopeDecision {
   }
   if (ids.length > 0) {
     return { kind: "send", scope: { mode: "companies", companyIds: ids } };
+  }
+  const other = otherCompanies(input);
+  if (other) {
+    return other;
   }
   const followUp = followUpScopeIds(input);
   if (followUp) {
@@ -528,6 +589,14 @@ export function previewScope(input: ScopeInput): ScopePreview {
   const picked = input.pickedIds.filter((id) => input.index.byId.has(id));
   const detected = detectCompanies(input.index, input.text, picked).companyIds;
   const ids = Array.from(new Set([...picked, ...detected]));
+  // "The other one" going to one company: the hint names it.
+  const other = ids.length === 0 ? otherCompanies(input) : null;
+  if (other?.kind === "send" && other.scope.mode === "companies") {
+    const companies = other.scope.companyIds
+      .map((id) => input.index.byId.get(id))
+      .filter((company): company is ScopeCompany => Boolean(company));
+    return { kind: "companies", companies };
+  }
   const openCompanyIds =
     input.openCompanyId && input.index.byId.has(input.openCompanyId) ? [input.openCompanyId] : [];
   const fallback = ids.length > 0 ? ids : followUpScopeIds(input) ?? openCompanyIds;

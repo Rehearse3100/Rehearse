@@ -10,7 +10,9 @@
  * the assistant 360–640px, and the company page between them keeps at least 420px
  * (clampDataRoomPanelWidths). Defaults are 260px and 436px; each width is
  * remembered per browser. A company name in an assistant reply opens that company
- * the same way a click in the list does (onSelectCompany).
+ * the same way a click in the list does (onSelectCompany). List clicks are counted
+ * (listOpenCount), so the assistant knows a company was opened in the list since a
+ * question even when it was the one already open.
  * Shortlisting still goes through ProspectingShortlistForm and the crm-leads routes.
  */
 
@@ -138,6 +140,8 @@ export function ProspectingDataRoom({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  // Every company opened from the list, the open one again included (the assistant's follow-up rule).
+  const [listOpenCount, setListOpenCount] = useState(0);
   const [shortlist, setShortlist] = useState<ShortlistEntry[]>([]);
   const [formCompany, setFormCompany] = useState<DataRoomCompany | null>(null);
   const [removingLeadId, setRemovingLeadId] = useState<string | null>(null);
@@ -485,7 +489,10 @@ export function ProspectingDataRoom({
                     }
                   }}
                   type="button"
-                  onClick={() => onSelectCompany(company.id)}
+                  onClick={() => {
+                    setListOpenCount((count) => count + 1);
+                    onSelectCompany(company.id);
+                  }}
                   aria-current={isOpen ? "true" : undefined}
                   className={`w-full flex items-center justify-between gap-2 px-3 py-1.5 text-left rounded-lg border transition-[box-shadow,border-color,background-color] duration-150 ${
                     isOpen
@@ -720,6 +727,7 @@ export function ProspectingDataRoom({
           openCompanyId={selected?.id ?? null}
           onClose={() => setIsAssistantOpen(false)}
           onOpenCompany={onSelectCompany}
+          listOpenCount={listOpenCount}
         />
       </aside>
 

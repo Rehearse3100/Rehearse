@@ -17,7 +17,8 @@
  * reply also says whether the question is in English (parseRouterEnglish; a message
  * with two common English function words counts as English whatever it says,
  * hasEnglishFunctionWords) and, for a list, the order it asks for (sort: locations or
- * name). For All companies, the user message also lists the roster's industry
+ * name), and whether an All-companies question narrows the previous list instead of
+ * starting a new search (narrows_previous). For All companies, the user message also lists the roster's industry
  * names (any simulation; names only), and the prompt asks the router to pick an
  * industry filter's value from that list. "Compare …", "side by side" and "vs" are
  * read in code (isCompareRequest).
@@ -92,6 +93,8 @@ export type RouterDecision = {
   sort?: RosterSort;
   /** All companies: the question also asks for something no filter can express; omitted otherwise. */
   unfiltered?: true;
+  /** All companies: the question narrows the previous answer's list (its new conditions run over it); omitted otherwise. */
+  narrowsPrevious?: true;
   /** small_talk only: its kind, or null when the router gave none it knows. */
   smallTalkKind?: SmallTalkKind | null;
   /** name_query only: the condition on the names. */
@@ -140,7 +143,7 @@ export function buildRouterSystemPrompt(config: DataRoomChatConfig = getDataRoom
   const topics = topicList(config);
   return [
     "You classify one question a student asks while researching companies in a sales-training Data Room. You never see any company information, only the question. Reply with a single JSON object and nothing else:",
-    '{"intent": string, "topic": string | null, "attribute": string | null, "filters": object[] | null, "criteria_count": number, "unfiltered": boolean, "sort": object | null, "name_match": object | null, "small_talk_kind": string | null, "standalone_question": string, "is_follow_up": boolean, "exact_value": boolean, "english": boolean, "confidence": "high" | "low"}',
+    '{"intent": string, "topic": string | null, "attribute": string | null, "filters": object[] | null, "criteria_count": number, "unfiltered": boolean, "narrows_previous": boolean, "sort": object | null, "name_match": object | null, "small_talk_kind": string | null, "standalone_question": string, "is_follow_up": boolean, "exact_value": boolean, "english": boolean, "confidence": "high" | "low"}',
     "",
     "intent (pick one):",
     '- overview: a general or open-ended question about the company or companies ("tell me about them", "what should I know?", "tell me everything", "summarize").',
@@ -169,6 +172,8 @@ export function buildRouterSystemPrompt(config: DataRoomChatConfig = getDataRoom
     'For an industry condition, use the exact name from the "Industries in this Data Room" line of the message that matches what the student means, plurals, synonyms and everyday words included; when several names match, add one industry condition for each.',
     "",
     'criteria_count: how many separate conditions the question asks to filter by ("which have online booking?" is 1; "fitness studios in Phoenix" is 2; 0 when it filters by nothing, as in "how many companies are there?", which is filter_list with criteria_count 0).',
+    "",
+    'narrows_previous: true when an all-companies question refines the list in the previous answer instead of starting a new search, either because it says so ("from this list", "of these", "among them", "which of them", "also"; for example "of these, which are not fitness studios?" is true) or because it is only a condition that makes sense applied to that list (for example "greater than 6" right after a list is true); then filters hold only the new conditions. false when it starts a new search (for example "now show me companies in Texas that are fitness studios" after a list is false) and when there is no previous list.',
     "",
     'unfiltered: true when a filter_list question also asks for something these fields can\'t express (for example software, budget, staffing, reviews, risks or fit); still put the conditions you can express in filters ("fitness studios in Phoenix that use a booking app" is industry and metro conditions with unfiltered true). false otherwise.',
     "",
@@ -287,8 +292,8 @@ const TOPIC_FREE_INTENTS: readonly RouterIntent[] = ["filter_list", "name_query"
  * read as a one-item list; no limit on how many); any condition the whitelist can't
  * read makes them null (an All-companies question then gets the fixed reply); a
  * criteria count that isn't a whole number of 0 or more (as a number or numeric
- * string) becomes null. exact_value, unfiltered and is_follow_up are true only when
- * exactly true. A valid "sort" (locations or name, asc or desc; parseRosterSort) is
+ * string) becomes null. exact_value, unfiltered, narrows_previous and is_follow_up are
+ * true only when exactly true. A valid "sort" (locations or name, asc or desc; parseRosterSort) is
  * kept as sort; anything else leaves it out (A–Z). small_talk keeps its kind (null
  * when unknown); name_query its name_match (parseNameMatch). standalone_question is
  * kept as trimmed text when it is a non-empty string (the route checks it).
@@ -311,6 +316,7 @@ export function parseRouterReply(raw: string | null | undefined, scopeKind?: Sco
     filter: rawFilter,
     criteria_count: criteriaCount,
     unfiltered,
+    narrows_previous: narrowsPrevious,
     sort: rawSort,
     name_match: rawNameMatch,
     small_talk_kind: smallTalkKind,
@@ -349,6 +355,7 @@ export function parseRouterReply(raw: string | null | undefined, scopeKind?: Sco
     exactValue: exactValue === true,
     ...(sort ? { sort } : {}),
     ...(unfiltered === true ? { unfiltered: true as const } : {}),
+    ...(narrowsPrevious === true ? { narrowsPrevious: true as const } : {}),
     ...(intent === "small_talk" ? { smallTalkKind: isOneOf(SMALL_TALK_KINDS, smallTalkKind) ? smallTalkKind : null } : {}),
     ...(nameMatch ? { nameMatch } : {}),
     ...(standalone ? { standaloneQuestion: standalone } : {}),

@@ -563,6 +563,36 @@ function claimsAbsence(text: string): boolean {
   return NEGATION_PATTERN.test(text.toLowerCase()) && words.some((word) => ABSENCE_REPORT_WORD.test(word));
 }
 
+// ── Self-reference: an opening never talks about the answer itself ───
+
+/**
+ * Phrases that point at the answer or its facts instead of saying what they say: "the
+ * answer", "the facts", "these facts", "the information (provided)", "the details",
+ * "the data", "the response", "the results", "the list", "the following", "listed /
+ * shown / provided / mentioned … below / above / here", "as shown / listed / noted…".
+ */
+const SELF_REFERENCE_PATTERNS: readonly RegExp[] = [
+  /\b(?:the|this|these|those)\s+(?:answers?|facts?|information|info|details|data|responses?|results?|list|findings)\b/i,
+  /\bthe\s+following\b/i,
+  /\b(?:listed|shown|provided|given|outlined|detailed|mentioned|noted|included|presented)\s+(?:below|above|here)\b/i,
+  /\bas\s+(?:shown|listed|noted|mentioned|seen|stated|described)\b/i,
+];
+
+/**
+ * True when the opening talks about the answer or the facts instead of introducing
+ * them (2026-11-08: "The medical director oversees injectable services; the answer
+ * also notes online intake forms…"). The compare line itself (COMPARE_FIXED_INTRO,
+ * which the opening prompt gives as its example and the fixed first line repeats) is
+ * the one sentence allowed to say "the facts below".
+ */
+function talksAboutTheAnswer(text: string): boolean {
+  const bare = (sentenceText: string): string => sentenceText.trim().toLowerCase().replace(/[.!?…]+$/, "");
+  if (bare(text) === bare(COMPARE_FIXED_INTRO)) {
+    return false;
+  }
+  return SELF_REFERENCE_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 /** The opening call's instructions: one sentence introducing the answer it sees; no new fact, judgment or name. */
 export const OPENING_SYSTEM_PROMPT = [
   'You write the opening sentence of an answer a student sees while researching companies in a sales-training Data Room. You are given the student\'s question and the exact answer text shown below your sentence; companies appear only as "Company 1", "Company 2" and so on. Reply with a single JSON object and nothing else:',
@@ -716,7 +746,8 @@ export type OpeningRejection =
   | "company-name word"
   | "number not shown"
   | "claim not in the facts"
-  | "claims something is absent";
+  | "claims something is absent"
+  | "talks about the answer";
 
 /**
  * The first check the opening fails, or null when it passes them all. Dropped when it
@@ -731,7 +762,8 @@ export type OpeningRejection =
  * something is missing, not mentioned, not listed, not found, unknown, none or not on
  * record (claimsAbsence; 2026-11-08: Kestrel, "There's no locked-in contract or vendor
  * mentioned for this company." above an answer whose hidden clue is a multi-year
- * vendor agreement).
+ * vendor agreement); or talks about the answer or the facts themselves ("the answer
+ * also notes…", "the facts", "listed below", "as shown"; talksAboutTheAnswer).
  */
 export function openingRejection(
   opening: string,
@@ -788,6 +820,9 @@ export function openingRejection(
   }
   if (claimsAbsence(text)) {
     return "claims something is absent";
+  }
+  if (talksAboutTheAnswer(text)) {
+    return "talks about the answer";
   }
   return null;
 }

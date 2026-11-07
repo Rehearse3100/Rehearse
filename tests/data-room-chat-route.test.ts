@@ -2526,3 +2526,101 @@ describe("negative conditions through the route (2026-11-08)", () => {
     expect(await ask({ scope: ONE, newMessage: "Is Dana single?" })).toEqual(guardReply("flagged"));
   });
 });
+
+describe("narrowing the previous list, and openings about themselves (2026-11-08)", () => {
+  const row = (id: string, name: string, industry: string, metro: string, locations: number): unknown => ({
+    ...ROSTER[0],
+    id,
+    company_name: name,
+    industry,
+    vertical: null,
+    metro,
+    locations,
+    blurb: null,
+    public_signals: [],
+  });
+  const LIST_ROSTER = [
+    row("a", "Alpine Fitness", "Fitness Studio", "Austin, TX", 9),
+    row("b", "Birch Legal", "Legal Services", "Austin, TX", 2),
+    row("c", "Cove Fitness", "Fitness Studio", "Denver, CO", 4),
+    row("d", "Delta Dental", "Dental", "Denver, CO", 8),
+    row("e", "Echo Dental", "Dental", "Boise, ID", 5),
+    row("f", "Fern Dental", "Dental", "Boulder, CO", 3),
+  ];
+  const listFilter = (filters: unknown[], extra: Record<string, unknown> = {}): ReturnType<typeof modelReply> =>
+    modelReply({ intent: "filter_list", topic: null, attribute: null, filters, criteria_count: filters.length, confidence: "high", ...extra });
+  const names = (reply: unknown): string[] => (reply as { items: Array<{ companyName: string }> }).items.map((item) => item.companyName);
+  /** The history the pane sends after one All-companies question and its answer. */
+  const historyAfter = (question: string, reply: unknown): unknown[] => [
+    { role: "user", content: question, scope: ALL },
+    {
+      role: "assistant",
+      intro: (reply as { intro: string }).intro,
+      items: (reply as { items: Array<{ companyId: string; text: string }> }).items.map(({ companyId, text }) => ({ companyId, text })),
+      scope: ALL,
+    },
+  ];
+
+  beforeEach(() => {
+    state.roster = LIST_ROSTER;
+  });
+
+  it("'show me companies outside colorado' → then 'and now from this list, show me companies that are also not fitness' → only from that list", async () => {
+    state.classify.mockResolvedValueOnce(listFilter([{ field: "state", op: "ne", value: "CO" }]));
+    const first = await ask({ scope: ALL, newMessage: "show me companies outside colorado" });
+    expect(names(first)).toEqual(["Alpine Fitness", "Birch Legal", "Echo Dental"]);
+
+    state.classify.mockResolvedValueOnce(listFilter([{ field: "industry", op: "ne", value: "Fitness Studio" }], { narrows_previous: true }));
+    const second = (await ask({
+      scope: ALL,
+      newMessage: "and now from this list, show me companies that are also not fitness",
+      history: historyAfter("show me companies outside colorado", first),
+    })) as { intro: string };
+    // Searched the 3 listed, not the whole roster (Delta and Fern Dental are in Colorado).
+    expect(names(second)).toEqual(["Birch Legal", "Echo Dental"]);
+    expect(second.intro).toBe("2 companies match.");
+  });
+
+  it("'greater than 6' right after a dental list narrows that list", async () => {
+    state.classify.mockResolvedValueOnce(listFilter([{ field: "industry", op: "eq", value: "Dental" }]));
+    const dental = await ask({ scope: ALL, newMessage: "which are dental?" });
+    expect(names(dental)).toEqual(["Delta Dental", "Echo Dental", "Fern Dental"]);
+    state.classify.mockResolvedValueOnce(listFilter([{ field: "locations", op: "gt", value: 6 }], { narrows_previous: true }));
+    const bigger = await ask({ scope: ALL, newMessage: "greater than 6", history: historyAfter("which are dental?", dental) });
+    // Alpine Fitness has 9 locations but wasn't in the dental list.
+    expect(names(bigger)).toEqual(["Delta Dental"]);
+  });
+
+  it("'now show me companies in colorado that are dental' after a list stays a fresh search", async () => {
+    state.classify.mockResolvedValueOnce(listFilter([{ field: "state", op: "ne", value: "CO" }]));
+    const first = await ask({ scope: ALL, newMessage: "show me companies outside colorado" });
+    state.classify.mockResolvedValueOnce(
+      listFilter([
+        { field: "state", op: "eq", value: "CO" },
+        { field: "industry", op: "eq", value: "Dental" },
+      ])
+    );
+    const fresh = await ask({
+      scope: ALL,
+      newMessage: "now show me companies in colorado that are dental",
+      history: historyAfter("show me companies outside colorado", first),
+    });
+    expect(names(fresh)).toEqual(["Delta Dental", "Fern Dental"]);
+  });
+
+  it("an opening that talks about the answer is dropped for the fixed line, with its reason logged", async () => {
+    state.roster = [...ROSTER, CANYON_ROW];
+    state.storedResearchFacts = CANYON_FINDINGS;
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "operations"));
+    state.create.mockResolvedValueOnce(selection(["C1:h:1"]));
+    state.open.mockResolvedValueOnce(
+      modelReply({ opening: "The medical director oversees injectable services; the answer also notes online intake forms…" })
+    );
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const reply = (await ask({ scope: CANYON, newMessage: "How do they run things?" })) as { intro: string };
+    const logged = JSON.stringify(infoSpy.mock.calls);
+    infoSpy.mockRestore();
+    expect(reply.intro).toBe(findable("operations"));
+    expect(logged).toBe(JSON.stringify([["[data-room-chat] opening dropped:", "talks about the answer"]]));
+  });
+});
