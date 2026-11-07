@@ -39,9 +39,9 @@
  * question asks for one exact detail and no fact states it, the answer starts with
  * "That exact detail isn't publicly findable. Related facts:" (also above a contacts
  * line, which never holds emails or phone numbers). When findings are shown but the
- * selection call replies that no fact answers the question, they stay as they are
- * under "Nothing specific on that is publicly findable. Related findings:" (no
- * opening). Everything is rendered from the
+ * selection call replies that no fact answers a narrow question, they stay as they
+ * are under "Nothing specific on that is publicly findable. Related findings:" (no
+ * opening); never on a broad topic (risks, fit, recent changes). Everything is rendered from the
  * stored text (lib/data-room-chat-render.ts). Company names in answers come from the
  * database; the model sees companies only as refs ([C1]…). For the pane's tables, an
  * All-companies list also carries each company's card values (layout "table") and a
@@ -53,7 +53,7 @@ import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { requireStudentApi } from "@/lib/api-auth";
 import { answerAllCompanies, type FilterCompany } from "@/lib/data-room-chat-filter";
-import { allowedFacts } from "@/lib/data-room-chat-policy";
+import { allowedFacts, BROAD_QUESTION_TOPICS } from "@/lib/data-room-chat-policy";
 import {
   allowedFindings,
   allowedPublicFacts,
@@ -163,6 +163,11 @@ const SELECTION_MAX_TOKENS = 500;
 const OPENING_TEMPERATURE = 0.3;
 /** Room for one sentence of at most 30 words, in JSON. */
 const OPENING_MAX_TOKENS = 100;
+
+/** A broad question topic (risks, fit, recent changes): the policy's list, whose findings it caps. */
+function isBroadTopic(topic: RouterDecision["topic"]): boolean {
+  return topic !== null && BROAD_QUESTION_TOPICS.includes(topic);
+}
 
 /**
  * Parses a jsonb string array defensively.
@@ -292,8 +297,8 @@ async function selectFacts(
  * above the exact-detail, "nothing hidden" or follow-up line): it sees the question,
  * its topic and the answer text the student will see (companies as "Company 1"…).
  * Its sentence goes above the answer if it passes the checks; a failed call or a
- * dropped sentence leaves the answer unchanged (a dropped sentence logs which check
- * it failed, not the sentence).
+ * dropped sentence leaves the answer unchanged (a dropped or missing sentence logs
+ * which check it failed, or "empty", never the sentence).
  */
 async function withWrittenOpening(
   openai: OpenAI,
@@ -314,7 +319,8 @@ async function withWrittenOpening(
       messages: buildOpeningMessages(question, answer, index, topic),
     });
     const opening = parseOpening(response.choices[0]?.message?.content);
-    const rejection = opening ? openingRejection(opening, question, answer, index) : null;
+    // Every missing opening leaves a reason in the log ("empty": the reply held no sentence).
+    const rejection = openingRejection(opening, question, answer, index);
     if (rejection) {
       console.info("[data-room-chat] opening dropped:", rejection);
     }
@@ -654,9 +660,11 @@ export async function POST(request: Request): Promise<NextResponse> {
         );
         if (decision.exactValue && !selection.exactAnswer) {
           answer = withExactDetailIntro(answer);
-        } else if (selection.saysNoFactAnswers) {
-          // The selection call says no fact answers the question: the allowed findings
-          // still show, unchanged, under an honest first line (so no opening sentence).
+        } else if (selection.saysNoFactAnswers && !isBroadTopic(decision.topic)) {
+          // The selection call says no fact answers a narrow question: the allowed
+          // findings still show, unchanged, under an honest first line (so no opening
+          // sentence). Never on a broad topic (risks, fit, recent changes): there the
+          // findings the policy allowed are the answer, so the opening path runs.
           answer = withRelatedFindingsIntro(answer);
         }
         break;

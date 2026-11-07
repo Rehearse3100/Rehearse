@@ -28,7 +28,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "@/app/api/student/data-room-chat/route";
 import { ALL_MODE_REPLY, META_ALL_MODE_REPLY } from "@/lib/data-room-chat-filter";
 import { guardReply } from "@/lib/data-room-chat-guard";
-import { OFF_TOPIC_REPLY } from "@/lib/data-room-chat-policy";
+import { BROAD_QUESTION_TOPICS, OFF_TOPIC_REPLY } from "@/lib/data-room-chat-policy";
 import {
   EXACT_DETAIL_MISSING_INTRO,
   NOTHING_FINDABLE_REPLY,
@@ -1298,15 +1298,17 @@ describe("reply fixes, part 3: small talk, and an honest first line for related 
     expect(state.open).not.toHaveBeenCalled();
   });
 
-  it("Canyon, 'What changed recently?': the same, when the selection says no fact answers", async () => {
+  it("Canyon, 'What changed recently?' (a broad topic): no line even when the selection says no fact answers; the normal opening", async () => {
+    // Fixed 2026-11-06: recent_changes is a broad topic, so the findings the policy
+    // allowed are the answer and the opening path runs (before: the related-findings line).
     state.storedResearchFacts = CANYON_FINDINGS;
     state.classify.mockResolvedValueOnce(routerReply("specific_research", "recent_changes"));
     state.create.mockResolvedValueOnce(selection([], false));
     expect(await ask({ scope: CANYON, newMessage: "What changed recently?" })).toEqual({
-      intro: RELATED_FINDINGS_INTRO,
+      intro: OPENING,
       items: [canyonFindings],
     });
-    expect(state.open).not.toHaveBeenCalled();
+    expect(state.open).toHaveBeenCalledTimes(1);
   });
 
   it("a direct answer (the selection picks a fact) is unchanged: the same findings under the opening", async () => {
@@ -1343,14 +1345,45 @@ describe("reply fixes, part 3: small talk, and an honest first line for related 
     expect(await failed.json()).toEqual({ error: "Could not generate a Data Room response." });
   });
 
-  it("a trap-style finding still shows, in stored order, under the new line", async () => {
+  it("Northview, 'any risks?' (the regression): selection empty, SlotEasy allowed → no 'Nothing specific' line, SlotEasy shown, the normal opening", async () => {
+    // Fixed 2026-11-06: risks is a broad topic; before, the line sat above the actual risk.
     state.storedResearchFacts = NORTHVIEW_FINDINGS;
     state.classify.mockResolvedValueOnce(routerReply("specific_research", "risks"));
     state.create.mockResolvedValueOnce(selection([], false));
-    expect(await ask({ scope: NORTHVIEW, newMessage: "Any risks?" })).toEqual({
-      intro: RELATED_FINDINGS_INTRO,
+    const reply = (await ask({ scope: NORTHVIEW, newMessage: "any risks?" })) as { intro: string; items: Array<{ text: string }> };
+    expect(reply).toEqual({
+      intro: OPENING,
       items: [{ companyId: "northview", companyName: "Northview Family Dentistry", text: `${PRAISE}\n${EMERGENCY}\n${SLOTEASY}` }],
     });
+    expect(reply.intro).not.toContain("Nothing specific");
+    expect(reply.items[0]?.text).toContain(SLOTEASY);
+    expect(state.open).toHaveBeenCalledTimes(1);
+  });
+
+  it("a fit question (the other broad topic): no line either; the findings show under the opening", async () => {
+    state.storedResearchFacts = NORTHVIEW_FINDINGS;
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "fit"));
+    state.create.mockResolvedValueOnce(selection([], false));
+    const reply = (await ask({ scope: NORTHVIEW, newMessage: "Would they be a good prospect?" })) as { intro: string; items: Array<{ text: string }> };
+    expect(reply.intro).toBe(OPENING);
+    expect(reply.items[0]?.text).toContain(SLOTEASY);
+  });
+
+  it("the broad topics are exactly the policy's capped list", () => {
+    expect(BROAD_QUESTION_TOPICS).toEqual(["risks", "fit", "recent_changes"]);
+  });
+
+  it("a missing opening always leaves a reason in the log: 'empty' when the reply held no sentence", async () => {
+    state.storedResearchFacts = CANYON_FINDINGS;
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "recent_changes"));
+    state.create.mockResolvedValueOnce(selection([], false));
+    state.open.mockResolvedValueOnce(modelReply({ opening: "" }));
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const reply = (await ask({ scope: CANYON, newMessage: "What changed recently?" })) as { intro: string };
+    const logged = JSON.stringify(infoSpy.mock.calls);
+    infoSpy.mockRestore();
+    expect(reply.intro).toBe("");
+    expect(logged).toBe(JSON.stringify([["[data-room-chat] opening dropped:", "empty"]]));
   });
 
   it("the exact-detail line and the nothing-findable reply are unchanged", async () => {
