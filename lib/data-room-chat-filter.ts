@@ -1,44 +1,41 @@
 /**
  * data-room-chat-filter.ts
  * All-companies questions for the Data Room assistant (pure; no DB, no network). In
- * All companies mode no model picks or reads company data: the router returns up to
- * three conditions (filters) over public roster attributes, this module validates
- * them against a whitelist and runs them over the roster in code (different fields
- * must all match; two conditions on the same field mean either one, except
- * locations, where both must hold), and the answer lists the matching companies A–Z
- * from the database. Any other All-companies question gets one fixed reply. Used by
- * lib/data-room-chat-router.ts (filter validation) and POST /api/student/data-room-chat.
+ * All companies mode no model picks or reads company data: the router returns the
+ * question's conditions (filters, as many as it asks for) over public roster
+ * attributes, this module validates them against a whitelist and runs them over the
+ * roster in code (different fields must all match; two conditions on the same field
+ * mean either one, except locations, where both must hold), and the answer lists
+ * every matching company A–Z from the database, under a count line and with no
+ * opening sentence. A "how many companies are there?" question (no conditions) gets
+ * the roster total; an answer-key or rule-breaking question its own reply; any other
+ * All-companies question one fixed reply. Used by lib/data-room-chat-router.ts
+ * (filter validation) and POST /api/student/data-room-chat.
  */
 
 import type { RouterDecision } from "@/lib/data-room-chat-router";
 import { formatRosterListLine, type NameQueryCompany, type ScopedAnswer } from "@/lib/data-room-chat-scope";
 
-// ── Config ───
+// ── Fixed replies ───
 
-/** How many conditions one All-companies question may filter by. */
-export const MAX_FILTER_CRITERIA = 3;
-
-/** Most companies one filter answer lists. */
-export const MAX_FILTER_RESULTS = 20;
-
-/** The reply to every All-companies question that isn't 1–3 valid conditions (or a name question). */
+/** The reply to every All-companies question that isn't valid conditions (or a name, count or answer-key question). */
 export const ALL_MODE_REPLY =
-  "In All companies mode I can filter by industry, city or state, number of locations, territory and online booking, up to 3 at a time. Open a company to research it in depth.";
+  "In All companies mode I can filter by industry, city or state, number of locations, territory and online booking. Open a company to research it in depth.";
+
+/** An answer-key or rule-breaking question (meta_or_bulk) in All companies mode. */
+export const META_ALL_MODE_REPLY =
+  "I can't share hidden or internal information. In All companies mode I can filter every company by industry, city or state, number of locations, territory and online booking.";
 
 export const NO_FILTER_MATCHES_REPLY = "No companies match that.";
 
-/**
- * The intro of every filter answer with matches: "{n} companies match." ("1 company
- * matches."); with more than 20, the same line goes on to say only the first 20 are shown.
- */
+/** The intro of every filter answer with matches: "{n} companies match." ("1 company matches."). */
 export function matchCountIntro(count: number): string {
-  if (count === 1) {
-    return "1 company matches.";
-  }
-  const line = `${count} companies match.`;
-  return count > MAX_FILTER_RESULTS
-    ? `${line} Showing the first ${MAX_FILTER_RESULTS}; use the search box above the list to see the rest.`
-    : line;
+  return count === 1 ? "1 company matches." : `${count} companies match.`;
+}
+
+/** The answer to "how many companies are there?": the roster total. */
+export function totalCountReply(count: number): string {
+  return count === 1 ? "There is 1 company in the Data Room." : `There are ${count} companies in the Data Room.`;
 }
 
 // ── Filter shape ───
@@ -153,9 +150,9 @@ export function parseRosterFilter(raw: unknown): RosterFilter | null {
 }
 
 /**
- * The router's conditions: its "filters" list, or a reply that still uses the single
- * "filter" field read as a one-item list. Null (→ the fixed reply) when there are
- * none, more than MAX_FILTER_CRITERIA, or any one the whitelist can't read.
+ * The router's conditions, as many as the question asks for: its "filters" list, or
+ * a reply that still uses the single "filter" field read as a one-item list. Null
+ * (→ the fixed reply) when there are none or any one the whitelist can't read.
  */
 export function parseRosterFilters(rawFilters: unknown, rawFilter: unknown): RosterFilter[] | null {
   const list =
@@ -166,7 +163,7 @@ export function parseRosterFilters(rawFilters: unknown, rawFilter: unknown): Ros
       : Array.isArray(rawFilters)
         ? rawFilters
         : [rawFilters];
-  if (list.length === 0 || list.length > MAX_FILTER_CRITERIA) {
+  if (list.length === 0) {
     return null;
   }
   const filters = list.map(parseRosterFilter);
@@ -244,9 +241,8 @@ export function matchesFilters(company: FilterCompany, filters: readonly RosterF
 
 /**
  * The answer for one condition or several (matchesFilters): the count intro
- * (matchCountIntro; with more than 20 it says only the first 20 are shown), then the
- * matching companies A–Z (no other order, no ranking), up to 20, each
- * "{Industry} · {N} locations · {Metro}" under its name from the database.
+ * (matchCountIntro), then every matching company A–Z (no other order, no ranking,
+ * no cap), each "{Industry} · {N} locations · {Metro}" under its name from the database.
  */
 export function answerFilter(
   filter: RosterFilter | readonly RosterFilter[],
@@ -261,7 +257,7 @@ export function answerFilter(
   }
   return {
     intro: matchCountIntro(matches.length),
-    items: matches.slice(0, MAX_FILTER_RESULTS).map((company) => ({
+    items: matches.map((company) => ({
       companyId: company.id,
       companyName: company.name,
       text: formatRosterListLine(company),
@@ -270,18 +266,25 @@ export function answerFilter(
 }
 
 /**
- * The answer to an All-companies question: a filter_list question with 1–3 valid
- * conditions runs over the roster; everything else gets ALL_MODE_REPLY. A criteria
- * count above the number of conditions means the question asked for something the
- * filters can't express, so it is refused too (a missing count is fine).
+ * The answer to an All-companies question:
+ * - a filter_list question with valid conditions runs over the roster. A criteria
+ *   count above the number of conditions means the question asked for something the
+ *   filters can't express, so it is refused (a missing count is fine);
+ * - a filter_list question with no conditions at all (criteria count 0, "how many
+ *   companies are there?") gets the roster total;
+ * - an answer-key or rule-breaking question (meta_or_bulk) gets META_ALL_MODE_REPLY;
+ * - everything else gets ALL_MODE_REPLY.
  */
 export function answerAllCompanies(decision: RouterDecision, companies: readonly FilterCompany[]): ScopedAnswer {
   const { intent, filters, criteriaCount } = decision;
+  if (intent === "meta_or_bulk") {
+    return { intro: META_ALL_MODE_REPLY, items: [] };
+  }
+  if (intent === "filter_list" && filters === null && criteriaCount === 0) {
+    return { intro: totalCountReply(companies.length), items: [] };
+  }
   const isComplete =
-    filters !== null &&
-    filters.length > 0 &&
-    filters.length <= MAX_FILTER_CRITERIA &&
-    (criteriaCount === null || criteriaCount <= filters.length);
+    filters !== null && filters.length > 0 && (criteriaCount === null || criteriaCount <= filters.length);
   if (intent === "filter_list" && filters && isComplete) {
     return answerFilter(filters, companies);
   }

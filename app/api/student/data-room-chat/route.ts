@@ -4,20 +4,27 @@
  * code from stored facts; the model never writes a fact. The only model-written text
  * is a one-sentence opening, written last by its own call from the question and the
  * finished answer text only (companies as "Company 1", "Company 2"…), checked by
- * code and shown above the facts — never on a nothing-findable or fixed reply; if it
- * fails or is dropped, the answer goes out unchanged. The client sends a
+ * code and shown above the facts — never on a nothing-findable or fixed reply, nor on
+ * an answer with its own first line (an All-companies list's count line, the
+ * exact-detail line, the "nothing hidden" line); if it fails or is dropped, the
+ * answer goes out unchanged. The client sends a
  * scope (1–3 company ids, or all companies) and the question; facts are loaded
  * server-side. Before anything else, every question passes the safety checks
  * (lib/data-room-chat-guard.ts), each refusal a fixed reply: over 500 characters;
  * the attempt's message limits (not in tester mode; fail open); then it is counted;
  * OpenAI moderation (self-harm or other flags; errors carry on); mostly non-Latin
- * letters; and the router's own "not English" verdict where it runs.
+ * letters; and the router's own "not English" verdict where it runs. A message that
+ * is only a greeting or thanks then gets a fixed reply (no model call).
  * Flow: unselected-company mention or company-names question → server
  * reply; otherwise a router call (lib/data-room-chat-router.ts; sees only the
- * redacted question, recent questions and scope kind) labels the question. All
- * companies: no model picks or reads company data — 1–3 validated conditions run over
- * the roster in code (only the opening call sees the finished list), and anything
- * else gets a fixed reply (lib/data-room-chat-filter.ts).
+ * redacted question, recent questions and scope kind) labels the question; an
+ * "inappropriate" label gets the moderation reply. All companies: no model picks or
+ * reads company data — the question's validated conditions (no limit) run over the
+ * roster in code and every match is listed under the count line; a count question
+ * with no conditions gets the roster total; an answer-key question its own reply;
+ * anything else a fixed reply (lib/data-room-chat-filter.ts). An answer-key question
+ * about open companies gets the public overview under "I can't share hidden or
+ * internal information. Here's what's public:".
  * One to three companies: the code-side policy (lib/data-room-chat-policy.ts)
  * decides which facts are allowed; overview, compare and attribute questions are
  * rendered with no further model call; specific research and filter questions show
@@ -47,6 +54,7 @@ import {
   buildSelectionMessages,
   checkOpening,
   hasFacts,
+  needsOpening,
   overviewLines,
   parseOpening,
   parseSelection,
@@ -83,7 +91,10 @@ import {
   buildScopeIndex,
   findOutOfScopeMentions,
   firstWordAsWritten,
+  greetingReply,
+  META_PUBLIC_INTRO,
   parseChatScope,
+  parseGreeting,
   parseHistoryQuestions,
   parseNameQuery,
   redactCompanyMentions,
@@ -252,10 +263,11 @@ async function selectFacts(openai: OpenAI, question: string, facts: SelectableFa
 
 /**
  * The opening call (gpt-4o, temperature 0.3, JSON), made once the answer is final
- * and only when it shows facts: it sees the question and the answer text the
- * student will see (companies as "Company 1"…). Its sentence goes above the answer
- * if it passes the checks; a failed call or a dropped sentence leaves the answer
- * unchanged.
+ * and only when it shows facts and has no first line of its own (needsOpening; not
+ * above the exact-detail or "nothing hidden" line): it sees the question and the
+ * answer text the student will see (companies as "Company 1"…). Its sentence goes
+ * above the answer if it passes the checks; a failed call or a dropped sentence
+ * leaves the answer unchanged.
  */
 async function withWrittenOpening(
   openai: OpenAI,
@@ -263,7 +275,7 @@ async function withWrittenOpening(
   answer: ScopedAnswer,
   index: ScopeIndex
 ): Promise<ScopedAnswer> {
-  if (!hasFacts(answer)) {
+  if (!needsOpening(answer)) {
     return answer;
   }
   try {
@@ -360,6 +372,13 @@ export async function POST(request: Request): Promise<NextResponse> {
       return NextResponse.json(guardReply("notEnglish"));
     }
 
+    // A message that is only a greeting or thanks gets a fixed reply, before the
+    // router (no model call); "hi, what software do they use?" goes on as a question.
+    const greeting = parseGreeting(newMessage);
+    if (greeting) {
+      return NextResponse.json(greetingReply(greeting, scope));
+    }
+
     const simulationId = String(attempt.simulation_id);
 
     // The whole roster: scope check, name redaction, and (for All companies) the facts.
@@ -438,16 +457,19 @@ export async function POST(request: Request): Promise<NextResponse> {
       scopeKind,
     });
 
-    // All companies: 1–3 validated conditions run over the roster in code (results
-    // from the database), then the opening is written for the list; anything else
-    // gets the fixed reply (no opening call).
+    // All companies: the question's validated conditions run over the roster in code
+    // (every match, from the database, under the count line); a count question with
+    // no conditions gets the roster total; anything else a fixed reply. No opening
+    // call: every All-companies answer has its own first line.
     if (scope.mode === "all") {
       const { decision, english } = await classifyQuestion(openai, routerMessages, scopeKind);
       if (!english) {
         return NextResponse.json(guardReply("notEnglish"));
       }
-      const answer = answerAllCompanies(decision, roster.map(toListCompany));
-      return NextResponse.json(await withWrittenOpening(openai, openingQuestion, answer, index));
+      if (decision.intent === "inappropriate") {
+        return NextResponse.json(guardReply("flagged"));
+      }
+      return NextResponse.json(answerAllCompanies(decision, roster.map(toListCompany)));
     }
 
     // One to three companies: the router runs alongside the data loads.
@@ -470,6 +492,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     // The router says the question isn't in English (high confidence): fixed reply.
     if (!english) {
       return NextResponse.json(guardReply("notEnglish"));
+    }
+    // Inappropriate (sexual or romantic, looks, someone's personal life, insults):
+    // the moderation reply, with no research and no opening.
+    if (decision.intent === "inappropriate") {
+      return NextResponse.json(guardReply("flagged"));
     }
 
     if (researchResult?.error) {
@@ -599,10 +626,16 @@ export async function POST(request: Request): Promise<NextResponse> {
           companies.map((company) => block(company, overviewLines(company.facts))),
           true
         );
+        // An answer-key or rule-breaking question still gets the public overview, under
+        // a fixed first line (so no opening sentence).
+        if (decision.intent === "meta_or_bulk" && hasFacts(answer)) {
+          answer = { ...answer, intro: META_PUBLIC_INTRO };
+        }
       }
     }
 
-    // Written last, from the finished answer; above the facts if it passes the checks (every path).
+    // Written last, from the finished answer; above the facts if it passes the checks
+    // (every path whose answer has no first line of its own).
     return NextResponse.json(await withWrittenOpening(openai, openingQuestion, answer, index));
   } catch (error) {
     console.error("[data-room-chat] unexpected:", error);

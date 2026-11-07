@@ -5,8 +5,9 @@
  * from the roster itself), type-to-pick suggestions, company detection in the
  * question text, and the scope priority used on send. Server side: scope and
  * history parsing, ref labels ([C1]…), name redaction for model input, the
- * out-of-scope mention reply, and questions about company names answered from the
- * roster. Used by ProspectingDataRoomChat (client) and POST
+ * out-of-scope mention reply, questions about company names answered from the
+ * roster (every match, no cap), greetings and thanks answered with fixed texts, and
+ * the "nothing hidden" first line. Used by ProspectingDataRoomChat (client) and POST
  * /api/student/data-room-chat (server).
  */
 
@@ -655,9 +656,6 @@ export type NameQuery = {
   value: string;
 };
 
-/** Most company names one name answer lists. */
-export const NAME_QUERY_MAX_RESULTS = 15;
-
 // The value asked about: a quoted phrase, or one word that ends the sentence (so
 // "start with on Mondays" or "start with a trial" are not name questions).
 const NAME_VALUE = `(?:["“]([^"”]{1,40})["”]|'([^']{1,40})'|([a-z0-9][a-z0-9&-]{0,29}))`;
@@ -764,8 +762,8 @@ export function formatRosterListLine(company: Omit<NameQueryCompany, "id" | "nam
 
 /**
  * The server's reply to a name question, built only from the roster (names never
- * come from the model): up to 15 matching companies in the question's scope, A–Z,
- * each with "{Industry} · {N} locations · {Metro}".
+ * come from the model): every matching company in the question's scope, A–Z (no
+ * cap), each with "{Industry} · {N} locations · {Metro}".
  */
 export function answerNameQuery(query: NameQuery, companies: readonly NameQueryCompany[]): ScopedAnswer {
   const needle = query.value.toLowerCase();
@@ -794,20 +792,50 @@ export function answerNameQuery(query: NameQuery, companies: readonly NameQueryC
   }
 
   const heading = condition ? `Companies whose names ${condition}` : "Company names";
-  const extra = matches.length - NAME_QUERY_MAX_RESULTS;
-  const intro =
-    extra > 0
-      ? `${heading} (the first ${NAME_QUERY_MAX_RESULTS}, A–Z), and ${extra} more. Use the search box above the list to see them all.`
-      : `${heading}:`;
-
   return {
-    intro,
-    items: matches.slice(0, NAME_QUERY_MAX_RESULTS).map((company) => ({
+    intro: `${heading}:`,
+    items: matches.map((company) => ({
       companyId: company.id,
       companyName: company.name,
       text: formatRosterListLine(company),
     })),
   };
+}
+
+// ── Server: greetings and other fixed first lines ───
+
+/** A greeting while one or more companies are open. */
+export const GREETING_REPLY_COMPANIES =
+  "Hi! I'm your research assistant. Ask me about the open company: its locations, software, hiring, budget or risks. To search across every company, switch to All companies.";
+/** A greeting in All companies mode. */
+export const GREETING_REPLY_ALL =
+  "Hi! I'm your research assistant. Here I can filter every company by industry, city or state, number of locations, territory and online booking. Open a company to research it in depth.";
+export const THANKS_REPLY = "You're welcome! Ask me anything else about these companies.";
+/** First line of the public overview given for an answer-key or rule-breaking question (meta_or_bulk) about open companies. */
+export const META_PUBLIC_INTRO = "I can't share hidden or internal information. Here's what's public:";
+
+/** Whole-message greetings and thanks, compared with case, spaces, punctuation and emoji removed. */
+const GREETINGS: ReadonlySet<string> = new Set(["hi", "hello", "hey", "hiya", "yo", "goodmorning", "goodafternoon", "goodevening"]);
+const THANKS: ReadonlySet<string> = new Set(["thanks", "thankyou", "thx", "ty", "cheers"]);
+
+/** Spaces, punctuation, symbols (emoji included) and the invisible marks emoji carry. */
+const NOT_A_WORD_CHARACTER = new RegExp("[\\s\\p{Z}\\p{P}\\p{S}\\p{Mn}\\p{Cf}]", "gu");
+
+/**
+ * "greeting" or "thanks" when the whole message, ignoring case, spaces, punctuation
+ * and emoji, is just one (hi, hello, hey, hiya, yo, good morning/afternoon/evening;
+ * thanks, thank you, thx, ty, cheers); null for anything else, so "hi, what software
+ * do they use?" goes through as a question.
+ */
+export function parseGreeting(text: string): "greeting" | "thanks" | null {
+  const bare = text.toLowerCase().replace(NOT_A_WORD_CHARACTER, "");
+  return GREETINGS.has(bare) ? "greeting" : THANKS.has(bare) ? "thanks" : null;
+}
+
+/** The fixed reply to a greeting or thanks: the greeting text depends on the mode. */
+export function greetingReply(kind: "greeting" | "thanks", scope: ChatScope): ScopedAnswer {
+  const intro = kind === "thanks" ? THANKS_REPLY : scope.mode === "all" ? GREETING_REPLY_ALL : GREETING_REPLY_COMPANIES;
+  return { intro, items: [] };
 }
 
 // ── Server: the answer ───

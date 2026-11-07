@@ -61,7 +61,7 @@ describe("classifier input", () => {
       "filters (set them only when the scope is all companies and the intent is filter_list; otherwise null)",
       'field "state": op "eq", value the two-letter state code',
       "criteria_count: how many separate conditions the question asks to filter by",
-      'Questions phrased as "how many…", "which are…" or "list the…" with one to three conditions are filter_list; read them charitably',
+      'Questions phrased as "how many…", "which are…" or "list the…" with one or more conditions are filter_list; read them charitably',
       '"how many are located retail?" is filter_list with filters [{"field": "industry", "op": "contains", "value": "retail"}]',
     ]) {
       expect(ROUTER_SYSTEM_PROMPT, text).toContain(text);
@@ -220,12 +220,15 @@ describe("classifier reply", () => {
   const UT = { field: "state", op: "eq", value: "UT" };
   const BOOKING = { field: "online_booking", op: "eq", value: true };
 
-  it("filters: 1–3 conditions, including two on the same field; more than 3 or any invalid one → null", () => {
+  it("filters: any number of conditions, including two on the same field; any invalid one → null", () => {
     expect(parseRouterReply(filtersReply([DENTAL]))).toMatchObject({ filters: [DENTAL], criteriaCount: 1 });
     expect(parseRouterReply(filtersReply([DENTAL, CO]))).toMatchObject({ filters: [DENTAL, CO], criteriaCount: 2 });
     expect(parseRouterReply(filtersReply([DENTAL, CO, BOOKING]))).toMatchObject({ filters: [DENTAL, CO, BOOKING], criteriaCount: 3 });
     expect(parseRouterReply(filtersReply([CO, UT]))).toMatchObject({ filters: [CO, UT] });
-    expect(parseRouterReply(filtersReply([DENTAL, CO, BOOKING, UT]))).toMatchObject({ intent: "filter_list", filters: null });
+    expect(parseRouterReply(filtersReply([DENTAL, CO, BOOKING, UT]))).toMatchObject({
+      intent: "filter_list",
+      filters: [DENTAL, CO, BOOKING, UT],
+    });
     expect(parseRouterReply(filtersReply([DENTAL, { field: "software", op: "eq", value: "Zentrix" }]))).toMatchObject({
       intent: "filter_list",
       filters: null,
@@ -292,6 +295,36 @@ describe("classifier reply", () => {
     ]) {
       expect(parseRouterReply(raw), String(raw)).toEqual(OVERVIEW_DECISION);
     }
+  });
+});
+
+describe("unlimited conditions, ranges, the total count and inappropriate questions", () => {
+  it("the prompt has no condition limit, counts a range as one condition and a total-count question as 0", () => {
+    expect(ROUTER_SYSTEM_PROMPT).not.toMatch(/1 to 3|up to 3|one to three/);
+    expect(ROUTER_SYSTEM_PROMPT).toContain("a list of conditions, one per condition the question asks for");
+    expect(ROUTER_SYSTEM_PROMPT).toContain(
+      'a number-of-locations range counts as one condition, so "with 5 to 8 locations" is 1'
+    );
+    expect(ROUTER_SYSTEM_PROMPT).toContain('"how many companies are there?", which is filter_list with criteria_count 0');
+  });
+
+  it("an inappropriate intent, with one prompt line of examples", () => {
+    expect(ROUTER_SYSTEM_PROMPT).toContain(
+      "- inappropriate: sexual or romantic questions, comments on someone's looks, personal-life questions about a person (for example their home address, family or relationships) and insults."
+    );
+    expect(parseRouterReply(reply({ intent: "inappropriate", topic: null, attribute: null, confidence: "high" }))).toMatchObject({
+      intent: "inappropriate",
+    });
+    // Unsure → the overview, as for any intent.
+    expect(parseRouterReply(reply({ intent: "inappropriate", topic: null, attribute: null, confidence: "low" }))).toEqual(
+      OVERVIEW_DECISION
+    );
+  });
+
+  it("a total-count question parses as filter_list with no filters and criteria_count 0", () => {
+    expect(
+      parseRouterReply(reply({ intent: "filter_list", topic: null, attribute: null, filters: null, criteria_count: 0, confidence: "high" }), "all")
+    ).toMatchObject({ intent: "filter_list", filters: null, criteriaCount: 0 });
   });
 });
 

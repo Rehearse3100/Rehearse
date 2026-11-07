@@ -16,8 +16,12 @@ import {
   detectCompanies,
   findOutOfScopeMentions,
   answerNameQuery,
+  GREETING_REPLY_ALL,
+  GREETING_REPLY_COMPANIES,
+  greetingReply,
   insertPickedName,
   parseChatScope,
+  parseGreeting,
   parseHistoryQuestions,
   parseNameQuery,
   previewScope,
@@ -27,6 +31,7 @@ import {
   SCOPE_TOO_MANY_MESSAGE,
   suggestCompanies,
   textContainsCompanyName,
+  THANKS_REPLY,
   wordFragmentBeforeCaret,
   type ScopeCompany,
 } from "@/lib/data-room-chat-scope";
@@ -587,19 +592,49 @@ describe("questions about company names", () => {
     });
   });
 
-  it("lists at most 15 and points to the search box for the rest", () => {
+  it("lists every match A–Z, with no cap and no \"and N more\" line", () => {
     const many = Array.from({ length: 20 }, (_, i) => ({
       id: `c${i}`,
-      name: `Cedar ${String(i).padStart(2, "0")}`,
+      name: `Cedar ${String(19 - i).padStart(2, "0")}`,
       industry: "Dental",
       locations: 2,
       metro: "Denver, CO",
     }));
     const reply = answerNameQuery({ kind: "startsWith", value: "c" }, many);
-    expect(reply.items).toHaveLength(15);
+    expect(reply.items).toHaveLength(20);
     expect(reply.items[0]?.companyName).toBe("Cedar 00");
-    expect(reply.intro).toBe(
-      'Companies whose names start with "C" (the first 15, A–Z), and 5 more. Use the search box above the list to see them all.'
+    expect(reply.items[19]?.companyName).toBe("Cedar 19");
+    expect(reply.intro).toBe('Companies whose names start with "C":');
+    expect(answerNameQuery({ kind: "list", value: "" }, many).items).toHaveLength(20);
+  });
+});
+
+describe("greetings and thanks", () => {
+  it("a whole-message greeting or thanks, ignoring case, spaces, punctuation and emoji", () => {
+    for (const text of ["Hi", "hello!", "Hey 👋", "  HIYA!!! ", "yo", "Good morning", "good-afternoon", "Good evening 🙂"]) {
+      expect(parseGreeting(text), text).toBe("greeting");
+    }
+    for (const text of ["Thanks!", "thank you", "Thank you 🙏🏽", "thx", "ty", "Cheers!"]) {
+      expect(parseGreeting(text), text).toBe("thanks");
+    }
+  });
+
+  it("anything more is a question, not a greeting", () => {
+    for (const text of ["hi, what software do they use?", "thanks, what about their budget?", "hiring", "they", "Hey Summit", "good"]) {
+      expect(parseGreeting(text), text).toBeNull();
+    }
+  });
+
+  it("the fixed texts: the greeting depends on the mode, thanks doesn't", () => {
+    expect(greetingReply("greeting", { mode: "companies", companyIds: ["a"] })).toEqual({ intro: GREETING_REPLY_COMPANIES, items: [] });
+    expect(greetingReply("greeting", { mode: "all" })).toEqual({ intro: GREETING_REPLY_ALL, items: [] });
+    expect(greetingReply("thanks", { mode: "all" })).toEqual({ intro: THANKS_REPLY, items: [] });
+    expect(GREETING_REPLY_COMPANIES).toBe(
+      "Hi! I'm your research assistant. Ask me about the open company: its locations, software, hiring, budget or risks. To search across every company, switch to All companies."
     );
+    expect(GREETING_REPLY_ALL).toBe(
+      "Hi! I'm your research assistant. Here I can filter every company by industry, city or state, number of locations, territory and online booking. Open a company to research it in depth."
+    );
+    expect(THANKS_REPLY).toBe("You're welcome! Ask me anything else about these companies.");
   });
 });

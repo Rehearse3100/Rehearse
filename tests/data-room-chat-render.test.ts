@@ -24,6 +24,7 @@ import {
   checkOpening,
   EXACT_DETAIL_MISSING_INTRO,
   hasFacts,
+  needsOpening,
   NOTHING_FINDABLE_REPLY,
   OPENING_SYSTEM_PROMPT,
   overviewLines,
@@ -359,15 +360,17 @@ describe("the opening sentence (written from the finished answer)", () => {
     }
   });
 
-  it("shows above the facts, above a count line, and above the exact-detail line (which stays)", () => {
+  it("shows above the facts; never on an answer with its own first line (a count line, the exact-detail line, the nothing-hidden line)", () => {
     const facts = { intro: "", items: [{ companyId: "a", companyName: "A", text: "In territory." }] };
+    expect(needsOpening(facts)).toBe(true);
     expect(withOpening(facts, "Here's what's on record.")).toEqual({ ...facts, intro: "Here's what's on record." });
     const list = { intro: "2 companies match.", items: facts.items };
-    expect(withOpening(list, "Here's who matches.").intro).toBe("Here's who matches.\n2 companies match.");
     const exact = { intro: EXACT_DETAIL_MISSING_INTRO, items: [{ companyId: "a", companyName: "A", text: BUDGET.text }] };
-    expect(withOpening(exact, "Revenue isn't on record, but budget facts are.").intro).toBe(
-      `Revenue isn't on record, but budget facts are.\n${EXACT_DETAIL_MISSING_INTRO}`
-    );
+    const meta = { intro: "I can't share hidden or internal information. Here's what's public:", items: facts.items };
+    for (const answer of [list, exact, meta]) {
+      expect(needsOpening(answer), answer.intro).toBe(false);
+      expect(withOpening(answer, "Here's who matches."), answer.intro).toEqual(answer);
+    }
     expect(withOpening(facts, null)).toEqual(facts);
   });
 

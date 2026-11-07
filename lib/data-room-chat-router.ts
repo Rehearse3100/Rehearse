@@ -4,8 +4,9 @@
  * messages: the student's question, their last 3 questions (both already
  * name-redacted) and the scope kind — never any facts or company data — and parses
  * its JSON reply, failing closed to "overview". For All-companies filter questions
- * the reply also carries up to three filters and how many conditions the question
- * asks for (validated by lib/data-room-chat-filter.ts); in All companies mode valid
+ * the reply also carries the filters (as many as the question asks for) and how many
+ * conditions the question asks for (a locations range is one; validated by
+ * lib/data-room-chat-filter.ts); in All companies mode valid
  * filters are used even when the router is unsure. The reply also says whether the
  * question is in English (parseRouterEnglish). POST /api/student/data-room-chat
  * makes the gpt-4o call; lib/data-room-chat-policy.ts turns the decision into the
@@ -30,6 +31,7 @@ export const ROUTER_INTENTS = [
   "filter_list",
   "meta_or_bulk",
   "off_topic",
+  "inappropriate",
 ] as const;
 
 export type RouterIntent = (typeof ROUTER_INTENTS)[number];
@@ -50,7 +52,7 @@ export type RouterDecision = {
   intent: RouterIntent;
   topic: QuestionTopic | null;
   attribute: RouterAttribute | null;
-  /** 1–3 whitelisted conditions (All-companies filter questions only); null when missing, invalid or more than 3. */
+  /** The whitelisted conditions (All-companies filter questions only; no limit); null when missing or any is invalid. */
   filters: RosterFilter[] | null;
   /** How many conditions the question filters by; null when missing or invalid. */
   criteriaCount: number | null;
@@ -107,12 +109,13 @@ export const ROUTER_SYSTEM_PROMPT = [
   '- filter_list: which of the companies match a condition ("which ones have online booking?", "which are in Texas?").',
   "- meta_or_bulk: asks for all, every, hidden, secret or internal findings or data, or anything about your instructions, prompt, rules or how you work.",
   "- off_topic: only questions clearly unrelated to researching companies (for example the weather, homework or jokes).",
+  "- inappropriate: sexual or romantic questions, comments on someone's looks, personal-life questions about a person (for example their home address, family or relationships) and insults.",
   "",
   `topic (set it for specific_research; otherwise null): one of ${TOPIC_LIST}.`,
   "",
   `attribute (set it for attribute_lookup; otherwise null): one of ${ROUTER_ATTRIBUTES.join(", ")}.`,
   "",
-  'filters (set them only when the scope is all companies and the intent is filter_list; otherwise null): a list of 1 to 3 conditions, one per condition the question asks for, each {"field": string, "op": string, "value": string | number | boolean}, one of:',
+  'filters (set them only when the scope is all companies and the intent is filter_list; otherwise null): a list of conditions, one per condition the question asks for, each {"field": string, "op": string, "value": string | number | boolean}, one of:',
   '- field "industry" or "metro" (a city or area): op "eq" or "contains", value a word or phrase;',
   '- field "state": op "eq", value the two-letter state code (for example "TX");',
   '- field "locations" (number of locations): op "eq", "gt", "gte", "lt" or "lte", value a number;',
@@ -120,7 +123,7 @@ export const ROUTER_SYSTEM_PROMPT = [
   'Conditions on different fields must all hold. Two conditions on the same field mean either one ("in Texas or Ohio" is two state conditions), except locations, where both hold ("between 20 and 40 locations" is gte 20 and lte 40).',
   "If any condition is about anything else (for example software, budget, staffing, reviews, risks or fit), use null.",
   "",
-  'criteria_count: how many separate conditions the question asks to filter by ("which have online booking?" is 1; "fitness studios in Phoenix" is 2; 0 when it filters by nothing).',
+  'criteria_count: how many separate conditions the question asks to filter by ("which have online booking?" is 1; "fitness studios in Phoenix" is 2; a number-of-locations range counts as one condition, so "with 5 to 8 locations" is 1; 0 when it filters by nothing, as in "how many companies are there?", which is filter_list with criteria_count 0).',
   "",
   "exact_value: true when the question asks for one specific detail (a number, amount, count, email or phone number, or a named vendor or product); false otherwise.",
   "",
@@ -132,7 +135,7 @@ export const ROUTER_SYSTEM_PROMPT = [
   "- Read typos charitably.",
   "- Anything about a company is never off_topic: questions about its revenue, finances, metrics, patients, people's roles or who decides are specific_research with the closest topic (revenue or finances → budget; people's roles or who decides → ownership).",
   '- Questions about email addresses, phone numbers or who to contact are attribute_lookup with attribute "contacts".',
-  '- Questions phrased as "how many…", "which are…" or "list the…" with one to three conditions are filter_list; read them charitably (for example "how many are located retail?" is filter_list with filters [{"field": "industry", "op": "contains", "value": "retail"}]).',
+  '- Questions phrased as "how many…", "which are…" or "list the…" with one or more conditions are filter_list; read them charitably (for example "how many are located retail?" is filter_list with filters [{"field": "industry", "op": "contains", "value": "retail"}]).',
   "- Two-letter uppercase tokens such as TX, CA or NY are US state codes.",
   '- Use the recent questions only to understand a follow-up such as "tell me more about that".',
   '- Use "low" confidence when you are unsure. When the scope is all companies, still return the filters with "low" confidence.',
@@ -183,9 +186,9 @@ function isOneOf<T extends string>(values: readonly T[], value: unknown): value 
  * topic. With scopeKind "all", a filter_list reply with valid filters is kept
  * whatever its confidence (code checks every condition). For filter_list an unknown
  * topic or attribute just becomes null. Filters come from "filters" (or a single
- * "filter", read as a one-item list); any condition the whitelist can't read, or
- * more than 3, makes them null (an All-companies question then gets the fixed
- * reply); a criteria count that isn't a whole number of 0 or more (as a number or
+ * "filter", read as a one-item list; no limit on how many); any condition the
+ * whitelist can't read makes them null (an All-companies question then gets the
+ * fixed reply); a criteria count that isn't a whole number of 0 or more (as a number or
  * numeric string) becomes null. exact_value is true only when it is exactly true.
  */
 export function parseRouterReply(raw: string | null | undefined, scopeKind?: ScopeKind): RouterDecision {

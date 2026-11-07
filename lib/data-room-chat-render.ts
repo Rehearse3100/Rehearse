@@ -461,16 +461,22 @@ export function checkOpening(
 }
 
 /**
- * Puts the checked opening above an answer that shows facts — above the facts, or
- * above an intro line already there ("{n} companies match.", or the exact-detail
- * line, which stays). Never on an answer with no facts: the nothing-findable reply
- * or a fixed reply (off-topic, out of scope, the All-companies reply, no matches).
+ * True when the answer gets an opening sentence: it shows facts and has no first
+ * line of its own. An answer that already starts with a fixed line (a filter list's
+ * "{n} companies match.", the exact-detail line, the "nothing hidden" line) or shows
+ * no facts (the nothing-findable reply, any fixed reply) gets none, so its first
+ * line is never doubled.
  */
+export function needsOpening(answer: ScopedAnswer): boolean {
+  return hasFacts(answer) && answer.intro === "";
+}
+
+/** Puts the checked opening above the facts of an answer that needs one (needsOpening). */
 export function withOpening(answer: ScopedAnswer, opening: string | null): ScopedAnswer {
-  if (!opening || !hasFacts(answer)) {
+  if (!opening || !needsOpening(answer)) {
     return answer;
   }
-  return { ...answer, intro: answer.intro ? `${opening}\n${answer.intro}` : opening };
+  return { ...answer, intro: opening };
 }
 
 // ── Selection call ───

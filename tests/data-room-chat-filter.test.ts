@@ -2,11 +2,11 @@
  * data-room-chat-filter.test.ts
  * All-companies filters (pure): the forgiving whitelist (only an unknown field, a
  * missing value or an unrecognised locations comparison is refused; state codes or
- * names, yes/no words, numeric strings), up to 3 conditions (different fields AND,
- * same field OR, locations AND), matching over the roster (unknown values never
- * match), the list answer (count intro, A–Z only, capped at 20 with one "showing the
- * first 20" line, no matches) and the fixed reply for anything that isn't 1–3 valid
- * conditions.
+ * names, yes/no words, numeric strings), any number of conditions (different fields
+ * AND, same field OR, locations AND), matching over the roster (unknown values never
+ * match), the list answer (count intro, every match A–Z with no cap, no matches),
+ * the roster total for a count question with no conditions, the answer-key reply,
+ * and the fixed reply for anything that isn't valid conditions.
  */
 
 import { describe, expect, it } from "vitest";
@@ -17,11 +17,11 @@ import {
   matchCountIntro,
   matchesFilter,
   matchesFilters,
-  MAX_FILTER_CRITERIA,
-  MAX_FILTER_RESULTS,
+  META_ALL_MODE_REPLY,
   NO_FILTER_MATCHES_REPLY,
   parseRosterFilter,
   parseRosterFilters,
+  totalCountReply,
   type FilterCompany,
   type RosterFilter,
 } from "@/lib/data-room-chat-filter";
@@ -216,19 +216,17 @@ describe("the list answer", () => {
     expect(matchCountIntro(12)).toBe("12 companies match.");
   });
 
-  it("at most 20; one count line that says only the first 20 are shown", () => {
+  it("every match, A–Z, under a plain count line (no cap)", () => {
     const many: FilterCompany[] = Array.from({ length: 27 }, (_, i) => ({
       ...ROSTER[1]!,
       id: `c${i}`,
       name: `Clinic ${String(26 - i).padStart(2, "0")}`,
     }));
     const answer = answerFilter({ field: "online_booking", op: "eq", value: true }, many);
-    expect(answer.items).toHaveLength(MAX_FILTER_RESULTS);
+    expect(answer.items).toHaveLength(27);
     expect(answer.items[0]?.companyName).toBe("Clinic 00");
-    expect(answer.items[19]?.companyName).toBe("Clinic 19");
-    expect(answer.intro).toBe(
-      "27 companies match. Showing the first 20; use the search box above the list to see the rest."
-    );
+    expect(answer.items[26]?.companyName).toBe("Clinic 26");
+    expect(answer.intro).toBe("27 companies match.");
     expect(answer.intro).toBe(matchCountIntro(27));
   });
 
@@ -248,16 +246,39 @@ describe("All-companies answers", () => {
     expect(answerAllCompanies(decision({ filter: bookingFilter }), ROSTER).items).toHaveLength(3);
     expect(answerAllCompanies(decision({ filter: bookingFilter, criteriaCount: null }), ROSTER).items).toHaveLength(3);
     expect(answerAllCompanies(decision({ filter: bookingFilter, criteriaCount: 0 }), ROSTER).items).toHaveLength(3);
-    expect(MAX_FILTER_CRITERIA).toBe(3);
     const fixed = { intro: ALL_MODE_REPLY, items: [] };
     expect(answerAllCompanies(decision({ filter: bookingFilter, criteriaCount: 2 }), ROSTER)).toEqual(fixed);
     expect(answerAllCompanies(decision({ filter: null }), ROSTER)).toEqual(fixed);
-    for (const intent of ["overview", "attribute_lookup", "specific_research", "compare", "meta_or_bulk", "off_topic"] as const) {
+    for (const intent of ["overview", "attribute_lookup", "specific_research", "compare", "off_topic"] as const) {
       expect(answerAllCompanies(decision({ intent, filter: bookingFilter }), ROSTER), intent).toEqual(fixed);
     }
     expect(ALL_MODE_REPLY).toBe(
-      "In All companies mode I can filter by industry, city or state, number of locations, territory and online booking, up to 3 at a time. Open a company to research it in depth."
+      "In All companies mode I can filter by industry, city or state, number of locations, territory and online booking. Open a company to research it in depth."
     );
+  });
+
+  it("an answer-key or rule-breaking question (meta_or_bulk) gets its own reply", () => {
+    expect(answerAllCompanies(decision({ intent: "meta_or_bulk", filter: bookingFilter }), ROSTER)).toEqual({
+      intro: META_ALL_MODE_REPLY,
+      items: [],
+    });
+    expect(META_ALL_MODE_REPLY).toBe(
+      "I can't share hidden or internal information. In All companies mode I can filter every company by industry, city or state, number of locations, territory and online booking."
+    );
+  });
+
+  it('a count question with no conditions ("how many companies are there?") gets the roster total', () => {
+    expect(answerAllCompanies(decision({ filter: null, criteriaCount: 0 }), ROSTER)).toEqual({
+      intro: `There are ${ROSTER.length} companies in the Data Room.`,
+      items: [],
+    });
+    expect(totalCountReply(1)).toBe("There is 1 company in the Data Room.");
+    // Not when the router saw conditions it couldn't express, or isn't sure it's a count.
+    expect(answerAllCompanies(decision({ filter: null, criteriaCount: 1 }), ROSTER)).toEqual({ intro: ALL_MODE_REPLY, items: [] });
+    expect(answerAllCompanies(decision({ intent: "overview", filter: null, criteriaCount: 0 }), ROSTER)).toEqual({
+      intro: ALL_MODE_REPLY,
+      items: [],
+    });
   });
 
   it('"Which companies are in Colorado?" with {"field":"state","op":"contains","value":"Colorado"} lists the Colorado companies', () => {
@@ -272,11 +293,10 @@ describe("All-companies answers", () => {
     });
   });
 
-  it("the count line: exactly 20 is plain; more than 20 says only the first 20 are shown", () => {
+  it("the count line is the plain count at any size (no cap wording)", () => {
     expect(matchCountIntro(20)).toBe("20 companies match.");
-    expect(matchCountIntro(21)).toBe(
-      "21 companies match. Showing the first 20; use the search box above the list to see the rest."
-    );
+    expect(matchCountIntro(21)).toBe("21 companies match.");
+    expect(matchCountIntro(64)).toBe("64 companies match.");
   });
 
   it("each forgiving form runs the filter instead of the fixed reply", () => {
@@ -295,7 +315,7 @@ describe("All-companies answers", () => {
   });
 });
 
-describe("up to 3 conditions", () => {
+describe("any number of conditions", () => {
   const CO: RosterFilter = { field: "state", op: "eq", value: "CO" };
   const ID: RosterFilter = { field: "state", op: "eq", value: "ID" };
   const DENTAL: RosterFilter = { field: "industry", op: "contains", value: "dental" };
@@ -307,7 +327,7 @@ describe("up to 3 conditions", () => {
     answerAllCompanies(decision({ filters, criteriaCount }), ROSTER).items.map((item) => item.companyName);
   const fixed = { intro: ALL_MODE_REPLY, items: [] };
 
-  it("reads a list of 1–3 conditions; a reply with the single 'filter' field is a one-item list", () => {
+  it("reads a list of conditions; a reply with the single 'filter' field is a one-item list", () => {
     expect(parseRosterFilters([{ field: "state", op: "contains", value: "Colorado" }], undefined)).toEqual([CO]);
     expect(parseRosterFilters(undefined, { field: "state", op: "eq", value: "CO" })).toEqual([CO]);
     expect(parseRosterFilters(null, { field: "state", op: "eq", value: "co" })).toEqual([CO]);
@@ -328,9 +348,9 @@ describe("up to 3 conditions", () => {
     ]);
   });
 
-  it("more than 3, none, or any condition it can't read → null", () => {
+  it("none, or any condition it can't read → null; more than 3 is fine", () => {
+    expect(parseRosterFilters([CO, ID, DENTAL, BOOKING, IN_TERRITORY], undefined)).toEqual([CO, ID, DENTAL, BOOKING, IN_TERRITORY]);
     for (const [filters, filter] of [
-      [[CO, ID, DENTAL, BOOKING], undefined],
       [[], undefined],
       [undefined, undefined],
       [null, null],
@@ -389,15 +409,32 @@ describe("up to 3 conditions", () => {
     expect(listed([CO, ID], null)).toHaveLength(4);
   });
 
-  it("more than 3, an invalid condition, or a count above the conditions given → the fixed reply", () => {
-    expect(answerAllCompanies(decision({ filters: [DENTAL, CO, BOOKING, IN_TERRITORY], criteriaCount: 4 }), ROSTER)).toEqual(fixed);
+  it("an invalid condition, or a count above the conditions given (a partial filter) → the fixed reply", () => {
     expect(answerAllCompanies(decision({ filters: [DENTAL, CO], criteriaCount: 3 }), ROSTER)).toEqual(fixed);
     expect(answerAllCompanies(decision({ filters: [DENTAL, CO, BOOKING], criteriaCount: 4 }), ROSTER)).toEqual(fixed);
     const parsed = (raw: unknown[]): RosterFilter[] | null => parseRosterFilters(raw, undefined);
-    expect(answerAllCompanies(decision({ filters: parsed([CO, ID, DENTAL, BOOKING]), criteriaCount: 4 }), ROSTER)).toEqual(fixed);
     expect(answerAllCompanies(decision({ filters: parsed([DENTAL, { field: "class", op: "eq", value: "strong_fit" }]) }), ROSTER)).toEqual(
       fixed
     );
+  });
+
+  it("four and five conditions run in code, like any other number", () => {
+    const fiveOrMore: RosterFilter = { field: "locations", op: "gte", value: 5 };
+    const noBooking: RosterFilter = { field: "online_booking", op: "eq", value: false };
+    expect(answerAllCompanies(decision({ filters: [DENTAL, CO, IN_TERRITORY, fiveOrMore], criteriaCount: 4 }), ROSTER)).toEqual({
+      intro: "1 company matches.",
+      items: [{ companyId: "summit", companyName: "Summit Dental Group", text: "Dental · 8 locations · Front Range, CO" }],
+    });
+    expect(listed([DENTAL, CO, IN_TERRITORY, fiveOrMore, noBooking], 5)).toEqual(["Summit Dental Group"]);
+  });
+
+  it("a locations range counts as one condition: industry + territory + range is 3 conditions, 4 filters", () => {
+    const range: RosterFilter[] = [
+      { field: "locations", op: "gte", value: 2 },
+      { field: "locations", op: "lte", value: 8 },
+    ];
+    // Maple (3 locations) has no territory on record, so only Summit (8) matches.
+    expect(listed([DENTAL, IN_TERRITORY, ...range], 3)).toEqual(["Summit Dental Group"]);
   });
 
   it("hidden-research questions (budget freeze, software, risks, complaints, best prospect) → the fixed reply", () => {
