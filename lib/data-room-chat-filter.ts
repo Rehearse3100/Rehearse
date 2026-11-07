@@ -16,18 +16,27 @@
  * (filter validation) and POST /api/student/data-room-chat.
  */
 
+import { filterFieldsPhrase, getDataRoomChatConfig, type DataRoomChatConfig } from "@/lib/data-room-chat-config";
 import type { RouterDecision } from "@/lib/data-room-chat-router";
 import { formatRosterListLine, type NameQueryCompany, type ScopedAnswer } from "@/lib/data-room-chat-scope";
 
 // ── Fixed replies ───
 
-/** The reply to every All-companies question that isn't valid conditions (or a name, count or answer-key question). */
-export const ALL_MODE_REPLY =
-  "In All companies mode I can filter by industry, city or state, number of locations, territory and online booking. Switch to Selected and ask about a company to research it in depth.";
+/** The reply to every All-companies question that isn't valid conditions, with the simulation's filterable fields. */
+export function allModeReply(config: DataRoomChatConfig = getDataRoomChatConfig()): string {
+  return `In All companies mode I can filter by ${filterFieldsPhrase(config, "reply")}. Switch to Selected and ask about a company to research it in depth.`;
+}
 
-/** An answer-key or rule-breaking question (meta_or_bulk) in All companies mode. */
-export const META_ALL_MODE_REPLY =
-  "I can't share hidden or internal information. In All companies mode I can filter every company by industry, city or state, number of locations, territory and online booking.";
+/** The reply to an answer-key or rule-breaking question (meta_or_bulk) in All companies mode. */
+export function metaAllModeReply(config: DataRoomChatConfig = getDataRoomChatConfig()): string {
+  return `I can't share hidden or internal information. In All companies mode I can filter every company by ${filterFieldsPhrase(config, "reply")}.`;
+}
+
+/** The reply to every All-companies question that isn't valid conditions (or a name, count or answer-key question); Tempo's wording. */
+export const ALL_MODE_REPLY = allModeReply();
+
+/** An answer-key or rule-breaking question (meta_or_bulk) in All companies mode; Tempo's wording. */
+export const META_ALL_MODE_REPLY = metaAllModeReply();
 
 export const NO_FILTER_MATCHES_REPLY = "No companies match that.";
 
@@ -360,17 +369,19 @@ function listAnswer(companies: readonly FilterCompany[], sort?: RosterSort | nul
  *   filters can't express, so it is refused (a missing count is fine);
  * - a filter_list question with no conditions at all (criteria count 0, "how many
  *   companies are there?") gets the roster total;
- * - an answer-key or rule-breaking question (meta_or_bulk) gets META_ALL_MODE_REPLY;
- * - everything else gets ALL_MODE_REPLY.
+ * - an answer-key or rule-breaking question (meta_or_bulk) gets the answer-key reply;
+ * - everything else gets the fixed reply (both worded from the simulation's config,
+ *   lib/data-room-chat-config.ts; Tempo's: META_ALL_MODE_REPLY, ALL_MODE_REPLY).
  */
 export function answerAllCompanies(
   decision: RouterDecision,
   companies: readonly FilterCompany[],
-  previousListIds: readonly string[] = []
+  previousListIds: readonly string[] = [],
+  config: DataRoomChatConfig = getDataRoomChatConfig()
 ): ScopedAnswer {
   const { intent, filters, criteriaCount, sort } = decision;
   if (intent === "meta_or_bulk") {
-    return { intro: META_ALL_MODE_REPLY, items: [] };
+    return { intro: metaAllModeReply(config), items: [] };
   }
   // The previous list again in another order ("give this again by locations"): the
   // same companies, so every one of its conditions is kept, re-sorted; a condition
@@ -390,7 +401,7 @@ export function answerAllCompanies(
   if (intent === "filter_list" && filters && isComplete) {
     return answerFilter(filters, companies, sort);
   }
-  return { intro: ALL_MODE_REPLY, items: [] };
+  return { intro: allModeReply(config), items: [] };
 }
 
 // ── Follow-ups about the previous list ───

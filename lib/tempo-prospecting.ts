@@ -5,6 +5,7 @@
  */
 
 import type { ChatMessage } from "@/types";
+import { DATA_ROOM_CHAT_STORAGE_PREFIX } from "@/lib/data-room-chat-config";
 import { parseIcpGradeRecord } from "@/lib/icp-grading";
 
 export type ProspectingStepId =
@@ -485,14 +486,9 @@ export function clearProspectingWizardFromStorage(attemptId: string): void {
 }
 
 /**
- * Data Room AI assistant transcript key (one per attempt). It lives in
- * localStorage until Restart clears it; earlier versions used sessionStorage.
- */
-export const DATA_ROOM_CHAT_STORAGE_PREFIX = "tempo-data-room-chat-v2-";
-
-/**
  * Removes the Data Room AI assistant transcript (simulation restart only), from
- * localStorage and from the older sessionStorage copy.
+ * localStorage and from the older sessionStorage copy. The key prefix lives with the
+ * chat's config (lib/data-room-chat-config.ts DATA_ROOM_CHAT_STORAGE_PREFIX).
  */
 export function clearDataRoomChatFromStorage(attemptId: string): void {
   if (typeof window === "undefined") {

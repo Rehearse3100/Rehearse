@@ -4,7 +4,8 @@
  * stored in crm_prospect_directory.research_facts carries 1–2 fact topics; question
  * topics map to the fact topics that answer them, which the Data Room assistant's
  * router and fact policy use. Read by the directory seed config and generator, the
- * Data Room chat route and modules, the integrity tests and the local eval.
+ * Data Room chat route and modules, the integrity tests and the local eval. What each
+ * topic covers, as the router words it, is per simulation: lib/data-room-chat-config.ts.
  */
 
 // ── Fact topics ───
@@ -22,18 +23,6 @@ export const FACT_TOPICS = [
 ] as const;
 
 export type FactTopic = (typeof FACT_TOPICS)[number];
-
-/** What each fact topic covers (the tagging guide). */
-export const FACT_TOPIC_DESCRIPTIONS: Record<FactTopic, string> = {
-  current_tools: "software, systems, vendors, contracts, recent rollouts",
-  budget: "spending, budget, cost pressure, freezes",
-  staffing: "hiring, cuts, turnover, team changes, front-desk staffing",
-  operations: "processes, hours, scheduling, phones, wait times, capacity",
-  growth: "new locations, expansion, acquisitions",
-  ownership: "owner, franchise, corporate structure, who decides",
-  customer_feedback: "reviews, complaints, sentiment",
-  amenities: "parking, décor, facilities, events, community activities",
-};
 
 // ── Question topics ───
 

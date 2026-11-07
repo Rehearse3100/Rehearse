@@ -18,7 +18,7 @@ Updated: 2026-11-06 (reply fixes, part 3: small-talk, acknowledgement and goodby
 Updated: 2026-11-06 (chat pane UI: "Selected | All companies" switch with a hint line, placeholder by mode, result and compare tables from optional reply fields, "Search all companies")
 Updated: 2026-11-06 (fix: no "Nothing specific on that is publicly findable" line on broad topics; every missing opening logs a reason)
 Updated: 2026-11-06 (testing fixes: typo English check, list sorting and re-sorting the previous list, compare read in code and compare rows, scope after lists explained, neutral opening example)
-Scope: `POST /api/student/data-room-chat`, its client `components/tempo/stages/ProspectingDataRoomChat.tsx` (reply body: `components/tempo/stages/DataRoomChatAnswer.tsx`), the safety checks in `lib/data-room-chat-guard.ts`, and the pure helpers in `lib/data-room-chat-scope.ts`, `lib/data-room-chat-router.ts`, `lib/data-room-chat-filter.ts`, `lib/data-room-chat-policy.ts` and `lib/data-room-chat-render.ts`.
+Scope: `POST /api/student/data-room-chat`, its client `components/tempo/stages/ProspectingDataRoomChat.tsx` (reply body: `components/tempo/stages/DataRoomChatAnswer.tsx`), the safety checks in `lib/data-room-chat-guard.ts`, the per-simulation wording in `lib/data-room-chat-config.ts` (2.2), and the pure helpers in `lib/data-room-chat-scope.ts`, `lib/data-room-chat-router.ts`, `lib/data-room-chat-filter.ts`, `lib/data-room-chat-policy.ts` and `lib/data-room-chat-render.ts`.
 
 **Previous state (2026-08-30):** the student attached companies with a picker; the model saw every attached company by name, with research findings for all of them, and replied in free text. That design let an answer about one company drift onto another, and let names come from the model.
 
@@ -110,6 +110,23 @@ Run on every question in this order, before the roster loads or any answering mo
 5. **English:** more than 30% of the letters in a non-Latin script → "Please ask in English.", without calling the router. Otherwise the router's reply includes `"english"` (5.1); `false` with high confidence → "Please ask in English." (checked as soon as the router returns, on both the All-companies and the 1–3-company paths). A missing or invalid field counts as English. **Typos aren't another language** (2026-11-06, `hasEnglishFunctionWords`): a message with at least two different common English function words (the, for, only, and, of, to, in, with, what, which, how, do, they, is, are, me, about, their…) counts as English whatever the router says ("comoare the 3 only for locations" got "Please ask in English." before). The non-Latin script check is unchanged.
 
 Table (in `supabase/FULL-SETUP.sql`): `public.data_room_chat_usage (id uuid primary key default gen_random_uuid(), attempt_id uuid not null references public.attempts(id) on delete cascade, student_id uuid not null, created_at timestamptz not null default now())`, index on `(attempt_id, created_at)`, row level security on with no policies (only the server's service client touches it).
+
+### 2.2 Per-simulation wording (`lib/data-room-chat-config.ts`, 2026-11-06)
+
+Everything simulation-specific in the chat's wording is in one config, `DataRoomChatConfig`; `getDataRoomChatConfig(simulationId)` returns a simulation's entry, and Tempo's for an unknown or missing id (the only simulation for now). A future simulation adds its own entry; the code is generic.
+
+| Field | Used for (Tempo's value) |
+|-------|--------------------------|
+| `filterFields` (label, shortLabel) | `filterFieldsPhrase`: the replies' "industry, city or state, number of locations, territory and online booking" (the All-companies fixed reply, the answer-key reply, the All-companies greeting) and the switch hint's "industry, city or state, locations, territory or online booking" |
+| `greetingTopics` | the greeting's "its locations, software, hiring, budget or risks" |
+| `tableHeaders` | the result table's Company / Industry / Loc / City |
+| `compareRowLabels` | the compare table's Industry, Locations, City, Territory, Online booking, Signals |
+| `cardLabels` | In territory / Out of territory / Online booking / No online booking (table tags, compare Territory cell) |
+| `topicDescriptions` | the router prompt's topic list (moved from `FACT_TOPIC_DESCRIPTIONS` in `lib/data-room-research-topics.ts`, the router being its only reader; the topic keys stay there, shared with the generator and the policy) |
+
+The route looks the config up by the attempt's simulation and passes it to the greeting, the All-companies replies and the router prompt; the pane (which has no simulation id) uses the default. `ALL_MODE_REPLY`, `META_ALL_MODE_REPLY`, `GREETING_REPLY_ALL`, `GREETING_REPLY_COMPANIES` and `ROUTER_SYSTEM_PROMPT` remain, built from Tempo's config; a test pins each to its exact text and the prompts and table markup by SHA-256. The transcript's storage prefix `DATA_ROOM_CHAT_STORAGE_PREFIX` moved here from `lib/tempo-prospecting.ts` with the same value, `tempo-data-room-chat-v2-`, so saved chats keep loading; the restart clean-up there imports it.
+
+Still in the generic code (they describe the directory's columns, which every simulation shares): the fact sentences ("In territory.", "Offers online booking.", "Industry: …", "Metro area: …"), the filter whitelist and the router prompt's field and attribute definitions, the compare-row words read from a question, and the territory/online-booking card fields.
 
 ---
 
@@ -483,6 +500,7 @@ Design: Stitch chat pane components 2–4.
 
 ## 14. Change history
 
+- **2026-11-06, per-simulation chat config (no behaviour change):** the simulation-specific wording moved into `lib/data-room-chat-config.ts` (2.2): the filterable fields, the greeting's topics, the table, compare and tag labels, the router's topic descriptions, and the transcript storage prefix (same value). Every string is unchanged for Tempo.
 - **2026-11-06, limited compares, "which ones", All-companies reply, router room:** a compare limited to some rows starts with the fixed compare line instead of an opening (11); with one company open, a question starting "which ones", "which of them" or "which companies" also offers "Search all companies", whatever the router labels it (11); the All-companies fixed reply ends "Switch to Selected and ask about a company to research it in depth." (was "Open a company to research it in depth."); the router's `max_tokens` is 600 (was 300, sized for three filters), so a long filter question's JSON reply isn't cut off (5.1).
 - **2026-11-06, testing fixes:**
   - **English:** two common English function words make a message English whatever the router says (2.1).

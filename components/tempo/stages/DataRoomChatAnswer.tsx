@@ -7,13 +7,15 @@
  * "compare"). Tables only use the card values the server sends with each item
  * (lib/data-room-chat-scope.ts AnswerCard); a reply without them falls back to the
  * text blocks. Also the "Search all companies" pill offered under a filter question
- * about one company. Design: Stitch chat pane components 2–4.
+ * about one company. Column, row and tag labels come from the simulation's chat
+ * config (lib/data-room-chat-config.ts). Design: Stitch chat pane components 2–4.
  */
 
 "use client";
 
 import { useEffect, useRef, useState } from "react";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
+import { getDataRoomChatConfig, type DataRoomChatConfig } from "@/lib/data-room-chat-config";
 import type { AnswerCard, AnswerLayout, CompareRowKey, ScopedAnswerItem } from "@/lib/data-room-chat-scope";
 
 /** A result table with this many rows or more scrolls inside the reply (sticky header). */
@@ -51,12 +53,14 @@ export function answerLayoutOf(answer: ChatAnswer): AnswerLayout {
 
 const MISSING = "—";
 
-function territoryLabel(card: AnswerCard): string | null {
-  return card.inTerritory === null ? null : card.inTerritory ? "In territory" : "Out of territory";
+type CardLabels = DataRoomChatConfig["cardLabels"];
+
+function territoryLabel(card: AnswerCard, labels: CardLabels): string | null {
+  return card.inTerritory === null ? null : card.inTerritory ? labels.inTerritory : labels.outOfTerritory;
 }
 
-function bookingLabel(card: AnswerCard): string | null {
-  return card.onlineBooking === null ? null : card.onlineBooking ? "Online booking" : "No online booking";
+function bookingLabel(card: AnswerCard, labels: CardLabels): string | null {
+  return card.onlineBooking === null ? null : card.onlineBooking ? labels.onlineBooking : labels.noOnlineBooking;
 }
 
 // ── Result table (Stitch component 3) ───
@@ -69,8 +73,16 @@ const HEADER_CELL =
  * tags) | Industry | Loc | City. Up to 10 rows at full height; 11 or more scroll
  * inside the reply (about 320px) with the header kept in view.
  */
-export function ResultTable({ items }: { items: readonly ScopedAnswerItem[] }): React.ReactElement {
+export function ResultTable({
+  items,
+  config = getDataRoomChatConfig(),
+}: {
+  items: readonly ScopedAnswerItem[];
+  /** The simulation's labels (lib/data-room-chat-config.ts); Tempo's by default. */
+  config?: DataRoomChatConfig;
+}): React.ReactElement {
   const isScrolling = items.length >= TABLE_SCROLL_FROM_ROWS;
+  const headers = config.tableHeaders;
   return (
     <div className="border border-outline-variant rounded-lg overflow-hidden bg-white">
       <div
@@ -81,23 +93,27 @@ export function ResultTable({ items }: { items: readonly ScopedAnswerItem[] }): 
           <thead className={isScrolling ? "sticky top-0 z-10" : undefined}>
             <tr>
               <th scope="col" className={HEADER_CELL}>
-                Company
+                {headers.company}
               </th>
               <th scope="col" className={HEADER_CELL}>
-                Industry
+                {headers.industry}
               </th>
               <th scope="col" className={`${HEADER_CELL} text-center`}>
-                Loc
+                {headers.locations}
               </th>
               <th scope="col" className={HEADER_CELL}>
-                City
+                {headers.city}
               </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-outline-variant">
             {items.map((item) => {
               const card = item.card;
-              const tags = card ? [territoryLabel(card), bookingLabel(card)].filter((tag): tag is string => tag !== null) : [];
+              const tags = card
+                ? [territoryLabel(card, config.cardLabels), bookingLabel(card, config.cardLabels)].filter(
+                    (tag): tag is string => tag !== null
+                  )
+                : [];
               return (
                 <tr key={item.companyId} className="hover:bg-surface/60 transition-colors motion-reduce:transition-none">
                   <td className="py-2 px-2 align-top">
@@ -153,26 +169,24 @@ function useHorizontalOverflow(ref: React.RefObject<HTMLElement>): boolean {
   return isOverflowing;
 }
 
+/** One compare row: its key (its label comes from the config's compareRowLabels) and its cell. */
 type CompareRow = {
   key: CompareRowKey;
-  label: string;
   isMono?: boolean;
-  value: (item: ScopedAnswerItem, card: AnswerCard) => React.ReactNode;
+  value: (item: ScopedAnswerItem, card: AnswerCard, labels: CardLabels) => React.ReactNode;
 };
 
 const COMPARE_ROWS: readonly CompareRow[] = [
-  { key: "industry", label: "Industry", value: (_item, card) => card.industry || MISSING },
-  { key: "locations", label: "Locations", isMono: true, value: (_item, card) => card.locations ?? MISSING },
-  { key: "city", label: "City", value: (_item, card) => card.metro || MISSING },
-  { key: "territory", label: "Territory", value: (_item, card) => territoryLabel(card) ?? MISSING },
+  { key: "industry", value: (_item, card) => card.industry || MISSING },
+  { key: "locations", isMono: true, value: (_item, card) => card.locations ?? MISSING },
+  { key: "city", value: (_item, card) => card.metro || MISSING },
+  { key: "territory", value: (_item, card, labels) => territoryLabel(card, labels) ?? MISSING },
   {
     key: "online_booking",
-    label: "Online booking",
     value: (_item, card) => (card.onlineBooking === null ? MISSING : card.onlineBooking ? "Yes" : "No"),
   },
   {
     key: "signals",
-    label: "Signals",
     value: (item) =>
       item.signals && item.signals.length > 0 ? (
         <ul className="space-y-1.5">
@@ -201,9 +215,12 @@ const COMPARE_ROWS: readonly CompareRow[] = [
 export function CompareTable({
   items,
   rows = [],
+  config = getDataRoomChatConfig(),
 }: {
   items: readonly ScopedAnswerItem[];
   rows?: readonly CompareRowKey[];
+  /** The simulation's labels (lib/data-room-chat-config.ts); Tempo's by default. */
+  config?: DataRoomChatConfig;
 }): React.ReactElement {
   const shownRows = rows.length > 0 ? COMPARE_ROWS.filter((row) => rows.includes(row.key)) : COMPARE_ROWS;
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -244,7 +261,7 @@ export function CompareTable({
                     scope="row"
                     className="sticky left-0 z-10 bg-surface py-1.5 px-2.5 text-[11px] font-semibold text-on-surface-variant border-r border-outline-variant align-top"
                   >
-                    {row.label}
+                    {config.compareRowLabels[row.key]}
                   </th>
                   {items.map((item, i) => (
                     <td
@@ -253,7 +270,7 @@ export function CompareTable({
                         i < items.length - 1 ? "border-r border-outline-variant" : ""
                       }`}
                     >
-                      {item.card ? row.value(item, item.card) : MISSING}
+                      {item.card ? row.value(item, item.card, config.cardLabels) : MISSING}
                     </td>
                   ))}
                 </tr>
@@ -276,7 +293,14 @@ export function CompareTable({
  * tables existed), a result table or a compare table (answerLayoutOf). Rendered
  * inside the reply bubble, whose spacing separates the parts.
  */
-export function DataRoomChatAnswer({ answer }: { answer: ChatAnswer }): React.ReactElement {
+export function DataRoomChatAnswer({
+  answer,
+  config = getDataRoomChatConfig(),
+}: {
+  answer: ChatAnswer;
+  /** The simulation's labels for the tables; Tempo's by default. */
+  config?: DataRoomChatConfig;
+}): React.ReactElement {
   const layout = answerLayoutOf(answer);
   return (
     <>
@@ -291,8 +315,8 @@ export function DataRoomChatAnswer({ answer }: { answer: ChatAnswer }): React.Re
           {answer.intro}
         </p>
       ) : null}
-      {layout === "table" ? <ResultTable items={answer.items} /> : null}
-      {layout === "compare" ? <CompareTable items={answer.items} rows={answer.compareRows} /> : null}
+      {layout === "table" ? <ResultTable items={answer.items} config={config} /> : null}
+      {layout === "compare" ? <CompareTable items={answer.items} rows={answer.compareRows} config={config} /> : null}
       {layout === "list"
         ? answer.items.map((item) => (
             <div key={item.companyId}>

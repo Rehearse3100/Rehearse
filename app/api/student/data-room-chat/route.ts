@@ -49,7 +49,9 @@
  * are under "Nothing specific on that is publicly findable. Related findings:" (no
  * opening); never on a broad topic (risks, fit, recent changes). Everything is rendered from the
  * stored text (lib/data-room-chat-render.ts). Company names in answers come from the
- * database; the model sees companies only as refs ([C1]…). For the pane's tables, an
+ * database; the model sees companies only as refs ([C1]…). The simulation's wording
+ * (filterable fields, greeting topics, router topics) comes from
+ * lib/data-room-chat-config.ts (getDataRoomChatConfig). For the pane's tables, an
  * All-companies list also carries each company's card values (layout "table") and a
  * compare answer card values and signals (layout "compare"); a filter question about
  * one company, or one starting "which ones / which of them / which companies", adds
@@ -59,6 +61,7 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { requireStudentApi } from "@/lib/api-auth";
+import { getDataRoomChatConfig } from "@/lib/data-room-chat-config";
 import {
   answerAllCompanies,
   parsePreviousListIds,
@@ -437,14 +440,16 @@ export async function POST(request: Request): Promise<NextResponse> {
       return NextResponse.json(guardReply("notEnglish"));
     }
 
+    const simulationId = String(attempt.simulation_id);
+    // The simulation's wording for fixed replies and the router's topics.
+    const chatConfig = getDataRoomChatConfig(simulationId);
+
     // A message that is only a greeting, thanks or small talk gets a fixed reply, before the
     // router (no model call); "hi, what software do they use?" goes on as a question.
     const greeting = parseGreeting(newMessage);
     if (greeting) {
-      return NextResponse.json(greetingReply(greeting, scope));
+      return NextResponse.json(greetingReply(greeting, scope, chatConfig));
     }
-
-    const simulationId = String(attempt.simulation_id);
 
     // The whole roster: scope check, name redaction, and (for All companies) the facts.
     const { data: rosterRows, error: rosterError } = await supabase
@@ -525,13 +530,16 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     // The router never sees facts or company data.
     const scopeKind = scopeKindOf(scope);
-    const routerMessages = buildRouterMessages({
-      question,
-      recentQuestions: (followUp ? followUp.earlierQuestions : parseHistoryQuestions(body.history)).map((text) =>
-        redactStudentText(text, index, refLabels)
-      ),
-      scopeKind,
-    });
+    const routerMessages = buildRouterMessages(
+      {
+        question,
+        recentQuestions: (followUp ? followUp.earlierQuestions : parseHistoryQuestions(body.history)).map((text) =>
+          redactStudentText(text, index, refLabels)
+        ),
+        scopeKind,
+      },
+      chatConfig
+    );
 
     // All companies: the question's validated conditions run over the roster in code
     // (every match, from the database, under the count line); a count question with
@@ -549,7 +557,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       // "Give this again, by locations": the previous list's companies (every one of
       // its conditions), re-sorted; only when the question points back at that list.
       const previousListIds = refersToPreviousList(newMessage) ? parsePreviousListIds(body.history) : [];
-      return NextResponse.json(answerAllCompanies(decision, roster.map(toListCompany), previousListIds));
+      return NextResponse.json(answerAllCompanies(decision, roster.map(toListCompany), previousListIds, chatConfig));
     }
 
     // One to three companies: the router runs alongside the data loads.

@@ -45,7 +45,13 @@ import {
   type ScopeInput,
   type ScopePreview,
 } from "@/lib/data-room-chat-scope";
-import { DATA_ROOM_CHAT_STORAGE_PREFIX, sanitizeAiResearchReply } from "@/lib/tempo-prospecting";
+import {
+  DATA_ROOM_CHAT_STORAGE_PREFIX,
+  filterFieldsPhrase,
+  getDataRoomChatConfig,
+  type DataRoomChatConfig,
+} from "@/lib/data-room-chat-config";
+import { sanitizeAiResearchReply } from "@/lib/tempo-prospecting";
 
 // Dropdown motion, the same as the ☰ menu (TempoStageMenu). Open: fade in and drop
 // 4px into place (150ms ease-out); visibility isn't transitioned, so it shows at once.
@@ -456,16 +462,18 @@ export function ScopeHint({
   isAll,
   preview,
   total,
+  config = getDataRoomChatConfig(),
 }: {
   isAll: boolean;
   preview: ScopePreview;
   total: number;
+  /** The simulation's wording (the filterable fields); Tempo's by default. */
+  config?: DataRoomChatConfig;
 }): React.ReactElement {
   if (isAll) {
     return (
       <p className={HINT_CLASS}>
-        Filtering all {total} {total === 1 ? "company" : "companies"} by industry, city or state, locations, territory or
-        online booking.
+        Filtering all {total} {total === 1 ? "company" : "companies"} by {filterFieldsPhrase(config, "hint")}.
       </p>
     );
   }

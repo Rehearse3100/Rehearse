@@ -11,6 +11,8 @@
  * /api/student/data-room-chat (server).
  */
 
+import { filterFieldsPhrase, getDataRoomChatConfig, joinList, type DataRoomChatConfig } from "@/lib/data-room-chat-config";
+
 // ── Types and limits ───
 
 export type ScopeCompany = {
@@ -804,12 +806,18 @@ export function answerNameQuery(query: NameQuery, companies: readonly NameQueryC
 
 // ── Server: greetings and other fixed first lines ───
 
-/** A greeting while one or more companies are open. */
-export const GREETING_REPLY_COMPANIES =
-  "Hi! I'm your research assistant. Ask me about the open company: its locations, software, hiring, budget or risks. To search across every company, switch to All companies.";
-/** A greeting in All companies mode. */
-export const GREETING_REPLY_ALL =
-  "Hi! I'm your research assistant. Here I can filter every company by industry, city or state, number of locations, territory and online booking. Open a company to research it in depth.";
+/** A greeting while one or more companies are open, with what the simulation's config suggests asking about. */
+export function greetingReplyCompanies(config: DataRoomChatConfig = getDataRoomChatConfig()): string {
+  return `Hi! I'm your research assistant. Ask me about the open company: its ${joinList(config.greetingTopics, "or")}. To search across every company, switch to All companies.`;
+}
+/** A greeting in All companies mode, with the simulation's filterable fields. */
+export function greetingReplyAll(config: DataRoomChatConfig = getDataRoomChatConfig()): string {
+  return `Hi! I'm your research assistant. Here I can filter every company by ${filterFieldsPhrase(config, "reply")}. Open a company to research it in depth.`;
+}
+/** A greeting while one or more companies are open (Tempo's wording). */
+export const GREETING_REPLY_COMPANIES = greetingReplyCompanies();
+/** A greeting in All companies mode (Tempo's wording). */
+export const GREETING_REPLY_ALL = greetingReplyAll();
 export const THANKS_REPLY = "You're welcome! Ask me anything else about these companies.";
 /** "How are you?" and the like (both modes). */
 export const SMALL_TALK_REPLY = "I'm doing well, thanks! What would you like to know about these companies?";
@@ -877,8 +885,12 @@ export function parseGreeting(text: string): GreetingKind | null {
   return GOODBYES.has(bare) ? "goodbye" : null;
 }
 
-/** The fixed reply to a greeting, thanks or small talk: only the greeting text depends on the mode. */
-export function greetingReply(kind: GreetingKind, scope: ChatScope): ScopedAnswer {
+/** The fixed reply to a greeting, thanks or small talk: only the greeting text depends on the mode (and the simulation's config). */
+export function greetingReply(
+  kind: GreetingKind,
+  scope: ChatScope,
+  config: DataRoomChatConfig = getDataRoomChatConfig()
+): ScopedAnswer {
   const replies: Record<Exclude<GreetingKind, "greeting">, string> = {
     thanks: THANKS_REPLY,
     smallTalk: SMALL_TALK_REPLY,
@@ -886,7 +898,7 @@ export function greetingReply(kind: GreetingKind, scope: ChatScope): ScopedAnswe
     goodbye: GOODBYE_REPLY,
   };
   const intro =
-    kind === "greeting" ? (scope.mode === "all" ? GREETING_REPLY_ALL : GREETING_REPLY_COMPANIES) : replies[kind];
+    kind === "greeting" ? (scope.mode === "all" ? greetingReplyAll(config) : greetingReplyCompanies(config)) : replies[kind];
   return { intro, items: [] };
 }
 
