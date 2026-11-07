@@ -366,6 +366,20 @@ export function isCompareRequest(text: string): boolean {
     );
 }
 
+// ── "Which ones…" about one company ───
+
+/** A question that starts "which ones", "which of them" or "which companies" (any case, leading punctuation ignored). */
+const WHICH_ONES_QUESTION = /^[^a-z0-9]*which\s+(?:ones|of\s+them|companies)\b/i;
+
+/**
+ * True when the question starts "which ones", "which of them" or "which companies":
+ * with one company open it reads as a question about many, so the pane offers
+ * "Search all companies" whatever the router labelled it.
+ */
+export function isWhichOnesQuestion(text: string): boolean {
+  return WHICH_ONES_QUESTION.test(text);
+}
+
 // ── Follow-ups ───
 
 /** A follow-up refers back with one of these (never "them": that is the companies themselves). */

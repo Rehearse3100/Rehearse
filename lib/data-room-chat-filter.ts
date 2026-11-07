@@ -23,7 +23,7 @@ import { formatRosterListLine, type NameQueryCompany, type ScopedAnswer } from "
 
 /** The reply to every All-companies question that isn't valid conditions (or a name, count or answer-key question). */
 export const ALL_MODE_REPLY =
-  "In All companies mode I can filter by industry, city or state, number of locations, territory and online booking. Open a company to research it in depth.";
+  "In All companies mode I can filter by industry, city or state, number of locations, territory and online booking. Switch to Selected and ask about a company to research it in depth.";
 
 /** An answer-key or rule-breaking question (meta_or_bulk) in All companies mode. */
 export const META_ALL_MODE_REPLY =

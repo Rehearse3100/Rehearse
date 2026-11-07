@@ -19,6 +19,7 @@ import {
   hasEnglishFunctionWords,
   isCompareRequest,
   isFollowUpQuestion,
+  isWhichOnesQuestion,
   OVERVIEW_DECISION,
   parseFollowUpContext,
   parseRouterReply,
@@ -591,5 +592,50 @@ describe("sort (list questions)", () => {
       "all"
     );
     expect(decision).toMatchObject({ intent: "filter_list", filters: null, sort: { field: "locations", direction: "desc" } });
+  });
+});
+
+describe("'which ones' questions", () => {
+  it("start with 'which ones', 'which of them' or 'which companies' (any case)", () => {
+    for (const text of ["which ones have online boookinh?", "Which of them are in territory?", "WHICH COMPANIES are hiring?", "  which ones?"]) {
+      expect(isWhichOnesQuestion(text), text).toBe(true);
+    }
+    for (const text of ["What software do they use?", "which one is best?", "Tell me which ones are hiring", "which companion app?"]) {
+      expect(isWhichOnesQuestion(text), text).toBe(false);
+    }
+  });
+});
+
+describe("a long All-companies reply", () => {
+  it("8 filters plus a sort parse whole (the reply the router's 600 tokens leave room for)", () => {
+    const filters = [
+      { field: "industry", op: "contains", value: "fitness" },
+      { field: "state", op: "eq", value: "TX" },
+      { field: "state", op: "eq", value: "OH" },
+      { field: "metro", op: "contains", value: "Austin" },
+      { field: "territory", op: "eq", value: true },
+      { field: "online_booking", op: "eq", value: false },
+      { field: "locations", op: "gte", value: 20 },
+      { field: "locations", op: "lte", value: 40 },
+    ];
+    const raw = reply({
+      intent: "filter_list",
+      topic: null,
+      attribute: null,
+      filters,
+      criteria_count: 6,
+      sort: { field: "locations", direction: "desc" },
+      exact_value: false,
+      english: true,
+      confidence: "high",
+    });
+    const decision = parseRouterReply(raw, "all");
+    expect(decision.intent).toBe("filter_list");
+    expect(decision.filters).toHaveLength(8);
+    expect(decision.filters).toEqual(filters);
+    expect(decision.criteriaCount).toBe(6);
+    expect(decision.sort).toEqual({ field: "locations", direction: "desc" });
+    // The same reply cut off part-way (what a too-small max_tokens does) falls back to the overview.
+    expect(parseRouterReply(raw.slice(0, raw.length - 40), "all")).toEqual(OVERVIEW_DECISION);
   });
 });

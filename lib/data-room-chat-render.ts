@@ -44,6 +44,12 @@ export const NOTHING_FINDABLE_REPLY = "Nothing about that is publicly findable f
 /** The intro when the question asks for one exact detail that no fact states, above related facts. */
 export const EXACT_DETAIL_MISSING_INTRO = "That exact detail isn't publicly findable. Related facts:";
 
+/**
+ * The first line of a compare limited to some rows ("only for locations"): fixed, so no
+ * opening can mention a detail the table doesn't show.
+ */
+export const COMPARE_FIXED_INTRO = "Which one to pursue is your call; the facts below can help you compare.";
+
 /** The intro when a follow-up ("tell me more") brings back only facts the last answer already showed. */
 export const FOLLOW_UP_NOTHING_NEW_INTRO = "That's everything publicly findable on this.";
 
@@ -332,8 +338,9 @@ export function compareRowsFor(question: string): CompareRowKey[] {
  * A compare answer about two or three companies, shown side by side (layout
  * "compare"): each item also carries its card values and public signals; its text
  * (the overview) stays the fallback. rows: the details the question limits it to
- * (compareRowsFor; empty → every row). One company, or a company without a source,
- * is left as it is.
+ * (compareRowsFor; empty → every row); a limited compare starts with
+ * COMPARE_FIXED_INTRO, so it gets no opening sentence. One company, or a company
+ * without a source, is left as it is.
  */
 export function withCompareLayout(
   answer: ScopedAnswer,
@@ -350,7 +357,7 @@ export function withCompareLayout(
   return {
     ...answer,
     layout: "compare",
-    ...(rows.length > 0 ? { compareRows: [...rows] } : {}),
+    ...(rows.length > 0 ? { compareRows: [...rows], intro: COMPARE_FIXED_INTRO } : {}),
     items: answer.items.map((item) => {
       const source = byId.get(item.companyId);
       return source

@@ -308,7 +308,7 @@ describe("All-companies answers", () => {
       expect(answerAllCompanies(decision({ intent, filter: bookingFilter }), ROSTER), intent).toEqual(fixed);
     }
     expect(ALL_MODE_REPLY).toBe(
-      "In All companies mode I can filter by industry, city or state, number of locations, territory and online booking. Open a company to research it in depth."
+      "In All companies mode I can filter by industry, city or state, number of locations, territory and online booking. Switch to Selected and ask about a company to research it in depth."
     );
   });
 

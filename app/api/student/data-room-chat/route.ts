@@ -25,7 +25,8 @@
  * "inappropriate" label gets the moderation reply; a "not English" label is ignored
  * when the message holds two common English function words (typos). A "compare …",
  * "side by side" or "vs" question about 2–3 companies is a compare (only the rows it
- * names, if any). All companies: no model picks or
+ * names, if any; a limited compare starts with the fixed compare line instead of an
+ * opening). All companies: no model picks or
  * reads company data — the question's validated conditions (no limit) run over the
  * roster in code and every match is listed under the count line; a count question
  * with no conditions gets the roster total; an answer-key question its own reply;
@@ -51,7 +52,8 @@
  * database; the model sees companies only as refs ([C1]…). For the pane's tables, an
  * All-companies list also carries each company's card values (layout "table") and a
  * compare answer card values and signals (layout "compare"); a filter question about
- * one company adds suggestAllCompanies (the pane offers "Search all companies").
+ * one company, or one starting "which ones / which of them / which companies", adds
+ * suggestAllCompanies (the pane offers "Search all companies").
  */
 
 import { NextResponse } from "next/server";
@@ -107,6 +109,7 @@ import {
   hasEnglishFunctionWords,
   isCompareRequest,
   isFollowUpQuestion,
+  isWhichOnesQuestion,
   OVERVIEW_DECISION,
   parseFollowUpContext,
   parseRouterEnglish,
@@ -167,8 +170,12 @@ const ROSTER_COLUMNS =
   "id, company_name, industry, vertical, locations, metro, in_territory, size_note, online_booking, blurb, public_signals";
 
 const ROUTER_TEMPERATURE = 0;
-/** Room for the decision and up to three All-companies filters. */
-const ROUTER_MAX_TOKENS = 300;
+/**
+ * Room for the router's whole JSON reply: the decision, any number of All-companies
+ * filters, a sort, and the english / exact_value / confidence fields. Too little cuts
+ * the JSON off, and a cut-off reply silently falls back to the overview.
+ */
+const ROUTER_MAX_TOKENS = 600;
 const SELECTION_TEMPERATURE = 0;
 /** Room for every fact id of up to three companies. */
 const SELECTION_MAX_TOKENS = 500;
@@ -734,10 +741,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     // Written last, from the finished answer; above the facts if it passes the checks
     // (every path whose answer has no first line of its own).
     const finished = await withWrittenOpening(openai, openingQuestion, decision.topic, answer, index);
-    // A filter question about one company: the answer as it is, and the pane offers
-    // "Search all companies" under it.
+    // A filter question about one company, or one starting "which ones / which of
+    // them / which companies": the answer as it is, and the pane offers "Search all
+    // companies" under it.
     return NextResponse.json(
-      singleCompanyId !== null && decision.intent === "filter_list"
+      singleCompanyId !== null && (decision.intent === "filter_list" || isWhichOnesQuestion(newMessage))
         ? { ...finished, suggestAllCompanies: true }
         : finished
     );

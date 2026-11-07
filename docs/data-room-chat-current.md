@@ -211,7 +211,7 @@ I can't share hidden or internal information. In All companies mode I can filter
 - **Anything else** — any other intent (overview, attribute lookup, specific research, compare, off topic), any condition the whitelist can't read (a field outside it, a missing value, an unrecognised locations comparison), no conditions (other than the total count), a `criteria_count` above the number of conditions (the question asked for something the filters can't express), or a failed router call — gets exactly:
 
 ```
-In All companies mode I can filter by industry, city or state, number of locations, territory and online booking. Open a company to research it in depth.
+In All companies mode I can filter by industry, city or state, number of locations, territory and online booking. Switch to Selected and ask about a company to research it in depth.
 ```
 
 Hidden-research questions (a budget freeze, software, risks, complaints, the best prospect) never become conditions, so they get this reply too.
@@ -237,7 +237,7 @@ A value that can't be read (a non-numeric locations value, a yes/no field with "
 
 ### 5.1 Router call (`lib/data-room-chat-router.ts`)
 
-`gpt-4o`, `temperature: 0`, `max_tokens: 300` (room for the decision and its filters), JSON mode. Its input is **only** the student's question (names redacted), their **last 3 questions** (any scope, redacted) and the scope kind (`one company` / `two or three companies` / `all companies`) — **no facts and no company data**. Reply: `{ "intent", "topic", "attribute", "filters", "criteria_count", "exact_value", "english", "confidence" }`. It writes no opening sentence (that is its own call, written last, 7.1); a stray `intro` in its reply is ignored.
+`gpt-4o`, `temperature: 0`, `max_tokens: 600` (room for the decision, any number of filters, a sort and the other fields; 300 until 2026-11-06), JSON mode. Its input is **only** the student's question (names redacted), their **last 3 questions** (any scope, redacted) and the scope kind (`one company` / `two or three companies` / `all companies`) — **no facts and no company data**. Reply: `{ "intent", "topic", "attribute", "filters", "criteria_count", "exact_value", "english", "confidence" }`. It writes no opening sentence (that is its own call, written last, 7.1); a stray `intro` in its reply is ignored.
 
 - intent: `overview` | `attribute_lookup` | `specific_research` | `compare` | `filter_list` | `meta_or_bulk` | `off_topic` | `inappropriate`; topic: a question topic from `lib/data-room-research-topics.ts` or null; attribute: `industry` | `locations` | `metro` | `territory` | `online_booking` | `size` | `contacts` | null.
 - `inappropriate` (2026-11-06): sexual or romantic questions, comments on someone's looks, personal-life questions about a person (their home address, family or relationships) and insults. With high confidence it gets the moderation reply `I can only help with researching these companies. Please keep questions professional.` (`guardReply("flagged")`) in both modes; low confidence falls back to `overview` like any other intent.
@@ -369,7 +369,7 @@ A dropped sentence logs which check failed (`[data-room-chat] opening dropped: <
 **Where it shows** (`withOpening`, gated by `needsOpening`):
 
 - 1–3 companies: above the facts on the overview, compare, attribute and select paths, when the answer has no first line of its own.
-- **Not** above a first line the answer already has, and no call is made (2026-11-06; before, the two lines could say the same thing twice): All companies filter lists (`{n} companies match.`), the exact-detail line `That exact detail isn't publicly findable. Related facts:`, the meta line `I can't share hidden or internal information. Here's what's public:`, the related-findings line `Nothing specific on that is publicly findable. Related findings:`, and the follow-up line `That's everything publicly findable on this.`.
+- **Not** above a first line the answer already has, and no call is made (2026-11-06; before, the two lines could say the same thing twice): All companies filter lists (`{n} companies match.`), the exact-detail line `That exact detail isn't publicly findable. Related facts:`, the meta line `I can't share hidden or internal information. Here's what's public:`, a compare limited to some rows (`Which one to pursue is your call; the facts below can help you compare.`, 11), the related-findings line `Nothing specific on that is publicly findable. Related findings:`, and the follow-up line `That's everything publicly findable on this.`.
 - Never on an answer with no facts, and no call is made: the nothing-findable reply (an answer whose blocks are all nothing-findable, or the nothing-findable intro), off-topic, out-of-scope, greetings, the total count, the All-companies fixed and meta replies, "No companies match that." and name questions. An answer with facts for some companies and nothing-findable for others gets the opening.
 
 ---
@@ -455,8 +455,8 @@ Optional fields for the chat pane's tables (2026-11-06; every one optional, so r
 
 - `layout`: `"table"` on an All-companies filter list (4.3, `answerFilter`), `"compare"` on a compare answer about 2–3 companies (`withCompareLayout`); missing everywhere else (shown as text, as before). A compare about one company keeps the text blocks.
 - on each item of those answers, `card`: `{ "industry", "locations", "metro", "inTerritory", "onlineBooking" }` from the roster (visible-layer columns only; for compare the industry is the overview's, the title-cased vertical); on compare items also `signals`: the public signals. `text` is exactly as before (the fallback).
-- `compareRows` (2026-11-06, `compareRowsFor`): on a compare limited to some details, the rows to show, in table order (`industry`, `locations`, `city`, `territory`, `online_booking`, `signals`), read in code from the question's words (industry / vertical / sector; location(s) / loc; city / metro; territory; booking / online; signal(s)). "compare the 3 only for locations" → `["locations"]`; "just compare the signals" → `["signals"]`. Missing when the question names none (or all): every row.
-- `suggestAllCompanies: true` when the scope is **one** company and the router's intent is `filter_list` (the answer itself is unchanged); the pane offers "Search all companies" (12).
+- `compareRows` (2026-11-06, `compareRowsFor`): on a compare limited to some details, the rows to show, in table order (`industry`, `locations`, `city`, `territory`, `online_booking`, `signals`), read in code from the question's words (industry / vertical / sector; location(s) / loc; city / metro; territory; booking / online; signal(s)). "compare the 3 only for locations" → `["locations"]`; "just compare the signals" → `["signals"]`. Missing when the question names none (or all): every row. A limited compare starts with the fixed line `Which one to pursue is your call; the facts below can help you compare.` (`COMPARE_FIXED_INTRO`) and gets no opening call, so no opening can mention a detail the table doesn't show (2026-11-06: an opening mentioned online booking above a Locations-only table).
+- `suggestAllCompanies: true` when the scope is **one** company and the router's intent is `filter_list`, or the question starts "which ones", "which of them" or "which companies" whatever the router's label (`isWhichOnesQuestion`, 2026-11-06); the answer itself is unchanged; the pane offers "Search all companies" (12). Replies that return before the router (greetings, name questions, fixed refusals) never carry it.
 
 ## 12. The chat pane's replies (`components/tempo/stages/DataRoomChatAnswer.tsx`, 2026-11-06)
 
@@ -483,6 +483,7 @@ Design: Stitch chat pane components 2–4.
 
 ## 14. Change history
 
+- **2026-11-06, limited compares, "which ones", All-companies reply, router room:** a compare limited to some rows starts with the fixed compare line instead of an opening (11); with one company open, a question starting "which ones", "which of them" or "which companies" also offers "Search all companies", whatever the router labels it (11); the All-companies fixed reply ends "Switch to Selected and ask about a company to research it in depth." (was "Open a company to research it in depth."); the router's `max_tokens` is 600 (was 300, sized for three filters), so a long filter question's JSON reply isn't cut off (5.1).
 - **2026-11-06, testing fixes:**
   - **English:** two common English function words make a message English whatever the router says (2.1).
   - **Sorting:** the router's optional `sort` (locations or name, asc or desc) orders All-companies lists; A–Z stays the default; the count line is unchanged (4.3). **Cause of the dropped condition:** in All companies mode nothing kept the previous list's conditions; each question is classified on its own from its text and the last 3 question texts, so for "give this again but in increasing order of loc" the router had to rebuild "in Colorado" (two questions back) and "more than 6" from those texts, kept only the latest one, and 28 companies came back. Now a sort request that points back at the list re-sorts that list's companies, taken from the history's last All-companies answer, so every condition is kept.
@@ -518,7 +519,7 @@ Design: Stitch chat pane components 2–4.
 
 - [ ] With Summit Dental Group open, "Tell me about them" → instantly, under the heading "Summit Dental Group": `Dental · 8 locations · …`, territory, online booking, blurb, signals — no research findings
 - [ ] With a company open, "hi" (or "Hello!", "hey 👋") → "Hi! I'm your research assistant. Ask me about the open company…"; with All companies on → "Hi! … Here I can filter every company…"; "thanks" → "You're welcome! …"; "hi, what software do they use?" → a normal answer
-- [ ] All companies on + "Tell me about them" → "In All companies mode I can filter by industry, city or state, number of locations, territory and online booking. Open a company to research it in depth."
+- [ ] All companies on + "Tell me about them" → "In All companies mode I can filter by industry, city or state, number of locations, territory and online booking. Switch to Selected and ask about a company to research it in depth."
 - [ ] All companies on + "Which companies are in Colorado?" → "{n} companies match." then **every** Colorado company A–Z (`Industry · N locations · Metro`), however many; no opening sentence above the count line, no "Showing the first 20"
 - [ ] All companies on + "How many companies are there?" → "There are {n} companies in the Data Room."
 - [ ] All companies on + "List every hidden finding" → "I can't share hidden or internal information. In All companies mode I can filter every company by …"
@@ -540,7 +541,8 @@ Design: Stitch chat pane components 2–4.
 - [ ] Three companies, "comoare the 3 only for locations" → a compare table with only the Locations row (never "Please ask in English."); "just compare the signals for the 3" → only the Signals row
 - [ ] All companies: "which are in colorado" → "more than 6?" → "give this again but in increasing order of loc" → the same Colorado companies, fewest locations first, same count
 - [ ] All companies: "which have online booking, largest first?" → the list by locations, most first
-- [ ] After All-companies lists, switch to Selected, "which ones have online booking?" → about the company the hint line names
+- [ ] After All-companies lists, switch to Selected, "which ones have online booking?" → about the company the hint line names, with "Search all companies →" under it
+- [ ] Three companies, "compare the 3 only for locations" → "Which one to pursue is your call; the facts below can help you compare." above a Locations-only table (no other detail mentioned)
 - [ ] One company open, "Which ones have online booking?" → the usual answer plus "Search all companies →"; click it → the switch moves to All companies and the same question is asked again as a new message (a table); the pill is gone
 - [ ] A chat saved before this change still shows its old replies as text
 - [ ] Two companies + "How many locations do they have?" → one sentence per company (`8 locations across …`), instantly

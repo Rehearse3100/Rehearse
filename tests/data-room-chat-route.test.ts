@@ -30,6 +30,7 @@ import { ALL_MODE_REPLY, META_ALL_MODE_REPLY } from "@/lib/data-room-chat-filter
 import { guardReply } from "@/lib/data-room-chat-guard";
 import { BROAD_QUESTION_TOPICS, OFF_TOPIC_REPLY } from "@/lib/data-room-chat-policy";
 import {
+  COMPARE_FIXED_INTRO,
   EXACT_DETAIL_MISSING_INTRO,
   NOTHING_FINDABLE_REPLY,
   OPENING_SYSTEM_PROMPT,
@@ -935,7 +936,7 @@ describe("All companies: up to 3 conditions, run in code", () => {
 
   it("an invalid condition, an unknown locations comparison or a hidden-research question → the new fixed reply", async () => {
     expect(ALL_MODE_REPLY).toBe(
-      "In All companies mode I can filter by industry, city or state, number of locations, territory and online booking. Open a company to research it in depth."
+      "In All companies mode I can filter by industry, city or state, number of locations, territory and online booking. Switch to Selected and ask about a company to research it in depth."
     );
     for (const reply of [
       filtersReply([DENTAL, { field: "software", op: "eq", value: "Zentrix" }]),
@@ -1555,6 +1556,59 @@ describe("testing fixes: typos, sorting, compare rows, scope after lists", () =>
   });
 });
 
+describe("limited compares and 'which ones' about one company", () => {
+  const THREE = { mode: "companies", companyIds: ["summit-dental", "falcon", "maple"] };
+
+  it("a compare limited to some rows starts with the fixed compare line; no opening call (it mentioned booking under a Locations-only table)", async () => {
+    state.classify.mockResolvedValueOnce(routerReply("compare"));
+    state.open.mockResolvedValueOnce(modelReply({ opening: "Only one of these companies offers online booking." }));
+    const reply = (await ask({ scope: THREE, newMessage: "compare the 3 only for locations" })) as {
+      intro: string;
+      compareRows?: string[];
+    };
+    expect(reply.intro).toBe(COMPARE_FIXED_INTRO);
+    expect(COMPARE_FIXED_INTRO).toBe("Which one to pursue is your call; the facts below can help you compare.");
+    expect(reply.compareRows).toEqual(["locations"]);
+    expect(state.open).not.toHaveBeenCalled();
+  });
+
+  it("a compare of every row keeps the opening as before", async () => {
+    state.classify.mockResolvedValueOnce(routerReply("compare"));
+    state.open.mockResolvedValueOnce(modelReply({ opening: "Here's what's on record for each company." }));
+    const reply = (await ask({ scope: THREE, newMessage: "Compare these companies" })) as { intro: string };
+    expect(reply.intro).toBe("Here's what's on record for each company.");
+    expect(state.open).toHaveBeenCalledTimes(1);
+  });
+
+  it("one company, 'which ones / which of them / which companies' → suggestAllCompanies whatever the label; the answer is unchanged", async () => {
+    for (const [newMessage, plainMessage, label] of [
+      ["which ones have online boookinh?", "do they have online booking?", routerReply("attribute_lookup", null, "online_booking")],
+      ["Which of them are in territory?", "are they in territory?", routerReply("attribute_lookup", null, "territory")],
+      ["which companies are hiring?", "are they hiring?", routerReply("overview")],
+    ] as const) {
+      state.classify.mockResolvedValueOnce(label);
+      const offered = (await ask({ scope: ONE, newMessage })) as Record<string, unknown>;
+      expect(offered.suggestAllCompanies, newMessage).toBe(true);
+      // The answer is what the same label gives a question that isn't "which ones", plus the flag.
+      state.classify.mockResolvedValueOnce(label);
+      const plain = (await ask({ scope: ONE, newMessage: plainMessage })) as Record<string, unknown>;
+      expect(plain, plainMessage).not.toHaveProperty("suggestAllCompanies");
+      expect(offered, newMessage).toEqual({ ...plain, suggestAllCompanies: true });
+    }
+  });
+
+  it("not for other questions, two companies, or All companies", async () => {
+    state.classify.mockResolvedValueOnce(routerReply("overview"));
+    expect(await ask({ scope: ONE, newMessage: "What software do they use?" })).not.toHaveProperty("suggestAllCompanies");
+    state.classify.mockResolvedValueOnce(routerReply("overview"));
+    expect(await ask({ scope: TWO, newMessage: "which ones have online booking?" })).not.toHaveProperty("suggestAllCompanies");
+    state.classify.mockResolvedValueOnce(
+      modelReply({ intent: "filter_list", filters: [{ field: "online_booking", op: "eq", value: true }], criteria_count: 1, confidence: "high" })
+    );
+    expect(await ask({ scope: ALL, newMessage: "which ones have online booking?" })).not.toHaveProperty("suggestAllCompanies");
+  });
+});
+
 describe("the router call", () => {
   it("sees only the redacted question, the last 3 redacted questions and the scope kind — no facts", async () => {
     await POST(
@@ -1580,7 +1634,8 @@ describe("the router call", () => {
     expect(args).toMatchObject({
       model: "gpt-4o",
       temperature: 0,
-      max_tokens: 300,
+      // 2026-11-06: 600 (was 300, sized for three filters); filters are unlimited now.
+      max_tokens: 600,
       response_format: { type: "json_object" },
     });
     expect(args.messages).toEqual([
