@@ -76,6 +76,9 @@ export function TestShortcutsDropdown({
           router.push(
             `/student/simulation/${simulationId}/complete?classId=${classId}&testbadges=all`
           );
+        } else if (value === "tester:ai-call") {
+          // Throwaway tester page (app/tester/ai-call); remove this branch with its option.
+          router.push(`/tester/ai-call?simulationId=${simulationId}&classId=${classId}`);
         }
 
         e.target.value = "";
@@ -100,6 +103,7 @@ export function TestShortcutsDropdown({
         ))}
         <option value="badges:all">Test → Badges — All Earned</option>
       </optgroup>
+      <option value="tester:ai-call">AI call test</option>
     </select>
   );
 }
