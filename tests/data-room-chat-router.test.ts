@@ -903,7 +903,9 @@ describe("unknown_company (2026-11-08)", () => {
 describe("the router leaves out empty fields (2026-11-08)", () => {
   it("one output line; every field's own rule is unchanged; still cached-size", () => {
     expect(ROUTER_SYSTEM_PROMPT).toContain(
-      "Write only the fields that carry something: leave out every field whose value would be null, false, an empty list or empty text, leave out english when it is true, and leave out standalone_question when it would be the question unchanged. A field you leave out means exactly that empty value. Always write intent and confidence, and for a filter_list question always write criteria_count, 0 included."
+      // 2026-11-08: english is always written (true or false); leaving it out when true
+      // led gpt-6-luna to write "english": false on short English questions.
+      "Write only the fields that carry something: leave out every field whose value would be null, false, an empty list or empty text, and leave out standalone_question when it would be the question unchanged. A field you leave out means exactly that empty value. Always write intent, confidence and english (true or false), and for a filter_list question always write criteria_count, 0 included."
     );
     expect(ROUTER_SYSTEM_PROMPT.length).toBeGreaterThanOrEqual(MIN_ROUTER_PROMPT_CHARS);
   });
