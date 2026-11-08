@@ -104,8 +104,8 @@ describe("strings built from the config are exactly today's", () => {
       // rule and the range note removed; 2026-11-08: industry names picked from the
       // message's list, locked-in → current_tools, more acknowledgement examples; then
       // negative conditions, typos never inappropriate; then narrows_previous; then
-      // unknown_company).
-      router: "24832bd08b4c55688f27624eec5f292dadf4a3995051ea7ab86b8313e34c91dd",
+      // unknown_company; then the "write only the fields that carry something" rule).
+      router: "bb4ded50b7487ff5eed1eecc7279282e0731dcde4c9029f3a4506b7cf49440cc",
       // Changed on purpose since: indirect answers (rules, contracts, mandates) count.
       selection: "98f8701b4d6d3e5ed84066b70671527d0a41ac12fbebd5186cb0c218ec3a62e7",
       opening: "a41a805ae91ecd7886ef4d027f503b573b1aad81069d646675a260097a8bdd68",

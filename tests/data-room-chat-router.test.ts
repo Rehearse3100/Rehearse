@@ -30,6 +30,7 @@ import {
   MIN_ROUTER_PROMPT_CHARS,
   OVERVIEW_DECISION,
   parseFollowUpContext,
+  parseRouterEnglish,
   parseRouterReply,
   replaceRefs,
   ROUTER_INTENTS,
@@ -896,5 +897,67 @@ describe("unknown_company (2026-11-08)", () => {
       expect(parseRouterReply(reply({ ...base, unknown_company: value })), String(value)).not.toHaveProperty("unknownCompany");
     }
     expect(ROUTER_SYSTEM_PROMPT.length).toBeGreaterThanOrEqual(MIN_ROUTER_PROMPT_CHARS);
+  });
+});
+
+describe("the router leaves out empty fields (2026-11-08)", () => {
+  it("one output line; every field's own rule is unchanged; still cached-size", () => {
+    expect(ROUTER_SYSTEM_PROMPT).toContain(
+      "Write only the fields that carry something: leave out every field whose value would be null, false, an empty list or empty text, leave out english when it is true, and leave out standalone_question when it would be the question unchanged. A field you leave out means exactly that empty value. Always write intent and confidence, and for a filter_list question always write criteria_count, 0 included."
+    );
+    expect(ROUTER_SYSTEM_PROMPT.length).toBeGreaterThanOrEqual(MIN_ROUTER_PROMPT_CHARS);
+  });
+
+  // Each field's empty value as the router wrote it before (criteria_count's is null:
+  // 0 is a real value, the total-count question, and is always written).
+  const EMPTY: Record<string, unknown> = {
+    intent: null,
+    topic: null,
+    attribute: null,
+    filters: null,
+    criteria_count: null,
+    unfiltered: false,
+    narrows_previous: false,
+    sort: null,
+    name_match: null,
+    small_talk_kind: null,
+    standalone_question: "",
+    is_follow_up: false,
+    unknown_company: false,
+    exact_value: false,
+    english: true,
+    confidence: null,
+  };
+  // Replies of every kind, each with real values in some fields.
+  const BASES: Array<[Record<string, unknown>, "one" | "several" | "all"]> = [
+    [{ intent: "overview", confidence: "high" }, "one"],
+    [{ intent: "specific_research", topic: "budget", exact_value: true, standalone_question: "What is [C1]'s budget?", is_follow_up: true, confidence: "high" }, "one"],
+    [{ intent: "attribute_lookup", attribute: "contacts", confidence: "high" }, "several"],
+    [{ intent: "filter_list", filters: [{ field: "state", op: "ne", value: "TX" }], criteria_count: 1, unfiltered: true, narrows_previous: true, sort: { field: "name", direction: "desc" }, confidence: "low" }, "all"],
+    [{ intent: "filter_list", criteria_count: 0, confidence: "high" }, "all"],
+    [{ intent: "name_query", name_match: { kind: "starts_with", value: "B" }, confidence: "high" }, "all"],
+    [{ intent: "small_talk", small_talk_kind: "thanks", confidence: "high" }, "one"],
+    [{ intent: "overview", unknown_company: true, english: false, confidence: "high" }, "one"],
+  ];
+
+  it("for each field, leaving it out gives exactly the decision (and the English verdict) its empty value gives", () => {
+    for (const [base, scopeKind] of BASES) {
+      for (const [field, empty] of Object.entries(EMPTY)) {
+        const withEmpty = reply({ ...base, [field]: empty });
+        const { [field]: _left, ...rest } = base;
+        const without = reply(rest);
+        const label = `${JSON.stringify(base)} · ${field}`;
+        expect(parseRouterReply(without, scopeKind), label).toEqual(parseRouterReply(withEmpty, scopeKind));
+        expect(parseRouterEnglish(without), label).toBe(parseRouterEnglish(withEmpty));
+      }
+    }
+  });
+
+  it("english left out is English; standalone_question left out is the question as typed (no rewrite)", () => {
+    expect(parseRouterEnglish(reply({ intent: "overview", confidence: "high" }))).toBe(true);
+    expect(parseRouterReply(reply({ intent: "overview", confidence: "high" }))).not.toHaveProperty("standaloneQuestion");
+    // criteria_count left out is not the total-count question (only an explicit 0 is).
+    expect(parseRouterReply(reply({ intent: "filter_list", confidence: "high" }), "all").criteriaCount).toBeNull();
+    expect(parseRouterReply(reply({ intent: "filter_list", criteria_count: 0, confidence: "high" }), "all").criteriaCount).toBe(0);
   });
 });

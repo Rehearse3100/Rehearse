@@ -2680,3 +2680,33 @@ describe("a company that isn't in the Data Room (2026-11-08)", () => {
     expect(await ask({ scope: ALL, newMessage: "tell me about them" })).toEqual({ intro: ALL_MODE_REPLY, items: [] });
   });
 });
+
+describe("one timing log line per question (2026-11-08)", () => {
+  it("each step's time and the total, in ms; no question text, names or ids", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "budget"));
+    state.create.mockResolvedValueOnce(selection(["C1:h:1"]));
+    await ask({ scope: ONE, newMessage: "What about Summit Dental Group's budget?" });
+    const lines = logSpy.mock.calls.filter((call) => call[0] === "[data-room-chat] timing ms:");
+    logSpy.mockRestore();
+    expect(lines).toHaveLength(1);
+    const timing = JSON.parse(String(lines[0]?.[1])) as Record<string, unknown>;
+    expect(Object.keys(timing)).toEqual(["attemptLimitModeration", "countAndRoster", "routerAndLoads", "selection", "firstLine", "total"]);
+    expect(Object.values(timing).every((value) => typeof value === "number" && value >= 0)).toBe(true);
+    const line = JSON.stringify(lines);
+    for (const leaked of ["Summit", "budget", "summit-dental", "attempt-1", "student-1"]) {
+      expect(line, leaked).not.toContain(leaked);
+    }
+  });
+
+  it("All companies: the router step; a refused question still logs its one line", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    await ask({ scope: ALL, newMessage: "Tell me about them" });
+    await ask({ scope: ONE, newMessage: "a".repeat(501) });
+    const lines = logSpy.mock.calls.filter((call) => call[0] === "[data-room-chat] timing ms:");
+    logSpy.mockRestore();
+    expect(lines).toHaveLength(2);
+    expect(Object.keys(JSON.parse(String(lines[0]?.[1])) as object)).toEqual(["attemptLimitModeration", "countAndRoster", "router", "total"]);
+    expect(Object.keys(JSON.parse(String(lines[1]?.[1])) as object)).toEqual(["total"]);
+  });
+});

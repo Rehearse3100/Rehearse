@@ -34,6 +34,8 @@ const fake = vi.hoisted(() => ({
   /** Rows in data_room_chat_usage before the test; rows the test inserts are added on top. */
   usageTotal: 0,
   usageError: null as unknown,
+  /** The attempt check finds no attempt (2026-11-08, for the parallel-steps tests). */
+  isAttemptMissing: false,
   router: vi.fn(),
   other: vi.fn(),
   moderate: vi.fn(),
@@ -58,7 +60,7 @@ const ROSTER = [
 function answer(op: Op): { data: unknown; error: unknown; count?: number | null } {
   const called = (name: string): unknown[] | undefined => op.calls.find(([method]) => method === name)?.[1];
   if (op.table === "attempts") {
-    return { data: { id: "attempt-1", simulation_id: "sim-1" }, error: null };
+    return fake.isAttemptMissing ? { data: null, error: null } : { data: { id: "attempt-1", simulation_id: "sim-1" }, error: null };
   }
   if (op.table === "data_room_chat_usage") {
     if (called("insert")) {
@@ -156,6 +158,7 @@ beforeEach(() => {
   fake.ops = [];
   fake.usageTotal = 0;
   fake.usageError = null;
+  fake.isAttemptMissing = false;
   fake.router.mockReset().mockResolvedValue(reply({ intent: "overview", topic: null, attribute: null, confidence: "high" }));
   fake.other.mockReset().mockResolvedValue(reply({ opening: "Here is what's on record." }));
   fake.moderate.mockReset().mockResolvedValue(CLEAN);
@@ -337,5 +340,49 @@ describe("route: checks before the pipeline", () => {
       expect(Object.values(GUARD_REPLIES)).toContain(body.intro);
     }
     expect(fake.other).not.toHaveBeenCalled();
+  });
+});
+
+describe("route: independent steps run together, results read in the usual order (2026-11-08)", () => {
+  const FLAGGED = { results: [{ flagged: true, categories: { harassment: true } }] };
+
+  it("an attempt that isn't the student's: 404 first, nothing counted, no router call (whatever moderation or the limit say)", async () => {
+    fake.isAttemptMissing = true;
+    fake.usageTotal = 300;
+    fake.moderate.mockResolvedValueOnce(FLAGGED);
+    const res = await POST(
+      new Request("http://x/api/student/data-room-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ attemptId: "attempt-1", scope: { mode: "all" }, newMessage: "abusive text" }),
+      })
+    );
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "Attempt not found." });
+    expect(inserts()).toHaveLength(0);
+    expect(fake.router).not.toHaveBeenCalled();
+  });
+
+  it("over the limit and flagged: the limit reply, as before (limit before moderation), not counted", async () => {
+    fake.usageTotal = 300;
+    fake.moderate.mockResolvedValueOnce(FLAGGED);
+    expect(await ask("abusive text")).toEqual(guardReply("totalLimit"));
+    expect(inserts()).toHaveLength(0);
+    expect(fake.router).not.toHaveBeenCalled();
+  });
+
+  it("flagged and mostly non-Latin: the moderation reply (moderation before the script check); counted; no router call", async () => {
+    fake.moderate.mockResolvedValueOnce(FLAGGED);
+    expect(await ask("他们的风险是什么")).toEqual(guardReply("flagged"));
+    expect(inserts()).toHaveLength(1);
+    expect(fake.router).not.toHaveBeenCalled();
+  });
+
+  it("the limit is checked before the question is counted (299 earlier → this one is allowed and becomes the 300th)", async () => {
+    fake.usageTotal = 299;
+    expect(await ask("Tell me about them")).toEqual(ALL_MODE);
+    expect(inserts()).toHaveLength(1);
+    expect(await ask("Tell me about them")).toEqual(guardReply("totalLimit"));
+    expect(inserts()).toHaveLength(1);
   });
 });

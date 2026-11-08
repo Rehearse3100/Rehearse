@@ -3,7 +3,10 @@
  * Question router for the Data Room assistant (pure). Builds the classifier call's
  * messages: the student's question, their last 3 questions (both already
  * name-redacted) and the scope kind — never any facts or company data — and parses
- * its JSON reply, failing closed to "overview". The system prompt is the same for
+ * its JSON reply, failing closed to "overview". The router writes only the fields that
+ * carry something (a field it leaves out reads exactly as its null / false / empty
+ * value; english left out is English, standalone_question left out is the question
+ * as typed), which keeps its reply short. The system prompt is the same for
  * every question of a simulation (anything per question is in the user message), and
  * long enough for OpenAI's automatic prompt caching. For All-companies filter
  * questions the reply also carries the filters (as many as the question asks for;
@@ -148,6 +151,7 @@ export function buildRouterSystemPrompt(config: DataRoomChatConfig = getDataRoom
   return [
     "You classify one question a student asks while researching companies in a sales-training Data Room. You never see any company information, only the question. Reply with a single JSON object and nothing else:",
     '{"intent": string, "topic": string | null, "attribute": string | null, "filters": object[] | null, "criteria_count": number, "unfiltered": boolean, "narrows_previous": boolean, "sort": object | null, "name_match": object | null, "small_talk_kind": string | null, "standalone_question": string, "is_follow_up": boolean, "unknown_company": boolean, "exact_value": boolean, "english": boolean, "confidence": "high" | "low"}',
+    "Write only the fields that carry something: leave out every field whose value would be null, false, an empty list or empty text, leave out english when it is true, and leave out standalone_question when it would be the question unchanged. A field you leave out means exactly that empty value. Always write intent and confidence, and for a filter_list question always write criteria_count, 0 included.",
     "",
     "intent (pick one):",
     '- overview: a general or open-ended question about the company or companies ("tell me about them", "what should I know?", "tell me everything", "summarize").',

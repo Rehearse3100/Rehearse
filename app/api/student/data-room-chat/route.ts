@@ -18,7 +18,11 @@
  * passes the safety checks (lib/data-room-chat-guard.ts), each refusal a fixed reply:
  * over 500 characters; the attempt's message limits (not in tester mode; fail open);
  * then it is counted; OpenAI moderation (self-harm or other flags; errors carry on);
- * mostly non-Latin letters; and the router's own "not English" verdict. Flow: an
+ * mostly non-Latin letters; and the router's own "not English" verdict. Independent
+ * steps run at the same time and their results are read in that order (2026-11-08):
+ * the attempt check, the usage limit and moderation together; then counting the
+ * question and loading the roster together; then the router (with the research and
+ * contacts loads). One log line per question gives each step's time in ms. Flow: an
  * unselected-company mention → a server reply (code, against the live roster);
  * otherwise a router call (lib/data-room-chat-router.ts; sees only the redacted
  * question, recent questions and scope kind, and for All companies the roster's
@@ -170,6 +174,19 @@ import {
 import { createServiceClient } from "@/lib/supabase/server";
 import { parseResearchFindings } from "@/lib/data-room-research-topics";
 import { isGateBypassEnabled } from "@/lib/tempo-test-bypass";
+
+/** Each step's time in milliseconds, for the one timing log line per question (no text, names or ids). */
+type StepTimes = Record<string, number>;
+
+/** Awaits the step and records how long it took (also when it fails). */
+async function timed<T>(times: StepTimes, step: string, work: PromiseLike<T>): Promise<T> {
+  const start = Date.now();
+  try {
+    return await work;
+  } finally {
+    times[step] = Date.now() - start;
+  }
+}
 
 type DataRoomChatBody = {
   attemptId?: unknown;
@@ -421,6 +438,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     return auth.response;
   }
 
+  const times: StepTimes = {};
+  const startedAt = Date.now();
   try {
     const body = (await request.json()) as DataRoomChatBody;
     const attemptId =
@@ -458,29 +477,55 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     const supabase = createServiceClient();
-    const { data: attempt, error: attemptError } = await supabase
-      .from("attempts")
-      .select("id, simulation_id")
-      .eq("id", attemptId)
-      .eq("student_id", auth.session.studentId)
-      .maybeSingle();
+    const openai = new OpenAI({ apiKey });
+    // At the same time (each needs only the request): the attempt check, the usage
+    // limit (not in tester mode) and moderation on the message only (errors carry on).
+    // Their results are read in the usual order below: attempt, limit, moderation.
+    const isTesterMode = isGateBypassEnabled();
+    const [{ data: attempt, error: attemptError }, limit, moderation] = await timed(
+      times,
+      "attemptLimitModeration",
+      Promise.all([
+        supabase
+          .from("attempts")
+          .select("id, simulation_id")
+          .eq("id", attemptId)
+          .eq("student_id", auth.session.studentId)
+          .maybeSingle(),
+        isTesterMode ? Promise.resolve(null) : checkUsageLimits(supabase, attemptId),
+        moderateMessage(openai, newMessage),
+      ])
+    );
 
     if (attemptError || !attempt) {
       return NextResponse.json({ error: "Attempt not found." }, { status: 404 });
     }
 
     // 2. Limits (not in tester mode): refused replies are not counted; fails open.
-    if (!isGateBypassEnabled()) {
-      const limit = await checkUsageLimits(supabase, attemptId);
-      if (limit) {
-        return NextResponse.json(guardReply(limit));
-      }
+    if (limit) {
+      return NextResponse.json(guardReply(limit));
     }
-    // 3. Count it.
-    await recordUsage(supabase, attemptId, auth.session.studentId);
-    // 4. Moderation on the message only; errors carry on.
-    const openai = new OpenAI({ apiKey });
-    const moderation = await moderateMessage(openai, newMessage);
+
+    const simulationId = String(attempt.simulation_id);
+    // 3. Count it (a valid attempt under the limit, whatever happens next), at the same
+    // time as loading the whole roster (scope check, name redaction, and for All
+    // companies the facts); both finish before any reply.
+    const [, { data: rosterRows, error: rosterError }] = await timed(
+      times,
+      "countAndRoster",
+      Promise.all([
+        recordUsage(supabase, attemptId, auth.session.studentId),
+        supabase
+          .from("crm_prospect_directory")
+          .select(ROSTER_COLUMNS)
+          .eq("simulation_id", simulationId)
+          .eq("in_data_room", true)
+          .eq("is_active", true)
+          .order("company_name", { ascending: true }),
+      ])
+    );
+
+    // 4. Moderation (run above).
     if (moderation) {
       return NextResponse.json(guardReply(moderation));
     }
@@ -490,21 +535,11 @@ export async function POST(request: Request): Promise<NextResponse> {
       return NextResponse.json(guardReply("notEnglish"));
     }
 
-    const simulationId = String(attempt.simulation_id);
     // The simulation's wording for fixed replies and the router's topics.
     const chatConfig = getDataRoomChatConfig(simulationId);
     // The three calls' model settings; DATA_ROOM_CHAT_MODEL (optional, never logged)
     // swaps the model of all three for the private eval.
     const models = resolveChatModels(chatConfig.models, process.env.DATA_ROOM_CHAT_MODEL);
-
-    // The whole roster: scope check, name redaction, and (for All companies) the facts.
-    const { data: rosterRows, error: rosterError } = await supabase
-      .from("crm_prospect_directory")
-      .select(ROSTER_COLUMNS)
-      .eq("simulation_id", simulationId)
-      .eq("in_data_room", true)
-      .eq("is_active", true)
-      .order("company_name", { ascending: true });
 
     if (rosterError) {
       console.error("[data-room-chat] roster", rosterError);
@@ -573,7 +608,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     // no conditions gets the roster total; anything else a fixed reply. No opening
     // call: every All-companies answer has its own first line.
     if (scope.mode === "all") {
-      const { decision, english } = await classifyQuestion(openai, routerMessages, scopeKind, models.router);
+      const { decision, english } = await timed(times, "router", classifyQuestion(openai, routerMessages, scopeKind, models.router));
       // Two common English function words make it English whatever the router says (typos).
       if (!english && !hasEnglishFunctionWords(newMessage)) {
         return NextResponse.json(guardReply("notEnglish"));
@@ -602,21 +637,25 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     // One to three companies: the router runs alongside the data loads.
-    const [{ decision: routed, english }, researchResult, contactsResult] = await Promise.all([
-      classifyQuestion(openai, routerMessages, scopeKind, models.router),
-      singleCompanyId
-        ? supabase
-            .from("crm_prospect_directory")
-            .select("research_facts")
-            .eq("id", singleCompanyId)
-            .eq("simulation_id", simulationId)
-            .maybeSingle()
-        : null,
-      supabase
-        .from("crm_prospect_contacts")
-        .select("company_id, contact_name, contact_title, department")
-        .in("company_id", scopedIds),
-    ]);
+    const [{ decision: routed, english }, researchResult, contactsResult] = await timed(
+      times,
+      "routerAndLoads",
+      Promise.all([
+        classifyQuestion(openai, routerMessages, scopeKind, models.router),
+        singleCompanyId
+          ? supabase
+              .from("crm_prospect_directory")
+              .select("research_facts")
+              .eq("id", singleCompanyId)
+              .eq("simulation_id", simulationId)
+              .maybeSingle()
+          : null,
+        supabase
+          .from("crm_prospect_contacts")
+          .select("company_id, contact_name, contact_title, department")
+          .in("company_id", scopedIds),
+      ])
+    );
 
     // The router says the question isn't in English (high confidence): fixed reply,
     // unless two common English function words show it is English with typos.
@@ -764,7 +803,11 @@ export async function POST(request: Request): Promise<NextResponse> {
         // Every finding the policy allowed (stored order, whatever the model picked),
         // then the public lines the selection call adds; nothing from either → the
         // nothing-findable reply.
-        const selection = await selectFacts(openai, selectionQuestion, companies.flatMap(selectable), models.selection);
+        const selection = await timed(
+          times,
+          "selection",
+          selectFacts(openai, selectionQuestion, companies.flatMap(selectable), models.selection)
+        );
         answer = renderAnswer(
           companies.map((company) =>
             block(company, [
@@ -817,14 +860,10 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     // Exactly one first line on an answer with facts: its own, else the opening
     // (written last, from the finished answer, checked), else the fixed line.
-    const finished = await withAnswerFirstLine(
-      openai,
-      { prompt: openingQuestion, asked: newMessage },
-      decision,
-      answer,
-      index,
-      models.opening,
-      chatConfig
+    const finished = await timed(
+      times,
+      "firstLine",
+      withAnswerFirstLine(openai, { prompt: openingQuestion, asked: newMessage }, decision, answer, index, models.opening, chatConfig)
     );
     // A research question about 2–3 companies: findings are shared one company at a time.
     const noted: ScopedAnswer =
@@ -845,5 +884,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       { error: "Could not generate a Data Room response." },
       { status: 500 }
     );
+  } finally {
+    // One line per question: each step's time and the total, in ms (no text, names or ids).
+    console.log("[data-room-chat] timing ms:", JSON.stringify({ ...times, total: Date.now() - startedAt }));
   }
 }
