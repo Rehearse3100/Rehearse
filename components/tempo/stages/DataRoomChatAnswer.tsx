@@ -213,7 +213,11 @@ export function ResultTable({
               return (
                 <tr
                   key={item.companyId}
-                  className={`hover:bg-surface/60 transition-colors motion-reduce:transition-none${isOpenable ? " group cursor-pointer" : ""}`}
+                  className={
+                    isOpenable
+                      ? "hover:bg-secondary-fixed/40 transition-colors motion-reduce:transition-none group cursor-pointer"
+                      : "hover:bg-surface/60 transition-colors motion-reduce:transition-none"
+                  }
                   onClick={isOpenable && onOpenCompany ? openUnlessSelecting(onOpenCompany, item.companyId) : undefined}
                 >
                   <td className="py-2 px-2 align-top">

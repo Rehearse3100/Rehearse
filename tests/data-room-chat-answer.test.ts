@@ -442,7 +442,8 @@ describe("company names open the company (2026-11-07)", () => {
   it("table: an openable row is clickable as a whole (its hover kept) and its name underlines with the row; other rows as before", () => {
     const answer: ChatAnswer = { intro: "2 companies match.", layout: "table", items: [row(1), row(3)] };
     const markup = html(React.createElement(DataRoomChatAnswer, { answer, ...open }));
-    expect(markup).toContain('<tr class="hover:bg-surface/60 transition-colors motion-reduce:transition-none group cursor-pointer">');
+    // 2026-11-08: the same light blue hover as a text block and a compare column (was hover:bg-surface/60).
+    expect(markup).toContain('<tr class="hover:bg-secondary-fixed/40 transition-colors motion-reduce:transition-none group cursor-pointer">');
     expect(markup).toContain('<tr class="hover:bg-surface/60 transition-colors motion-reduce:transition-none">');
     expect(markup).toContain("group-hover:text-primary group-hover:underline");
   });
