@@ -753,3 +753,57 @@ describe("'the other one' follows the conversation (2026-11-08)", () => {
     expect(sent(4).scope).toEqual({ mode: "companies", companyIds: ["cascade"] });
   });
 });
+
+describe("the history the pane sends (2026-11-08)", () => {
+  const LIST: DataRoomCompany[] = [
+    company("cascade", "Cascade Attorneys", "Legal Services", "Austin, TX"),
+    company("summit", "Summit Dental Group", "Dental", "Front Range, CO"),
+    company("falcon", "Falcon Market", "Retail", "Denver, CO"),
+  ];
+  function renderOpen(): Element {
+    hooks.index = 0;
+    return ProspectingDataRoomChat({ attemptId: "attempt-1", companies: LIST, openCompanyId: "cascade", listOpenCount: 0 }) as Element;
+  }
+  async function sendWith(text: string): Promise<void> {
+    (theInput(renderOpen()).props.onChange as (event: unknown) => void)({ target: { value: text, selectionStart: text.length } });
+    (find(renderOpen(), (element) => element.props["aria-label"] === "Send message").props.onClick as () => void)();
+    await settle();
+  }
+  const historySent = (call: number): Array<Record<string, unknown>> =>
+    JSON.parse(String(fetchMock.mock.calls[call]?.[1]?.body)).history as Array<Record<string, unknown>>;
+
+  it("only the transcript's last 10 entries; 'the other one' still reads the whole transcript", async () => {
+    await sendWith("compare Summit Dental Group and Cascade Attorneys");
+    for (let i = 1; i <= 6; i += 1) {
+      await sendWith(`is Cascade Attorneys hiring? (${i})`);
+    }
+    await sendWith("then what about the other one?");
+    // 7 questions and 7 answers before it; the last 10 go out.
+    const history = historySent(7);
+    expect(history).toHaveLength(10);
+    expect(history[0]).toMatchObject({ role: "user", content: "is Cascade Attorneys hiring? (2)" });
+    expect(history[9]).toMatchObject({ role: "assistant" });
+    expect(history.filter((entry) => entry.role === "user").map((entry) => entry.content)).toEqual([
+      "is Cascade Attorneys hiring? (2)",
+      "is Cascade Attorneys hiring? (3)",
+      "is Cascade Attorneys hiring? (4)",
+      "is Cascade Attorneys hiring? (5)",
+      "is Cascade Attorneys hiring? (6)",
+    ]);
+    expect(JSON.stringify(history)).not.toContain("compare Summit");
+    // The compare is older than what was sent, and "the other one" is still Summit.
+    expect(sent(7).scope).toEqual({ mode: "companies", companyIds: ["summit"] });
+  });
+
+  it("a short transcript goes out whole; a failed request's reply is still left out", async () => {
+    await sendWith("tell me about Cascade Attorneys");
+    fetchMock.mockImplementationOnce(async () => new Response(JSON.stringify({ error: "down" }), { status: 500 }));
+    await sendWith("are they hiring?");
+    await sendWith("and their budget?");
+    expect(historySent(2).map((entry) => [entry.role, entry.content ?? null])).toEqual([
+      ["user", "tell me about Cascade Attorneys"],
+      ["assistant", null],
+      ["user", "are they hiring?"],
+    ]);
+  });
+});

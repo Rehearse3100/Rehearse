@@ -301,12 +301,30 @@ export function parseRosterFilter(raw: unknown): RosterFilter | null {
 }
 
 /**
+ * True for a territory or online_booking condition with no value (left out, null or
+ * empty text): the router dropped its true/false, so it says nothing about which way.
+ */
+function isYesNoConditionWithoutValue(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return false;
+  }
+  const { field, value } = raw as Record<string, unknown>;
+  return (
+    (field === "territory" || field === "online_booking") &&
+    (value === undefined || value === null || (typeof value === "string" && value.trim() === ""))
+  );
+}
+
+/**
  * The router's conditions, as many as the question asks for: its "filters" list, or
- * a reply that still uses the single "filter" field read as a one-item list. Null
- * (→ the fixed reply) when there are none or any one the whitelist can't read.
+ * a reply that still uses the single "filter" field read as a one-item list. A
+ * territory or online_booking condition with no value is dropped (2026-11-08; it is
+ * never read as matching nothing), and the others are kept. Null (→ the normal reply
+ * for a question with no conditions) when none are left, or when any one the
+ * whitelist can't read.
  */
 export function parseRosterFilters(rawFilters: unknown, rawFilter: unknown): RosterFilter[] | null {
-  const list =
+  const given =
     rawFilters === null || rawFilters === undefined
       ? rawFilter === null || rawFilter === undefined
         ? []
@@ -314,6 +332,7 @@ export function parseRosterFilters(rawFilters: unknown, rawFilter: unknown): Ros
       : Array.isArray(rawFilters)
         ? rawFilters
         : [rawFilters];
+  const list = given.filter((raw) => !isYesNoConditionWithoutValue(raw));
   if (list.length === 0) {
     return null;
   }

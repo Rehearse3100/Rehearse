@@ -14,6 +14,7 @@
  */
 
 import { filterFieldsPhrase, getDataRoomChatConfig, joinList, type DataRoomChatConfig } from "@/lib/data-room-chat-config";
+import { DATA_ROOM_CHAT_MAX_CHARS } from "@/lib/data-room-chat-guard";
 
 // ── Types and limits ───
 
@@ -639,6 +640,97 @@ export function parseChatScope(raw: unknown): ChatScope | null {
   return ids.length >= 1 && ids.length <= MAX_SCOPE_COMPANIES
     ? { mode: "companies", companyIds: ids }
     : null;
+}
+
+// ── Server: trimming the client-sent history ───
+
+/** The student's earlier questions the server keeps from the history: the router reads the last 3. */
+export const HISTORY_QUESTIONS_KEPT = 3;
+/** Each kept question is cut to the message cap (a question over it was refused anyway). */
+export const HISTORY_QUESTION_MAX_CHARS = DATA_ROOM_CHAT_MAX_CHARS;
+/**
+ * History entries the pane sends: its last 10 (one answer per question, so the last 3
+ * questions and the latest answer are always among them).
+ */
+export const HISTORY_ENTRIES_SENT = 10;
+
+type HistoryEntry = Record<string, unknown>;
+
+function isHistoryObject(entry: unknown): entry is HistoryEntry {
+  return Boolean(entry) && typeof entry === "object" && !Array.isArray(entry);
+}
+
+/** A question entry, as every history reader takes it: role "user" with text content. */
+function isQuestionEntry(entry: unknown): entry is HistoryEntry {
+  return isHistoryObject(entry) && entry.role === "user" && typeof entry.content === "string";
+}
+
+/** An answer entry, as every history reader takes it: role "assistant" with a list of items. */
+function isAnswerEntry(entry: unknown): entry is HistoryEntry {
+  return isHistoryObject(entry) && entry.role === "assistant" && Array.isArray(entry.items);
+}
+
+/** An answer with only what its readers use: its scope, and each item's companyId and text. */
+function trimmedAnswer(entry: HistoryEntry): HistoryEntry {
+  const items = entry.items as unknown[];
+  return {
+    role: "assistant",
+    scope: entry.scope,
+    items: items.map((item) => (isHistoryObject(item) ? { companyId: item.companyId, text: item.text } : null)),
+  };
+}
+
+/**
+ * The client-sent history cut to what the route reads, before any name redaction
+ * (2026-11-08; it used to take up to 100 entries of 8,000 characters and redact every
+ * question). In their original order, from the last 100 entries (as before):
+ * - the last 3 questions, each cut to 500 characters (the router's recent questions,
+ *   parseHistoryQuestions); the latest also keeps its scope (a follow-up's "same
+ *   companies" check, parseFollowUpContext);
+ * - the latest answer as parseFollowUpContext reads it: the last answer entry after
+ *   the latest question, with its scope and each item's companyId and text (the
+ *   follow-up's "nothing new" lines; also the previous All-companies list for
+ *   narrowing and re-sorting, parsePreviousListIds, which reads the history's last
+ *   entry);
+ * - the history's last entry when it is neither: an answer kept as above (there is
+ *   no question before it), anything else as null, so parsePreviousListIds still
+ *   finds no list at the end.
+ * Every reader gives the same result on this as on the whole history (a test checks).
+ */
+export function trimChatHistory(raw: unknown): unknown[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const entries: unknown[] = raw.slice(-MAX_HISTORY_ENTRIES);
+  if (entries.length === 0) {
+    return [];
+  }
+  const questionIndexes = entries.flatMap((entry, i): number[] => (isQuestionEntry(entry) ? [i] : []));
+  const keptQuestions = questionIndexes.slice(-HISTORY_QUESTIONS_KEPT);
+  const latestQuestion = keptQuestions[keptQuestions.length - 1];
+  let answerIndex = -1;
+  if (latestQuestion !== undefined) {
+    for (let i = entries.length - 1; i > latestQuestion; i -= 1) {
+      if (isAnswerEntry(entries[i])) {
+        answerIndex = i;
+        break;
+      }
+    }
+  }
+  const trimmed: unknown[] = keptQuestions.map((i): HistoryEntry => {
+    const entry = entries[i] as HistoryEntry;
+    const content = (entry.content as string).slice(0, HISTORY_QUESTION_MAX_CHARS);
+    return i === latestQuestion ? { role: "user", content, scope: entry.scope } : { role: "user", content };
+  });
+  if (answerIndex >= 0) {
+    trimmed.push(trimmedAnswer(entries[answerIndex] as HistoryEntry));
+  }
+  const lastIndex = entries.length - 1;
+  if (lastIndex !== latestQuestion && lastIndex !== answerIndex) {
+    const last = entries[lastIndex];
+    trimmed.push(isAnswerEntry(last) ? trimmedAnswer(last) : null);
+  }
+  return trimmed;
 }
 
 /**

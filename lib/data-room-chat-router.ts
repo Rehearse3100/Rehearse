@@ -3,10 +3,12 @@
  * Question router for the Data Room assistant (pure). Builds the classifier call's
  * messages: the student's question, their last 3 questions (both already
  * name-redacted) and the scope kind — never any facts or company data — and parses
- * its JSON reply, failing closed to "overview". The router writes only the fields that
- * carry something (a field it leaves out reads exactly as its null / false / empty
- * value; english left out is English, standalone_question left out is the question
- * as typed), which keeps its reply short. The system prompt is the same for
+ * its JSON reply, failing closed to "overview". The router writes only the top-level
+ * fields that carry something (a field it leaves out reads exactly as its null / false
+ * / empty value; english left out is English, standalone_question left out is the
+ * question as typed), which keeps its reply short; inside filters, sort and
+ * name_match it writes every key, false and 0 included (2026-11-08: a dropped
+ * "value": false made "outside the territory" find nothing). The system prompt is the same for
  * every question of a simulation (anything per question is in the user message), and
  * long enough for OpenAI's automatic prompt caching. For All-companies filter
  * questions the reply also carries the filters (as many as the question asks for;
@@ -40,6 +42,7 @@ import { isTooLong } from "@/lib/data-room-chat-guard";
 import { QUESTION_TOPICS, type QuestionTopic } from "@/lib/data-room-research-topics";
 import {
   detectCompanies,
+  HISTORY_QUESTIONS_KEPT,
   parseChatScope,
   type ChatScope,
   type GreetingKind,
@@ -122,8 +125,8 @@ export const OVERVIEW_DECISION: RouterDecision = {
   exactValue: false,
 };
 
-/** How many of the student's earlier questions the classifier sees. */
-export const ROUTER_RECENT_QUESTIONS = 3;
+/** How many of the student's earlier questions the classifier sees: the ones the route keeps (trimChatHistory). */
+export const ROUTER_RECENT_QUESTIONS = HISTORY_QUESTIONS_KEPT;
 
 export type ScopeKind = "one" | "several" | "all";
 
@@ -151,7 +154,7 @@ export function buildRouterSystemPrompt(config: DataRoomChatConfig = getDataRoom
   return [
     "You classify one question a student asks while researching companies in a sales-training Data Room. You never see any company information, only the question. Reply with a single JSON object and nothing else:",
     '{"intent": string, "topic": string | null, "attribute": string | null, "filters": object[] | null, "criteria_count": number, "unfiltered": boolean, "narrows_previous": boolean, "sort": object | null, "name_match": object | null, "small_talk_kind": string | null, "standalone_question": string, "is_follow_up": boolean, "unknown_company": boolean, "exact_value": boolean, "english": boolean, "confidence": "high" | "low"}',
-    "Write only the fields that carry something: leave out every field whose value would be null, false, an empty list or empty text, and leave out standalone_question when it would be the question unchanged. A field you leave out means exactly that empty value. Always write intent, confidence and english (true or false), and for a filter_list question always write criteria_count, 0 included.",
+    "Write only the fields that carry something: leave out every field whose value would be null, false, an empty list or empty text, and leave out standalone_question when it would be the question unchanged. A field you leave out means exactly that empty value. This applies to the top-level fields only: inside filters, sort and name_match always write every key (each filter's field, op and value; sort's field and direction; name_match's kind and value), false and 0 included. Always write intent, confidence and english (true or false), and for a filter_list question always write criteria_count, 0 included.",
     "",
     "intent (pick one):",
     '- overview: a general or open-ended question about the company or companies ("tell me about them", "what should I know?", "tell me everything", "summarize").',

@@ -904,8 +904,9 @@ describe("the router leaves out empty fields (2026-11-08)", () => {
   it("one output line; every field's own rule is unchanged; still cached-size", () => {
     expect(ROUTER_SYSTEM_PROMPT).toContain(
       // 2026-11-08: english is always written (true or false); leaving it out when true
-      // led gpt-6-luna to write "english": false on short English questions.
-      "Write only the fields that carry something: leave out every field whose value would be null, false, an empty list or empty text, and leave out standalone_question when it would be the question unchanged. A field you leave out means exactly that empty value. Always write intent, confidence and english (true or false), and for a filter_list question always write criteria_count, 0 included."
+      // led gpt-6-luna to write "english": false on short English questions. Then: the
+      // rule is for top-level fields only ("outside the territory" lost its "value": false).
+      "Write only the fields that carry something: leave out every field whose value would be null, false, an empty list or empty text, and leave out standalone_question when it would be the question unchanged. A field you leave out means exactly that empty value. This applies to the top-level fields only: inside filters, sort and name_match always write every key (each filter's field, op and value; sort's field and direction; name_match's kind and value), false and 0 included. Always write intent, confidence and english (true or false), and for a filter_list question always write criteria_count, 0 included."
     );
     expect(ROUTER_SYSTEM_PROMPT.length).toBeGreaterThanOrEqual(MIN_ROUTER_PROMPT_CHARS);
   });

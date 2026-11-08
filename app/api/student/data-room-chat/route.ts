@@ -13,8 +13,12 @@
  * model calls (router, selection, opening) are built from the simulation's model
  * settings (lib/data-room-chat-config.ts models, lib/data-room-chat-models.ts); the
  * optional server variable DATA_ROOM_CHAT_MODEL replaces the model for all three
- * (never logged). The client sends a scope (1–3 company ids, or all companies) and
- * the question; facts are loaded server-side. Before anything else, every question
+ * (never logged). The client sends a scope (1–3 company ids, or all companies), the
+ * question and its last 10 history entries; facts are loaded server-side. The history
+ * is cut first to what the route reads (trimChatHistory: the last 3 questions at 500
+ * characters, the latest answer, the last entry), before any redaction. A failed
+ * selection call counts as an empty selection (the allowed findings still show).
+ * Before anything else, every question
  * passes the safety checks (lib/data-room-chat-guard.ts), each refusal a fixed reply:
  * over 500 characters; the attempt's message limits (not in tester mode; fail open);
  * then it is counted; OpenAI moderation (self-harm or other flags; errors carry on);
@@ -165,6 +169,7 @@ import {
   parseChatScope,
   parseHistoryQuestions,
   redactCompanyMentions,
+  trimChatHistory,
   type ChatScope,
   type FirstWordReplacement,
   type NameQueryCompany,
@@ -367,7 +372,9 @@ async function classifyQuestion(
  * rewrite when there is one) and the allowed facts in; fact ids and whether one
  * states the exact detail out (only ids among the given facts are kept), plus whether
  * its reply was the prompt's "no fact answers the question" reply
- * (isNoFactAnswersReply; false when there was no call).
+ * (isNoFactAnswersReply; false when there was no call). A failed call is logged and
+ * counts as an empty selection (2026-11-08; it used to fail the whole request), so the
+ * allowed findings still show, or the nothing-findable reply when there are none.
  */
 async function selectFacts(
   openai: OpenAI,
@@ -375,15 +382,21 @@ async function selectFacts(
   facts: SelectableFact[],
   setting: DataRoomChatModelSetting
 ): Promise<Selection & { saysNoFactAnswers: boolean }> {
+  const emptySelection = { facts: [], exactAnswer: false, saysNoFactAnswers: false };
   if (facts.length === 0) {
-    return { facts: [], exactAnswer: false, saysNoFactAnswers: false };
+    return emptySelection;
   }
-  const response = await openai.chat.completions.create({
-    ...chatRequestSettings(setting, SELECTION_MAX_TOKENS),
-    messages: buildSelectionMessages(question, facts),
-  });
-  const content = response.choices[0]?.message?.content;
-  return { ...parseSelection(content, facts), saysNoFactAnswers: isNoFactAnswersReply(content) };
+  try {
+    const response = await openai.chat.completions.create({
+      ...chatRequestSettings(setting, SELECTION_MAX_TOKENS),
+      messages: buildSelectionMessages(question, facts),
+    });
+    const content = response.choices[0]?.message?.content;
+    return { ...parseSelection(content, facts), saysNoFactAnswers: isNoFactAnswersReply(content) };
+  } catch (error) {
+    console.error("[data-room-chat] selection:", error);
+    return emptySelection;
+  }
 }
 
 /**
@@ -447,6 +460,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     const newMessage =
       typeof body.newMessage === "string" ? body.newMessage.trim() : "";
     const scope = parseChatScope(body.scope);
+    // Only the history the route reads, before any redaction: the last 3 questions
+    // (500 characters each), the latest answer and the history's last entry
+    // (trimChatHistory; every reader below gives the same result as on the whole history).
+    const history = trimChatHistory(body.history);
 
     if (!attemptId || !newMessage) {
       return NextResponse.json(
@@ -596,7 +613,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const routerMessages = buildRouterMessages(
       {
         question,
-        recentQuestions: parseHistoryQuestions(body.history).map((text) => redactStudentText(text, index, refLabels)),
+        recentQuestions: parseHistoryQuestions(history).map((text) => redactStudentText(text, index, refLabels)),
         scopeKind,
         ...(scope.mode === "all" ? { industries: industryNames(roster.map(toListCompany)) } : {}),
       },
@@ -632,7 +649,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       // (narrows_previous) "from this list…" / "greater than 6" right after a list: the
       // new conditions run over that list's companies only.
       const previousListIds =
-        refersToPreviousList(newMessage) || decision.narrowsPrevious === true ? parsePreviousListIds(body.history) : [];
+        refersToPreviousList(newMessage) || decision.narrowsPrevious === true ? parsePreviousListIds(history) : [];
       return NextResponse.json(answerAllCompanies(decision, roster.map(toListCompany), previousListIds, chatConfig));
     }
 
@@ -695,7 +712,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         )
       : newMessage;
     // A follow-up about the same companies: the lines the latest answer showed, for "nothing new".
-    const followUp = routed.isFollowUp ? parseFollowUpContext(body.history, scope) : null;
+    const followUp = routed.isFollowUp ? parseFollowUpContext(history, scope) : null;
 
     // "Compare …", "side by side", "vs" about 2–3 companies is a compare, whatever
     // label the router chose (never over an answer-key, off-topic or refused question).

@@ -36,7 +36,7 @@ import {
   type FilterCompany,
   type RosterFilter,
 } from "@/lib/data-room-chat-filter";
-import type { RouterDecision } from "@/lib/data-room-chat-router";
+import { parseRouterReply, type RouterDecision } from "@/lib/data-room-chat-router";
 
 const ROSTER: FilterCompany[] = [
   { id: "summit", name: "Summit Dental Group", industry: "Dental", locations: 8, metro: "Front Range, CO", inTerritory: true, onlineBooking: false },
@@ -932,5 +932,65 @@ describe("narrowing the previous list (2026-11-08)", () => {
     expect(answerAllCompanies(decision({ filters: null, criteriaCount: 0 }), ROSTER, OUTSIDE_IDS).intro).toBe(
       `There are ${ROSTER.length} companies in the Data Room.`
     );
+  });
+});
+
+describe("a territory or online booking condition with no value (2026-11-08)", () => {
+  /** A router reply in All companies mode, parsed as the route parses it. */
+  const routed = (body: Record<string, unknown>): RouterDecision =>
+    parseRouterReply(JSON.stringify({ intent: "filter_list", criteria_count: 1, confidence: "high", english: true, ...body }), "all");
+  const ids = (answer: { items: Array<{ companyId: string }> }): string[] => answer.items.map((item) => item.companyId);
+  const dental = { field: "industry", op: "contains", value: "Dental" };
+
+  it("is dropped; the other conditions are kept; an unreadable value still refuses the whole list (as before)", () => {
+    for (const valueless of [
+      { field: "territory", op: "eq" },
+      { field: "territory", op: "ne", value: null },
+      { field: "online_booking", op: "eq", value: "" },
+      { field: "online_booking", op: "eq", value: "  " },
+    ]) {
+      expect(parseRosterFilters([valueless], undefined), JSON.stringify(valueless)).toBeNull();
+      expect(parseRosterFilters(undefined, valueless), JSON.stringify(valueless)).toBeNull();
+      expect(parseRosterFilters([dental, valueless], undefined), JSON.stringify(valueless)).toEqual([dental]);
+    }
+    expect(parseRosterFilters([dental, { field: "territory", op: "eq", value: "maybe" }], undefined)).toBeNull();
+    expect(parseRosterFilters([dental, { field: "state", op: "eq" }], undefined)).toBeNull();
+    // A written false is kept, never dropped.
+    expect(parseRosterFilters([{ field: "territory", op: "eq", value: false }], undefined)).toEqual([
+      { field: "territory", op: "eq", value: false },
+    ]);
+  });
+
+  it('"Which companies are outside the territory?": value false lists them; value left out → the normal no-condition reply, never "no companies"', () => {
+    const outside = answerAllCompanies(routed({ filters: [{ field: "territory", op: "eq", value: false }] }), ROSTER);
+    expect(outside.intro).toBe("1 company matches.");
+    expect(ids(outside)).toEqual(["outdoor"]);
+
+    const valueless = answerAllCompanies(routed({ filters: [{ field: "territory", op: "eq" }] }), ROSTER);
+    expect(valueless).toEqual({ intro: ALL_MODE_REPLY, items: [] });
+    expect(valueless.intro).not.toBe(NO_FILTER_MATCHES_REPLY);
+    // Low confidence, no readable condition: the overview, which in All companies is the same fixed reply.
+    expect(answerAllCompanies(routed({ filters: [{ field: "territory", op: "eq" }], confidence: "low" }), ROSTER)).toEqual({
+      intro: ALL_MODE_REPLY,
+      items: [],
+    });
+    // A count question: the roster total, as with no conditions.
+    expect(answerAllCompanies(routed({ filters: [{ field: "online_booking", op: "eq" }], criteria_count: 0 }), ROSTER).intro).toBe(
+      `There are ${ROSTER.length} companies in the Data Room.`
+    );
+  });
+
+  it("with another condition: that condition's list (it was the fixed reply)", () => {
+    const answer = answerAllCompanies(routed({ filters: [dental, { field: "territory", op: "eq" }], criteria_count: 2 }), ROSTER);
+    expect(ids(answer)).toEqual(["maple", "summit"]);
+  });
+
+  it("narrowing the previous list with only a valueless condition: the normal reply, not an empty list", () => {
+    const answer = answerAllCompanies(
+      routed({ filters: [{ field: "territory", op: "eq" }], narrows_previous: true }),
+      ROSTER,
+      ["summit", "outdoor"]
+    );
+    expect(answer).toEqual({ intro: ALL_MODE_REPLY, items: [] });
   });
 });

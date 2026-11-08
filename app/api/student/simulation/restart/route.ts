@@ -1,10 +1,11 @@
 /**
  * restart/route.ts
- * Resets the current in-progress attempt — clears stage scores, CRM rows
- * (crm_log_entries, crm_account_notes, crm_contact_notes, crm_leads) and the Data
- * Room chat message count (data_room_chat_usage), then returns the student to
- * lead_gen. A missing crm_leads or data_room_chat_usage table doesn't block the
- * restart. Called when a student clicks "Restart Simulation".
+ * Resets the current in-progress attempt — clears stage scores and CRM rows
+ * (crm_log_entries, crm_account_notes, crm_contact_notes, crm_leads), then returns
+ * the student to lead_gen. A missing crm_leads table doesn't block the restart. The
+ * Data Room chat message count (data_room_chat_usage) is kept (2026-11-08): the
+ * attempt id stays the same, so the 300-question cap carries over.
+ * Called when a student clicks "Restart Simulation".
  * Requires a valid student session cookie.
  *
  * POST body: { attemptId, simulationId, classId }
@@ -156,24 +157,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    const { error: deleteChatUsageError } = await supabase
-      .from("data_room_chat_usage")
-      .delete()
-      .eq("attempt_id", attemptId);
-
-    if (deleteChatUsageError) {
-      // Table missing until the data_room_chat_usage SQL in FULL-SETUP.sql is run — do not block restart.
-      if (!isMissingTableError(deleteChatUsageError)) {
-        console.error("[simulation/restart] delete data room chat usage", deleteChatUsageError);
-        return NextResponse.json(
-          { error: deleteChatUsageError.message || "Could not clear Data Room chat usage." },
-          { status: 500 }
-        );
-      }
-      console.warn(
-        "[simulation/restart] data_room_chat_usage table missing — run its SQL in supabase/FULL-SETUP.sql"
-      );
-    }
+    // The attempt's Data Room chat count (data_room_chat_usage) is kept: restart keeps
+    // the attempt id, so clearing it would reset the 300-question cap (2026-11-08).
 
     const resetPayload: Record<string, unknown> = {
       current_stage: "lead_gen",

@@ -105,8 +105,8 @@ describe("strings built from the config are exactly today's", () => {
       // message's list, locked-in → current_tools, more acknowledgement examples; then
       // negative conditions, typos never inappropriate; then narrows_previous; then
       // unknown_company; then the "write only the fields that carry something" rule;
-      // then english always written).
-      router: "80546a562cd627da28eb67663f7b5a8f5430f7a95428cc013c0b6732ac2fdef7",
+      // then english always written; then the omit rule applies to top-level fields only).
+      router: "206bfd5d48fe2969c573b80c1285eaabce4f63f6b342108333d140449e6e1386",
       // Changed on purpose since: indirect answers (rules, contracts, mandates) count.
       selection: "98f8701b4d6d3e5ed84066b70671527d0a41ac12fbebd5186cb0c218ec3a62e7",
       opening: "a41a805ae91ecd7886ef4d027f503b573b1aad81069d646675a260097a8bdd68",

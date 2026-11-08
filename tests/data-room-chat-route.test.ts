@@ -1444,13 +1444,14 @@ describe("reply fixes, part 3: small talk, and an honest first line for related 
       state.create.mockResolvedValueOnce(reply);
       expect(await ask({ scope: CANYON, newMessage: "What's going on with their phones?" })).toEqual(today);
     }
-    // A selection call that throws is still the generic error, as before.
+    // A selection call that throws: since 2026-11-08 an empty selection, so the same
+    // answer as an unclear reply (it was the generic 500 error).
     state.create.mockRejectedValueOnce(new Error("selection down"));
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const failed = await POST(chatRequest({ scope: CANYON, newMessage: "What's going on with their phones?" }));
     errorSpy.mockRestore();
-    expect(failed.status).toBe(500);
-    expect(await failed.json()).toEqual({ error: "Could not generate a Data Room response." });
+    expect(failed.status).toBe(200);
+    expect(await failed.json()).toEqual(today);
   });
 
   it("Northview, 'any risks?' (the regression): selection empty, SlotEasy allowed → no 'Nothing specific' line, SlotEasy shown, the normal opening", async () => {
@@ -2708,5 +2709,146 @@ describe("one timing log line per question (2026-11-08)", () => {
     expect(lines).toHaveLength(2);
     expect(Object.keys(JSON.parse(String(lines[0]?.[1])) as object)).toEqual(["attemptLimitModeration", "countAndRoster", "router", "total"]);
     expect(Object.keys(JSON.parse(String(lines[1]?.[1])) as object)).toEqual(["total"]);
+  });
+});
+
+describe("the selection call fails (2026-11-08)", () => {
+  it("the allowed findings still show, exactly as when it picks nothing; logged; status 200", async () => {
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "risks"));
+    state.create.mockResolvedValueOnce(selection([]));
+    const pickedNothing = await ask({ scope: ONE });
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "risks"));
+    state.create.mockRejectedValueOnce(new Error("rate limited"));
+    const response = await POST(chatRequest({ scope: ONE }));
+    const logged = errorSpy.mock.calls.map((call) => call[0]);
+    errorSpy.mockRestore();
+
+    expect(response.status).toBe(200);
+    const reply = await response.json();
+    expect(reply).toEqual({
+      intro: findable("risks"),
+      items: [block("summit-dental", "Summit Dental Group", research(TOOLS_FINDING), research(BUDGET_FINDING))],
+    });
+    expect(reply).toEqual(pickedNothing);
+    expect(logged).toContain("[data-room-chat] selection:");
+  });
+
+  it("nothing allowed and the call fails: the usual nothing-findable reply (no opening call)", async () => {
+    state.storedResearchFacts = [];
+    state.classify.mockResolvedValueOnce(routerReply("specific_research", "current_tools"));
+    state.create.mockRejectedValueOnce(new Error("timeout"));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const response = await POST(chatRequest({ scope: ONE, newMessage: "What software do they use?" }));
+    errorSpy.mockRestore();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      intro: "",
+      items: [{ companyId: "summit-dental", companyName: "Summit Dental Group", text: NOTHING_FINDABLE_REPLY }],
+    });
+    expect(state.open).not.toHaveBeenCalled();
+  });
+});
+
+describe("only the history that's used (2026-11-08)", () => {
+  const routerUser = (call = 0): string =>
+    (state.classify.mock.calls[call]?.[0] as { messages: ModelMessage[] }).messages[1]?.content ?? "";
+  const names = (reply: unknown): string[] => (reply as { items: Array<{ companyName: string }> }).items.map((item) => item.companyName);
+  /** Earlier turns the pane might still hold: questions naming another company, each with its answer. */
+  const earlierTurns = (count: number, scope: unknown): unknown[] =>
+    Array.from({ length: count }, (_, i) => i + 1).flatMap((n) => [
+      { role: "user", content: `Earlier question ${n} about Falcon Market`, scope },
+      { role: "assistant", intro: "", items: [{ companyId: "falcon", text: `Earlier line ${n}` }], scope },
+    ]);
+  const LONG = "Earlier long question about Falcon Market " + "x".repeat(700);
+
+  it("follow-up and 'nothing new' after a long history: the router sees only the last 3 questions, each cut to 500 characters", async () => {
+    state.roster = [...ROSTER, CANYON_ROW];
+    state.storedResearchFacts = CANYON_FINDINGS;
+    state.classify.mockResolvedValueOnce(
+      modelReply({
+        intent: "specific_research",
+        topic: "staffing",
+        standalone_question: "Is [C1] hiring? Tell me more about their hiring.",
+        is_follow_up: true,
+        confidence: "high",
+      })
+    );
+    state.create.mockResolvedValueOnce(selection(["C1:s:0"]));
+    const history = [...earlierTurns(12, CANYON), { role: "user", content: LONG, scope: CANYON }, ...HIRING_HISTORY];
+    expect(await ask({ scope: CANYON, newMessage: "tell me more about that", history })).toEqual({
+      intro: FOLLOW_UP_NOTHING_NEW_INTRO,
+      items: [block("canyon", "Canyon Aesthetics", pub("Job listing: Spa Attendant"))],
+    });
+    const cut = LONG.slice(0, 500).replace("Falcon Market", "another company");
+    expect(routerUser()).toBe(
+      [
+        "Scope: one company",
+        "Recent questions (oldest first):",
+        "- Earlier question 12 about another company",
+        `- ${cut}`,
+        "- Are they hiring?",
+        "Question: tell me more about that",
+      ].join("\n")
+    );
+  });
+
+  it("a follow-up whose latest question was about other companies is still no follow-up; a failed last request still compares with nothing", async () => {
+    state.roster = [...ROSTER, CANYON_ROW];
+    state.storedResearchFacts = CANYON_FINDINGS;
+    const followUp = (): ReturnType<typeof modelReply> =>
+      modelReply({ intent: "specific_research", topic: "staffing", is_follow_up: true, confidence: "high" });
+    // The latest question was about Falcon: a normal answer, no "nothing new".
+    state.classify.mockResolvedValueOnce(followUp());
+    state.create.mockResolvedValueOnce(selection(["C1:s:0"]));
+    const otherLatest = [...HIRING_HISTORY, ...earlierTurns(6, { mode: "companies", companyIds: ["falcon"] })];
+    expect(((await ask({ scope: CANYON, newMessage: "more on that", history: otherLatest })) as { intro: string }).intro).toBe(findable("staffing"));
+    // The latest question has no answer (its request failed, so the pane left it out).
+    state.classify.mockResolvedValueOnce(followUp());
+    state.create.mockResolvedValueOnce(selection(["C1:s:0"]));
+    const unanswered = [...earlierTurns(6, CANYON), ...HIRING_HISTORY, { role: "user", content: "Are they hiring?", scope: CANYON }];
+    expect(((await ask({ scope: CANYON, newMessage: "more on that", history: unanswered })) as { intro: string }).intro).toBe(findable("staffing"));
+  });
+
+  it("narrowing and re-sorting the previous All-companies list after a long history", async () => {
+    const before = [...earlierTurns(8, ONE), ...earlierTurns(4, ALL)];
+    const dentalList = {
+      role: "assistant",
+      intro: "4 companies match.",
+      items: ["cedar", "harbor", "maple", "summit-dental"].map((companyId) => ({ companyId, text: "Dental" })),
+      scope: ALL,
+    };
+    const history = [...before, { role: "user", content: "which are dental?", scope: ALL }, dentalList];
+
+    // "greater than 3" right after the list: only the listed companies (Falcon, retail, isn't in it).
+    state.classify.mockResolvedValueOnce(
+      modelReply({ intent: "filter_list", filters: [{ field: "locations", op: "gt", value: 3 }], criteria_count: 1, narrows_previous: true, confidence: "high" })
+    );
+    expect(names(await ask({ scope: ALL, newMessage: "greater than 3", history }))).toEqual([
+      "Cedar Grove Family Dentistry",
+      "Summit Dental Group",
+    ]);
+
+    // "Give this again by locations, most first": the same four, re-sorted.
+    state.classify.mockResolvedValueOnce(
+      modelReply({ intent: "filter_list", sort: { field: "locations", direction: "desc" }, confidence: "high" })
+    );
+    expect(names(await ask({ scope: ALL, newMessage: "give this again by locations, most first", history }))).toEqual([
+      "Summit Dental Group",
+      "Cedar Grove Family Dentistry",
+      "Maple Family Dentistry",
+      "Harbor Family Dentistry",
+    ]);
+
+    // The list isn't the last entry (a question came after it): no previous list, as before.
+    state.classify.mockResolvedValueOnce(
+      modelReply({ intent: "filter_list", sort: { field: "locations", direction: "desc" }, confidence: "high" })
+    );
+    const afterQuestion = [...history, { role: "user", content: "and in Texas?", scope: ALL }];
+    expect(await ask({ scope: ALL, newMessage: "give this again by locations", history: afterQuestion })).toEqual({
+      intro: ALL_MODE_REPLY,
+      items: [],
+    });
   });
 });

@@ -21,6 +21,8 @@
  * the current company list; otherwise it is plain text. A filter question about one company offers
  * "Search all companies", which asks it again in All companies mode. The input takes at
  * most 500 characters, with an "N / 500" counter past 400 (lib/data-room-chat-guard.ts).
+ * Each request carries the transcript's last 10 entries as history (failed requests
+ * left out); the scope rules above read the whole transcript, which stays as it is.
  */
 
 "use client";
@@ -34,6 +36,7 @@ import {
   ANSWER_LINE_SOURCES,
   buildScopeIndex,
   COMPARE_ROW_KEYS,
+  HISTORY_ENTRIES_SENT,
   insertPickedName,
   previewScope,
   resolveSendScope,
@@ -807,9 +810,12 @@ export function ProspectingDataRoomChat({
             : message
         )
       : messages;
+    // Only the last 10 entries go out (the server reads the last 3 questions and the
+    // latest answer); "the other one" and follow-up scopes still read the whole transcript.
     const history = current
       .filter((message) => !(message.role === "assistant" && message.isError))
-      .map(toHistoryEntry);
+      .map(toHistoryEntry)
+      .slice(-HISTORY_ENTRIES_SENT);
     // Saved with the question: its final scope and the company open right now.
     const userMessage: UserMessage = {
       id: newMessageId(),
