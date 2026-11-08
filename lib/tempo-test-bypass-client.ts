@@ -96,10 +96,10 @@ export function applyDiscoveryPrepAutofill(
   const openQuestions: [string, string, string] = [
     form.openQuestions[0].trim()
       ? form.openQuestions[0]
-      : `${TEST_BYPASS_PREFIX} How is front-desk load changing as you add locations?`,
+      : `${TEST_BYPASS_PREFIX} How is scheduling holding up as the business grows?`,
     form.openQuestions[1].trim()
       ? form.openQuestions[1]
-      : `${TEST_BYPASS_PREFIX} What happens to no-shows when you open a new practice?`,
+      : `${TEST_BYPASS_PREFIX} What happens to no-shows as you grow?`,
     form.openQuestions[2].trim()
       ? form.openQuestions[2]
       : `${TEST_BYPASS_PREFIX} Who owns the scheduling stack decision today?`,
@@ -109,10 +109,10 @@ export function applyDiscoveryPrepAutofill(
     openQuestions,
     anticipatedProbe: form.anticipatedProbe.trim()
       ? form.anticipatedProbe
-      : `${TEST_BYPASS_PREFIX} Probe on after-hours demand and missed calls.`,
+      : `${TEST_BYPASS_PREFIX} Probe on what the current process costs them.`,
     anticipatedConfirm: form.anticipatedConfirm.trim()
       ? form.anticipatedConfirm
-      : `${TEST_BYPASS_PREFIX} Confirm Dana owns ops and feels pressure from Dr. Kim.`,
+      : `${TEST_BYPASS_PREFIX} Confirm who owns operations and where the pressure comes from.`,
   };
 }
 
@@ -140,19 +140,19 @@ export function applyPresentationAutofill(form: PresentationForm): PresentationF
   return {
     businessCase: form.businessCase.trim()
       ? form.businessCase
-      : `${TEST_BYPASS_PREFIX} Summit is losing revenue to no-shows while scaling to 8 locations.`,
+      : `${TEST_BYPASS_PREFIX} The account is losing revenue to no-shows while it scales.`,
     underlyingPainPoints: form.underlyingPainPoints.trim()
       ? form.underlyingPainPoints
-      : `${TEST_BYPASS_PREFIX} Manual phones, front-desk overload, no after-hours capture.`,
+      : `${TEST_BYPASS_PREFIX} The pain points the buyer confirmed in Discovery.`,
     solution: form.solution.trim()
       ? form.solution
-      : `${TEST_BYPASS_PREFIX} Tempo Pro across all sites with reminders and online booking.`,
+      : `${TEST_BYPASS_PREFIX} Tempo with reminders and online booking.`,
     proofPoint: form.proofPoint.trim()
       ? form.proofPoint
       : `${TEST_BYPASS_PREFIX} Peer clinics cut no-shows ~35% within 90 days.`,
     powerStakeholder: form.powerStakeholder.trim()
       ? form.powerStakeholder
-      : `${TEST_BYPASS_PREFIX} Dana champions; Dr. Kim is the economic buyer.`,
+      : `${TEST_BYPASS_PREFIX} Note who champions this and who is the economic buyer.`,
     nextStep: form.nextStep.trim()
       ? form.nextStep
       : `${TEST_BYPASS_PREFIX} Propose a two-week pilot at two locations, then annual Pro.`,

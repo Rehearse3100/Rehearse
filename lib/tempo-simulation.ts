@@ -1,7 +1,9 @@
 /**
  * tempo-simulation.ts
- * Tempo / Summit Dental simulation entry page — stage copy, routing helpers,
- * and ID checks for the Rehearse Essentials default class.
+ * Tempo simulation entry page — stage copy, routing helpers, and ID checks for the
+ * Rehearse Essentials default class. The stage descriptions ship to the browser
+ * (entry page, top bar), so they never name the target account or its contacts
+ * (2026-11-08).
  */
 
 import { TEMPO_SIMULATION_ID } from "@/lib/constants";
@@ -26,7 +28,7 @@ export const TEMPO_STAGES: TempoStageDefinition[] = [
     icon: "search",
     modality: "Structured Submission",
     description:
-      "Define your ideal customer, build an AI research tool, qualify Summit Dental, and write your opening outreach.",
+      "Define your ideal customer, build an AI research tool, qualify the account, and write your opening outreach.",
     time: "~15 min",
     noAI: false,
     stageKey: "prospecting",
@@ -37,7 +39,7 @@ export const TEMPO_STAGES: TempoStageDefinition[] = [
     icon: "record_voice_over",
     modality: "Live Voice Call",
     description:
-      "A 15-minute live call with Dana Reyes. Uncover their business issues through smart questions — no pitching yet.",
+      "A 15-minute live call with your prospect. Uncover their business issues through smart questions — no pitching yet.",
     time: "~15 min",
     noAI: true,
     stageKey: "discovery",
@@ -48,7 +50,7 @@ export const TEMPO_STAGES: TempoStageDefinition[] = [
     icon: "present_to_all",
     modality: "Structured Submission",
     description:
-      "Write a tailored pitch connecting Tempo's value to Summit Dental's specific situation. Show your AI work.",
+      "Write a tailored pitch connecting Tempo's value to the account's specific situation. Show your AI work.",
     time: "~10 min",
     noAI: false,
     stageKey: "presentation",
@@ -59,7 +61,7 @@ export const TEMPO_STAGES: TempoStageDefinition[] = [
     icon: "shield",
     modality: "Live Voice Call",
     description:
-      "A follow-up call with Dr. Saul Kim, the owner. He has concerns about the proposal. Handle them.",
+      "A follow-up call about the concerns raised on your proposal. Handle them.",
     time: "~15 min",
     noAI: true,
     stageKey: "objections",

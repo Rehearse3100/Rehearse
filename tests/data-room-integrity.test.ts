@@ -62,8 +62,9 @@ async function assertSummaryColumns(db: PGlite): Promise<void> {
   expect(selectStart).toBeGreaterThan(0);
   const result = await db.query(fullSql.slice(selectStart));
   const row = result.rows[0] as Record<string, boolean | number>;
-  // 15 core tables plus data_room_chat_usage (Data Room chat message limits).
-  expect(Number(row.expected_tables_present)).toBe(16);
+  // 15 core tables plus data_room_chat_usage (Data Room chat message limits) and,
+  // since 2026-11-08, student_login_failures (student login limits).
+  expect(Number(row.expected_tables_present)).toBe(17);
   for (const column of SUMMARY_COLUMNS) {
     if (column === "expected_tables_present") continue;
     expect(row[column], column).toBe(true);

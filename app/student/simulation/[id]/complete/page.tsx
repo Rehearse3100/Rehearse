@@ -3,6 +3,8 @@
  * Student simulation results — Tempo (default class) or legacy pipeline view.
  * With TEMPO_TEST_BYPASS_GATES on, ?testresults= and ?testbadges=all show mock
  * Tempo results (tester shortcuts); with it off they are ignored.
+ * The ?attempt= must be the signed-in student's attempt at this URL's simulation;
+ * the leaderboard lists completed attempts at that attempt's simulation.
  */
 
 import { BackButton } from "@/components/BackButton";
@@ -143,6 +145,14 @@ export default async function SimulationCompletePage({
     redirect("/student/dashboard");
   }
 
+  // The attempt (verified as this student's) decides which simulation's results and
+  // leaderboard this page shows; a URL id for another simulation is treated like a
+  // missing attempt.
+  const attemptSimulationId = String(attempt.simulation_id ?? "");
+  if (attemptSimulationId !== params.id) {
+    redirect("/student/dashboard");
+  }
+
   const simRaw = attempt.simulations;
   const simulation = (Array.isArray(simRaw) ? simRaw[0] : simRaw) as
     | { id: string; title: string }
@@ -193,7 +203,7 @@ export default async function SimulationCompletePage({
       )
     `
     )
-    .eq("simulation_id", params.id)
+    .eq("simulation_id", attemptSimulationId)
     .eq("status", "completed")
     .order("total_score", { ascending: false })
     .limit(LEADERBOARD_QUERY_LIMIT);

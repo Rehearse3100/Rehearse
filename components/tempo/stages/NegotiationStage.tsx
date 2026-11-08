@@ -18,7 +18,7 @@ import { TempoTestBypassBanner } from "@/components/tempo/TempoTestBypassBanner"
 import { NegotiationStageLayout } from "@/components/tempo/stages/NegotiationStageLayout";
 import { NegotiationTopBar } from "@/components/tempo/stages/NegotiationTopBar";
 import { useNegotiationStage } from "@/hooks/useNegotiationStage";
-import { TEMPO_HANDOFF_MESSAGES, TEMPO_HANDOFF_STAGE_META } from "@/lib/tempo-prospecting";
+import { TEMPO_HANDOFF_STAGE_META } from "@/lib/tempo-prospecting";
 import type { ReferenceLibraryData } from "@/lib/tempo-reference-library";
 
 type NegotiationStageProps = {
@@ -30,6 +30,8 @@ type NegotiationStageProps = {
   referenceLibrary: ReferenceLibraryData;
   /** Server page boolean from TEMPO_TEST_BYPASS_GATES — never from client env. */
   testBypass?: boolean;
+  /** This stage's manager handoff (from the server page; the messages are server only, lib/server/tempo-handoffs.ts). */
+  handoffMessage: string;
 };
 
 /**
@@ -42,6 +44,7 @@ export function NegotiationStage({
   simulationTitle,
   referenceLibrary,
   testBypass = false,
+  handoffMessage,
 }: NegotiationStageProps): React.ReactElement {
   const [showHandoff, setShowHandoff] = useState(false);
   const [referenceLibraryOpen, setReferenceLibraryOpen] = useState(false);
@@ -118,7 +121,7 @@ export function NegotiationStage({
           stageNumber={negotiationMeta.stageNumber}
           stageName={negotiationMeta.stageName}
           stageIcon={negotiationMeta.stageIcon}
-          message={TEMPO_HANDOFF_MESSAGES.negotiation}
+          message={handoffMessage}
           hasAIRestriction={negotiationMeta.hasAIRestriction}
           onBegin={() => setShowHandoff(false)}
           onDismiss={() => setShowHandoff(false)}

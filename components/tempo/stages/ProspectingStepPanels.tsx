@@ -2,6 +2,8 @@
  * ProspectingStepPanels.tsx
  * Step content panels for the Tempo Stage 1 Prospecting wizard.
  * Steps: Welcome Briefing → ICP → Data Room → Select Lead → Opening → Build Your Agent.
+ * The Opening step's Target / Trigger / Account line shows the student's own selected
+ * lead (their CRM record), never fixed values (2026-11-08: it showed the answer key).
  */
 
 "use client";
@@ -20,7 +22,8 @@ import {
   type ProspectingStepId,
   type ProspectingWizardState,
 } from "@/lib/tempo-prospecting";
-import type { Ref } from "react";
+import { useEffect, useState, type Ref } from "react";
+import type { CrmLead } from "@/types";
 
 type StepPanelsProps = {
   currentStepId: ProspectingStepId;
@@ -40,6 +43,71 @@ type StepPanelsProps = {
   onLeadSelected: (leadId: string) => Promise<void>;
   onOnboardingComplete: () => void;
 };
+
+/**
+ * What the opening message is for: the student's own selected lead (contact, trigger
+ * and account from their CRM record), loaded from /api/student/crm-leads. A dash
+ * while it loads or when a value is missing; never fixed values.
+ */
+function OpeningLeadContext({
+  attemptId,
+  selectedLeadId,
+}: {
+  attemptId: string;
+  selectedLeadId: string | null;
+}): React.ReactElement {
+  const [lead, setLead] = useState<CrmLead | null>(null);
+
+  useEffect(() => {
+    if (!selectedLeadId) {
+      setLead(null);
+      return;
+    }
+    let isCancelled = false;
+    void (async (): Promise<void> => {
+      try {
+        const res = await fetch(`/api/student/crm-leads?attemptId=${encodeURIComponent(attemptId)}`);
+        const body = res.ok ? ((await res.json()) as { leads?: CrmLead[] }) : null;
+        if (!isCancelled) {
+          setLead(body?.leads?.find((entry) => entry.id === selectedLeadId) ?? null);
+        }
+      } catch {
+        if (!isCancelled) {
+          setLead(null);
+        }
+      }
+    })();
+    return () => {
+      isCancelled = true;
+    };
+  }, [attemptId, selectedLeadId]);
+
+  const text = (value: string | null | undefined): string => (value ?? "").trim();
+  const target = lead ? [text(lead.contact_name), text(lead.contact_title)].filter((part) => part.length > 0).join(", ") : "";
+  const items = [
+    { icon: "person", label: "Target", value: target || "—", color: "text-secondary" },
+    { icon: "bolt", label: "Trigger", value: text(lead?.trigger_event) || "—", color: "text-tertiary-container" },
+    { icon: "domain", label: "Account", value: text(lead?.company_name) || "—", color: "text-on-surface-variant" },
+  ];
+
+  return (
+    // Context for the draft: plain label/value text (not chips), so it doesn't read as buttons.
+    <dl className="grid grid-cols-1 sm:grid-cols-3 gap-md mb-lg">
+      {items.map((item, index) => (
+        <div
+          key={item.label}
+          className={`flex items-start gap-sm min-w-0 ${index > 0 ? "sm:border-l sm:border-outline-variant sm:pl-md" : ""}`}
+        >
+          <MaterialIcon name={item.icon} className={`text-[18px] mt-0.5 shrink-0 ${item.color}`} />
+          <div className="min-w-0">
+            <dt className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant">{item.label}</dt>
+            <dd className="text-label-md font-medium text-on-surface">{item.value}</dd>
+          </div>
+        </div>
+      ))}
+    </dl>
+  );
+}
 
 /**
  * Renders the active wizard step panel in the center column.
@@ -105,41 +173,7 @@ export function ProspectingStepPanels({
   return (
     <div className="max-w-5xl mx-auto">
       {/* Context for the draft: plain label/value text (not chips), so it doesn't read as buttons. */}
-      <dl className="grid grid-cols-1 sm:grid-cols-3 gap-md mb-lg">
-        {[
-          {
-            icon: "person",
-            label: "Target",
-            value: "Dana Reyes, Director of Operations",
-            color: "text-secondary",
-          },
-          {
-            icon: "bolt",
-            label: "Trigger",
-            value: "Summit 8th location expansion",
-            color: "text-tertiary-container",
-          },
-          {
-            icon: "domain",
-            label: "Account",
-            value: "Summit Dental Group",
-            color: "text-on-surface-variant",
-          },
-        ].map((item, index) => (
-          <div
-            key={item.label}
-            className={`flex items-start gap-sm min-w-0 ${index > 0 ? "sm:border-l sm:border-outline-variant sm:pl-md" : ""}`}
-          >
-            <MaterialIcon name={item.icon} className={`text-[18px] mt-0.5 shrink-0 ${item.color}`} />
-            <div className="min-w-0">
-              <dt className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant">
-                {item.label}
-              </dt>
-              <dd className="text-label-md font-medium text-on-surface">{item.value}</dd>
-            </div>
-          </div>
-        ))}
-      </dl>
+      <OpeningLeadContext attemptId={attemptId} selectedLeadId={state.selectedLeadId} />
 
       <div className="bg-white rounded-xl border border-outline-variant shadow-sm overflow-hidden mb-lg">
         <div className="p-lg border-b border-outline-variant flex justify-between items-center bg-surface-container-low">

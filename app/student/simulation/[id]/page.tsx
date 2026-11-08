@@ -16,6 +16,7 @@ import { pickPreferredInProgressAttempt } from "@/lib/attempt-progress";
 import { parseIcpGradeRecord } from "@/lib/icp-grading";
 import { stripIcpFromStageData } from "@/lib/tempo-prospecting";
 import { buildReferenceLibrary, type ReferenceLibraryStage } from "@/lib/tempo-reference-library";
+import { TEMPO_HANDOFF_MESSAGES } from "@/lib/server/tempo-handoffs";
 import { isTempoDefaultSimulation } from "@/lib/tempo-simulation";
 import { isGateBypassEnabled } from "@/lib/tempo-test-bypass";
 import { getStudentSession } from "@/lib/student-session";
@@ -282,6 +283,9 @@ export default async function StudentSimulationPage({
         referenceLibrary={referenceLibrary}
         initialDiscoveryHandoff={!hasTestStageJump && isDiscoveryHandoffPending}
         testBypass={testBypass}
+        prospectingHandoffMessage={TEMPO_HANDOFF_MESSAGES.prospecting}
+        // Names the contact: only once Stage 1 has been submitted.
+        discoveryHandoffMessage={hasProspectingScore || isDiscoveryHandoffPending ? TEMPO_HANDOFF_MESSAGES.discovery : null}
       />
     );
   } else if (showTempoDiscovery) {
@@ -295,6 +299,8 @@ export default async function StudentSimulationPage({
         initialShowHandoff={!discoveryHandoffSeen}
         resetStoredPrep={testStageDiscovery}
         testBypass={testBypass}
+        handoffMessage={TEMPO_HANDOFF_MESSAGES.discovery}
+        nextHandoffMessage={TEMPO_HANDOFF_MESSAGES.presentation}
       />
     );
   } else if (showTempoPresentation) {
@@ -306,6 +312,8 @@ export default async function StudentSimulationPage({
         simulationTitle={simulation.title}
         referenceLibrary={referenceLibrary}
         testBypass={testBypass}
+        handoffMessage={TEMPO_HANDOFF_MESSAGES.presentation}
+        nextHandoffMessage={TEMPO_HANDOFF_MESSAGES.objections}
       />
     );
   } else if (showTempoObjections) {
@@ -317,6 +325,8 @@ export default async function StudentSimulationPage({
         simulationTitle={simulation.title}
         referenceLibrary={referenceLibrary}
         testBypass={testBypass}
+        handoffMessage={TEMPO_HANDOFF_MESSAGES.objections}
+        nextHandoffMessage={TEMPO_HANDOFF_MESSAGES.negotiation}
       />
     );
   } else if (showTempoNegotiation) {
@@ -328,6 +338,7 @@ export default async function StudentSimulationPage({
         simulationTitle={simulation.title}
         referenceLibrary={referenceLibrary}
         testBypass={testBypass}
+        handoffMessage={TEMPO_HANDOFF_MESSAGES.negotiation}
       />
     );
   } else {

@@ -32,7 +32,6 @@ import {
   type ObjectionTranscriptEntry,
 } from "@/lib/tempo-objections";
 import {
-  TEMPO_HANDOFF_MESSAGES,
   TEMPO_HANDOFF_STAGE_META,
 } from "@/lib/tempo-prospecting";
 import type { ReferenceLibraryData } from "@/lib/tempo-reference-library";
@@ -46,6 +45,10 @@ type ObjectionHandlingStageProps = {
   referenceLibrary: ReferenceLibraryData;
   /** Server page boolean from TEMPO_TEST_BYPASS_GATES — never from client env. */
   testBypass?: boolean;
+  /** This stage's manager handoff (from the server page; the messages are server only, lib/server/tempo-handoffs.ts). */
+  handoffMessage: string;
+  /** The next stage's brief, shown in the end-of-stage handoff (from the server page). */
+  nextHandoffMessage: string;
 };
 
 /**
@@ -58,6 +61,8 @@ export function ObjectionHandlingStage({
   simulationTitle,
   referenceLibrary,
   testBypass = false,
+  handoffMessage,
+  nextHandoffMessage,
 }: ObjectionHandlingStageProps): React.ReactElement {
   const [phase, setPhase] = useState<ObjectionHandlingPhase>("lobby");
   const [connectError, setConnectError] = useState("");
@@ -208,7 +213,7 @@ export function ObjectionHandlingStage({
           stageNumber={negotiationMeta.stageNumber}
           stageName={negotiationMeta.stageName}
           stageIcon={negotiationMeta.stageIcon}
-          message={TEMPO_HANDOFF_MESSAGES.negotiation}
+          message={nextHandoffMessage}
           hasAIRestriction={negotiationMeta.hasAIRestriction}
           onBegin={handleNegotiationBegin}
           onDismiss={() => setShowNegotiationHandoff(false)}
@@ -221,7 +226,7 @@ export function ObjectionHandlingStage({
           stageNumber={objectionsMeta.stageNumber}
           stageName={objectionsMeta.stageName}
           stageIcon={objectionsMeta.stageIcon}
-          message={TEMPO_HANDOFF_MESSAGES.objections}
+          message={handoffMessage}
           hasAIRestriction={objectionsMeta.hasAIRestriction}
           onBegin={() => setShowHandoff(false)}
           onDismiss={() => setShowHandoff(false)}

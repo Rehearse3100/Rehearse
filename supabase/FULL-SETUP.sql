@@ -342,6 +342,24 @@ CREATE TABLE IF NOT EXISTS public.data_room_chat_usage (
 CREATE INDEX IF NOT EXISTS data_room_chat_usage_attempt_created_idx
   ON public.data_room_chat_usage (attempt_id, created_at);
 
+-- ── Failed student logins (login limits, 2026-11-08) ─────────────────────────
+-- One row per failed student login (unknown username or wrong password); a
+-- successful login writes nothing. username is lowercased; ip_hash is the SHA-256
+-- of the client IP (never the IP itself). Read and written only by the server's
+-- service client (app/api/student/login, lib/student-login-limits.ts). RLS on, no
+-- policies; anon and authenticated have no privileges on it.
+CREATE TABLE IF NOT EXISTS public.student_login_failures (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  username text NOT NULL,
+  ip_hash text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS student_login_failures_username_created_idx
+  ON public.student_login_failures (username, created_at);
+CREATE INDEX IF NOT EXISTS student_login_failures_ip_created_idx
+  ON public.student_login_failures (ip_hash, created_at);
+
 -- ── RLS ──────────────────────────────────────────────────────────────────────
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.simulations ENABLE ROW LEVEL SECURITY;
@@ -359,6 +377,7 @@ ALTER TABLE public.crm_prospect_directory ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.crm_prospect_contacts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.crm_prospect_documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.data_room_chat_usage ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.student_login_failures ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Users read own profile" ON public.profiles;
 CREATE POLICY "Users read own profile" ON public.profiles
@@ -400,9 +419,10 @@ CREATE POLICY "professors_manage_own_classes" ON public.classes
   USING (professor_id = auth.uid())
   WITH CHECK (professor_id = auth.uid());
 
+-- 2026-11-08: no longer created. It let anon and every signed-in teacher read every
+-- class and its join code; teachers keep "professors_manage_own_classes", and students
+-- read classes through the server's service client.
 DROP POLICY IF EXISTS "anyone_read_classes" ON public.classes;
-CREATE POLICY "anyone_read_classes" ON public.classes
-  FOR SELECT USING (true);
 
 DROP POLICY IF EXISTS "service_role_students" ON public.students;
 CREATE POLICY "service_role_students" ON public.students
@@ -496,9 +516,13 @@ GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 
 GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO authenticated;
-GRANT SELECT ON public.classes TO anon;
-GRANT SELECT ON public.class_simulations TO anon;
-GRANT SELECT ON public.simulations TO anon;
+-- 2026-11-08: the anon key reads none of these (students use the service client);
+-- revoked so a database set up before still loses them when this file is re-run.
+REVOKE SELECT ON public.classes FROM anon;
+REVOKE SELECT ON public.class_simulations FROM anon;
+REVOKE SELECT ON public.simulations FROM anon;
+-- Failed student logins: service role only (after the grant above).
+REVOKE ALL ON public.student_login_failures FROM anon, authenticated;
 
 -- Must follow GRANT SELECT ON ALL TABLES so authenticated cannot read password_hash.
 REVOKE SELECT ON public.students FROM anon, authenticated;
@@ -631,7 +655,8 @@ SELECT
         'crm_prospect_directory',
         'crm_prospect_contacts',
         'crm_prospect_documents',
-        'data_room_chat_usage'
+        'data_room_chat_usage',
+        'student_login_failures'
       ])
   ) AS expected_tables_present,
   EXISTS (

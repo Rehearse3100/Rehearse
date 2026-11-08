@@ -18,7 +18,6 @@ import { PresentationStageLayout } from "@/components/tempo/stages/PresentationS
 import { PresentationTopBar } from "@/components/tempo/stages/PresentationTopBar";
 import { usePresentationStage } from "@/hooks/usePresentationStage";
 import {
-  TEMPO_HANDOFF_MESSAGES,
   TEMPO_HANDOFF_STAGE_META,
 } from "@/lib/tempo-prospecting";
 import type { ReferenceLibraryData } from "@/lib/tempo-reference-library";
@@ -32,6 +31,10 @@ type PresentationStageProps = {
   referenceLibrary: ReferenceLibraryData;
   /** Server page boolean from TEMPO_TEST_BYPASS_GATES — never from client env. */
   testBypass?: boolean;
+  /** This stage's manager handoff (from the server page; the messages are server only, lib/server/tempo-handoffs.ts). */
+  handoffMessage: string;
+  /** The next stage's brief, shown in the end-of-stage handoff (from the server page). */
+  nextHandoffMessage: string;
 };
 
 /**
@@ -44,6 +47,8 @@ export function PresentationStage({
   simulationTitle,
   referenceLibrary,
   testBypass = false,
+  handoffMessage,
+  nextHandoffMessage,
 }: PresentationStageProps): React.ReactElement {
   const [showHandoff, setShowHandoff] = useState(false);
   const [showObjectionsHandoff, setShowObjectionsHandoff] = useState(false);
@@ -115,7 +120,7 @@ export function PresentationStage({
           stageNumber={objectionsMeta.stageNumber}
           stageName={objectionsMeta.stageName}
           stageIcon={objectionsMeta.stageIcon}
-          message={TEMPO_HANDOFF_MESSAGES.objections}
+          message={nextHandoffMessage}
           hasAIRestriction={objectionsMeta.hasAIRestriction}
           onBegin={handleObjectionsBegin}
           onDismiss={() => setShowObjectionsHandoff(false)}
@@ -128,7 +133,7 @@ export function PresentationStage({
           stageNumber={presentationMeta.stageNumber}
           stageName={presentationMeta.stageName}
           stageIcon={presentationMeta.stageIcon}
-          message={TEMPO_HANDOFF_MESSAGES.presentation}
+          message={handoffMessage}
           hasAIRestriction={presentationMeta.hasAIRestriction}
           onBegin={() => setShowHandoff(false)}
           onDismiss={() => setShowHandoff(false)}

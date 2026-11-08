@@ -32,7 +32,6 @@ import {
   type DiscoveryTranscriptEntry,
 } from "@/lib/tempo-discovery";
 import {
-  TEMPO_HANDOFF_MESSAGES,
   TEMPO_HANDOFF_STAGE_META,
 } from "@/lib/tempo-prospecting";
 import type { ReferenceLibraryData } from "@/lib/tempo-reference-library";
@@ -54,6 +53,10 @@ type DiscoveryStageProps = {
   resetStoredPrep?: boolean;
   /** Server page boolean from TEMPO_TEST_BYPASS_GATES — never from client env. */
   testBypass?: boolean;
+  /** This stage's manager handoff (from the server page; the messages are server only, lib/server/tempo-handoffs.ts). */
+  handoffMessage: string;
+  /** The next stage's brief, shown in the end-of-stage handoff (from the server page). */
+  nextHandoffMessage: string;
 };
 
 /**
@@ -68,6 +71,8 @@ export function DiscoveryStage({
   initialShowHandoff = false,
   resetStoredPrep = false,
   testBypass = false,
+  handoffMessage,
+  nextHandoffMessage,
 }: DiscoveryStageProps): React.ReactElement {
   const [phase, setPhase] = useState<DiscoveryPhase>("prep");
   const [prepForm, setPrepForm] = useState<DiscoveryPreCallPrepForm>(() => ({
@@ -286,7 +291,7 @@ export function DiscoveryStage({
           stageNumber={presentationMeta.stageNumber}
           stageName={presentationMeta.stageName}
           stageIcon={presentationMeta.stageIcon}
-          message={TEMPO_HANDOFF_MESSAGES.presentation}
+          message={nextHandoffMessage}
           hasAIRestriction={presentationMeta.hasAIRestriction}
           onBegin={handlePresentationBegin}
           onDismiss={() => setShowPresentationHandoff(false)}
@@ -299,7 +304,7 @@ export function DiscoveryStage({
           stageNumber={discoveryMeta.stageNumber}
           stageName={discoveryMeta.stageName}
           stageIcon={discoveryMeta.stageIcon}
-          message={TEMPO_HANDOFF_MESSAGES.discovery}
+          message={handoffMessage}
           hasAIRestriction={discoveryMeta.hasAIRestriction}
           onBegin={() => {
             setShowHandoff(false);

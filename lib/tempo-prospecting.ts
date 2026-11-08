@@ -59,19 +59,12 @@ export const PROSPECTING_STEPS: readonly ProspectingStepDefinition[] = [
   },
 ] as const;
 
-export const TEMPO_HANDOFF_MESSAGES = {
-  prospecting: `Time to build your pipeline. I have loaded a directory of appointment-based businesses into your research workspace. One of those accounts is showing real buying signals right now, and only one person there truly owns this decision. Research the candidates, verify what the AI tells you before you trust it, work up your leads in the CRM, and pick your target. Then draft a crisp opening message. No pitching yet. Just sharp research and a strong first touch. Good luck.`,
-
-  discovery: `Your outreach landed. Dana Reyes has agreed to a 15-minute discovery call next Tuesday. You are not pitching yet. You are here to understand their world and find out whether there is a business issue worth solving. Be curious. Ask good questions. Listen more than you talk. Good luck.`,
-
-  presentation: `Nice work. Dana wants you back to present to her and Dr. Kim next week. Here is what the team knows about Summit Dental: 8 dental practices, just opened their 8th, straining a manual phone-based scheduling setup. Front desk is overloaded, no-shows run about 1 in 6, they capture no after-hours demand, and Dana is under pressure from Dr. Kim to get operations right as they scale. Build them a pitch that connects to that business issue.`,
-
-  objections: `You sent the proposal, and Dr. Kim wants a call before he signs off. He has got concerns. Dana will be on, but Kim is the one to win over: he built this from one chair to eight locations and he is careful with money. Do not expect an easy yes, and do not fold the moment he pushes on price.`,
-
-  negotiation: `You earned it. Kim is ready to talk terms. Dana will work the details with you. They want Pro across all 8 locations, Kim wants confidence it will deliver before committing, and price is on the table. Now build the mutual plan and close it.`,
-} as const;
-
-export type TempoHandoffStageKey = keyof typeof TEMPO_HANDOFF_MESSAGES;
+/**
+ * The Tempo stages that have a manager handoff. The messages themselves are server
+ * only (lib/server/tempo-handoffs.ts, 2026-11-08): they name the target and its
+ * contacts, so the simulation page passes each stage only the messages it shows.
+ */
+export type TempoHandoffStageKey = "prospecting" | "discovery" | "presentation" | "objections" | "negotiation";
 
 export const TEMPO_HANDOFF_STAGE_META: Record<
   TempoHandoffStageKey,

@@ -1,11 +1,20 @@
 /**
  * login/route.ts
  * POST /api/student/login — authenticate returning student by username + password.
+ * An unknown username and a wrong password get the same reply (401), and failed
+ * logins are limited per username and per IP (429; lib/student-login-limits.ts).
  */
 
 import { NextResponse } from "next/server";
 import { verifyPassword } from "@/lib/password";
 import { createStudentSession } from "@/lib/student-session";
+import {
+  LOGIN_REPLIES,
+  clientIpHash,
+  isLoginLimited,
+  loginUsernameKey,
+  recordLoginFailure,
+} from "@/lib/student-login-limits";
 import { createServiceClient } from "@/lib/supabase/server";
 
 type LoginBody = {
@@ -28,6 +37,13 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     const supabase = createServiceClient();
 
+    // Checked before the password, so a limited username or IP can't keep guessing.
+    // A 429 isn't recorded as a failure, so retrying doesn't extend the lockout.
+    const limitKey = { username: loginUsernameKey(username), ipHash: clientIpHash(request) };
+    if (await isLoginLimited(supabase, limitKey)) {
+      return NextResponse.json({ error: LOGIN_REPLIES.tooMany }, { status: 429 });
+    }
+
     const { data: student } = await supabase
       .from("students")
       .select("id, username, display_name, password_hash")
@@ -35,12 +51,14 @@ export async function POST(request: Request): Promise<NextResponse> {
       .single();
 
     if (!student) {
-      return NextResponse.json({ error: "Invalid username or password." }, { status: 404 });
+      await recordLoginFailure(supabase, limitKey);
+      return NextResponse.json({ error: LOGIN_REPLIES.invalid }, { status: 401 });
     }
 
     const valid = await verifyPassword(password, student.password_hash);
     if (!valid) {
-      return NextResponse.json({ error: "Invalid username or password." }, { status: 401 });
+      await recordLoginFailure(supabase, limitKey);
+      return NextResponse.json({ error: LOGIN_REPLIES.invalid }, { status: 401 });
     }
 
     await createStudentSession({

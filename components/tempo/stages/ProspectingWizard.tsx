@@ -30,7 +30,6 @@ import {
   prevProspectingStepId,
   prospectingStepIndex,
   PROSPECTING_STEPS,
-  TEMPO_HANDOFF_MESSAGES,
   TEMPO_HANDOFF_STAGE_META,
   type TempoHandoffStageKey,
 } from "@/lib/tempo-prospecting";
@@ -50,6 +49,13 @@ type ProspectingWizardProps = {
    * Drives the TEST MODE banner and every Prospecting gate short-circuit.
    */
   testBypass?: boolean;
+  /** Stage 1's manager handoff (from the server page; the messages are server only, lib/server/tempo-handoffs.ts). */
+  prospectingHandoffMessage: string;
+  /**
+   * The Discovery handoff, which names the contact: the server page sends it only once
+   * Stage 1 has been submitted (null before), so it never reaches Stage 1 in progress.
+   */
+  discoveryHandoffMessage: string | null;
 };
 
 /**
@@ -63,6 +69,8 @@ export function ProspectingWizard({
   referenceLibrary,
   initialDiscoveryHandoff = false,
   testBypass = false,
+  prospectingHandoffMessage,
+  discoveryHandoffMessage,
 }: ProspectingWizardProps): React.ReactElement {
   const wizard = useProspectingWizard({ attemptId, testBypass });
   const [postSubmitHandoff, setPostSubmitHandoff] = useState<TempoHandoffStageKey | null>(
@@ -169,8 +177,14 @@ export function ProspectingWizard({
       return;
     }
     await wizard.handleSubmit();
-    setPostSubmitHandoff("discovery");
     setForceHandoffOpen(false);
+    if (discoveryHandoffMessage) {
+      setPostSubmitHandoff("discovery");
+      return;
+    }
+    // The Discovery handoff names the contact, so the server sends it only once Stage 1
+    // is submitted: reload, and the page shows it over Stage 1 (the come-back path).
+    window.location.assign(`/student/simulation/${simulationId}?classId=${classId}&attempt=${attemptId}`);
   };
 
   const handleDiscoveryBegin = async (): Promise<void> => {
@@ -401,7 +415,7 @@ export function ProspectingWizard({
           stageNumber={prospectingMeta.stageNumber}
           stageName={prospectingMeta.stageName}
           stageIcon={prospectingMeta.stageIcon}
-          message={TEMPO_HANDOFF_MESSAGES.prospecting}
+          message={prospectingHandoffMessage}
           hasAIRestriction={prospectingMeta.hasAIRestriction}
           testBypass={testBypass}
           onBegin={() => {
@@ -423,12 +437,12 @@ export function ProspectingWizard({
         />
       ) : null}
 
-      {postSubmitHandoff === "discovery" && (
+      {postSubmitHandoff === "discovery" && discoveryHandoffMessage && (
         <HandoffModal
           stageNumber={discoveryMeta.stageNumber}
           stageName={discoveryMeta.stageName}
           stageIcon={discoveryMeta.stageIcon}
-          message={TEMPO_HANDOFF_MESSAGES.discovery}
+          message={discoveryHandoffMessage}
           hasAIRestriction={discoveryMeta.hasAIRestriction}
           testBypass={testBypass}
           onBegin={handleDiscoveryBegin}
