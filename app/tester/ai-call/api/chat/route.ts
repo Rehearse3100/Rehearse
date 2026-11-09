@@ -9,23 +9,35 @@
  * isGateBypassEnabled() in lib/tempo-test-bypass.ts). No attempt id and no sign-in: tester
  * mode is local only (docs/tempo-test-bypass.md), and nothing is written anywhere.
  *
- * Body: { persona, model?, messages, newMessage?, callSeconds, silenceSeconds, silent?, afterCheckIn?, start?, timeMark?, localTime? }.
- * Response: { reply, endCall?: true, ms } (ms: this handler's time). From the backstop on
- * there is no model call: { reply: "", endCall: true }. A failed, timed-out (15 s) or empty
- * model call is retried once, then the reply is FALLBACK_REPLY; an error's text never
- * reaches the page.
+ * Body: { persona, model?, messages, newMessage?, callSeconds, silenceSeconds, silent?, afterCheckIn?, start?, timeMark?, localTime?, strikes? }.
+ * Response: { reply, endCall?: true, label?, ms } (ms: this handler's time). From the
+ * backstop on there is no model call: { reply: "", endCall: true }. A failed, timed-out
+ * (15 s) or empty reply call is retried once, then the reply is FALLBACK_REPLY; an error's
+ * text never reaches the page.
+ *
+ * A turn with a newMessage also gets a label call (gpt-6-luna, no retries, 5 s timeout)
+ * that classifies the student's message, in parallel with the usual reply call. A label
+ * of normal, a failed label call or an answer that isn't a label keeps that reply.
+ * Otherwise, if the label changes the turn's situation note, the reply is discarded and
+ * one more reply call is made with the label's note. The label is returned so the page
+ * can count strikes.
  */
 
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import {
+  buildLabelMessages,
   buildTesterMessages,
   FALLBACK_REPLY,
   finishReply,
   isPastBackstop,
+  LABEL_REQUEST_SETTINGS,
+  parseLabel,
   parseTesterTurn,
+  pickSituationNote,
   TESTER_PERSONA_SETTINGS,
   type ModelRequestSettings,
+  type StudentLabel,
   type TesterMessage,
 } from "./brain";
 
@@ -35,6 +47,22 @@ export const dynamic = "force-dynamic";
 const MODEL_ATTEMPTS = 2;
 /** Each try gives up after this long and counts as failed (the SDK's default is 10 minutes). */
 const MODEL_TIMEOUT_MS = 15_000;
+/** The label call gives up after this long (one try, no retry) and counts as normal. */
+const LABEL_TIMEOUT_MS = 5_000;
+
+/** The student's label, or "normal" when the label call fails or times out (logged here only). */
+async function askLabel(openai: OpenAI, messages: TesterMessage[]): Promise<StudentLabel> {
+  try {
+    const completion = await openai.chat.completions.create(
+      { ...LABEL_REQUEST_SETTINGS, messages },
+      { timeout: LABEL_TIMEOUT_MS, maxRetries: 0 }
+    );
+    return parseLabel(completion.choices[0]?.message?.content ?? null);
+  } catch (error) {
+    console.error("[tester-chat] label call failed:", error);
+    return "normal";
+  }
+}
 
 /**
  * The reply text, or null when every attempt failed or came back empty (each failure
@@ -90,9 +118,18 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     const openai = new OpenAI({ apiKey, maxRetries: 0, timeout: MODEL_TIMEOUT_MS });
-    const content = await askModel(openai, settings.models[turn.model], buildTesterMessages(turn, settings.timings));
+    const replySettings = settings.models[turn.model];
+    const isLabelled = turn.newMessage !== null;
+    // The label call and the usual reply call run at the same time.
+    const [label, normalContent] = await Promise.all([
+      isLabelled ? askLabel(openai, buildLabelMessages(turn)) : Promise.resolve<StudentLabel>("normal"),
+      askModel(openai, replySettings, buildTesterMessages(turn, settings.timings)),
+    ]);
+    // A label whose note doesn't win this turn would resend the same messages: keep the reply.
+    const isNoteChanged = label !== "normal" && pickSituationNote(turn, settings.timings, label) !== pickSituationNote(turn, settings.timings);
+    const content = isNoteChanged ? await askModel(openai, replySettings, buildTesterMessages(turn, settings.timings, label)) : normalContent;
     const { reply, isEndCall } = content === null ? { reply: FALLBACK_REPLY, isEndCall: false } : finishReply(content);
-    return NextResponse.json({ reply, ...(isEndCall ? { endCall: true } : {}), ms: elapsedMs() });
+    return NextResponse.json({ reply, ...(isEndCall ? { endCall: true } : {}), ...(isLabelled ? { label } : {}), ms: elapsedMs() });
   } catch (error) {
     console.error("[tester-chat] unexpected:", error);
     return NextResponse.json({ error: "Could not generate a reply." }, { status: 500 });

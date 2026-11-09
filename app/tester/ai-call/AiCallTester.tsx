@@ -31,7 +31,12 @@
  * plus offsets). silenceSeconds: the Silence readout at send time: whole seconds since the
  * persona's last reply finished (or since the call started, before any reply), plus 30 for
  * each "+30 sec" pressed while it was counting.
- * The response is { reply, endCall?, ms }. endCall: true → the persona ended the call:
+ * strikes: { rude, breakCharacter }, sent on every turn: how many times this call the
+ * brain labelled the student's message rude or break_character (0 to 9); Start call and
+ * "Reset chat" set both to 0.
+ * The response is { reply, endCall?, label?, ms }. label (turns with the student's text
+ * only): how the brain's label call classified the message; the transcript shows it, and
+ * rude / break_character add one to that strike count. endCall: true → the persona ended the call:
  * the timer stops, sending is disabled and "Call ended by the persona" shows; the avatar
  * says the goodbye, then stops. "Reset chat" re-enables it all.
  * A reply "finishes" when it arrives, or, when the avatar speaks it, when Anam reports the
@@ -366,6 +371,8 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const sendTurnRef = useRef<(text: string, via: TurnSource) => Promise<void>>(async () => undefined);
+  /** This call's rude and break_character labels so far, sent with every turn. */
+  const strikesRef = useRef({ rude: 0, breakCharacter: 0 });
 
   attemptIdRef.current = attemptId;
   personaRef.current = persona;
@@ -558,6 +565,10 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
       setIsBusy(true);
       // Any turn settles a waiting Start call (the call has started now).
       setStartPending(false);
+      // Start call begins a new call: no strikes yet.
+      if (via === "start") {
+        strikesRef.current = { rude: 0, breakCharacter: 0 };
+      }
       const epoch = conversationEpochRef.current;
       const prior = historyRef.current;
       // The readouts at send time: Silence before this turn resets it; the call time after
@@ -600,6 +611,7 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
             ...(via === "silence" ? { silent: true, ...(isAfterCheckIn ? { afterCheckIn: true } : {}) } : {}),
             ...(via === "start" ? { start: true, localTime: localTimeAt(new Date()) } : {}),
             ...(via === "timeMark" ? { timeMark: true } : {}),
+            strikes: { ...strikesRef.current },
           }),
         });
         const bodyText = await response.text();
@@ -611,6 +623,16 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
         const reply = typeof body?.reply === "string" && body.reply.trim() ? body.reply : null;
         const isEndCall = body?.endCall === true;
         const brainMs = typeof body?.ms === "number" ? body.ms : null;
+        const label = response.ok && typeof body?.label === "string" ? body.label : null;
+
+        if (label !== null) {
+          // rude and break_character count as strikes for the rest of the call (capped at 9, as the brain reads them).
+          const strikeKey = label === "rude" ? "rude" : label === "break_character" ? "breakCharacter" : null;
+          if (strikeKey) {
+            strikesRef.current = { ...strikesRef.current, [strikeKey]: Math.min(9, strikesRef.current[strikeKey] + 1) };
+          }
+          addLine({ kind: "note", text: `Label: ${label}${strikeKey ? ` (${strikesRef.current[strikeKey]})` : ""}` });
+        }
 
         if (!response.ok) {
           addLine({ kind: "error", text: `HTTP ${response.status}\n${bodyText}`, ms });
@@ -843,6 +865,7 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
   const resetChat = useCallback((): void => {
     conversationEpochRef.current += 1;
     historyRef.current = [];
+    strikesRef.current = { rude: 0, breakCharacter: 0 };
     pendingSpokenRef.current = [];
     isBusyRef.current = false;
     setIsBusy(false);
