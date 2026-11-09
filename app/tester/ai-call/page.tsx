@@ -1,8 +1,10 @@
 /**
  * page.tsx — /tester/ai-call
- * THROWAWAY TESTER PAGE for the AI call: a text chat with the call brain (POST
- * /api/chat), plus a switch that turns on the Anam avatar and voice (POST
- * /api/student/anam-session for the token, then @anam-ai/js-sdk in the browser).
+ * THROWAWAY TESTER PAGE for the AI call: a text chat with the tester's own call brain
+ * for Dana and Dr. Kim (POST /tester/ai-call/api/chat, in api/chat/ here: a copy of how
+ * /api/chat builds their calls, plus the new call behaviour), a call timer, and a switch
+ * that turns on the Anam avatar and voice (POST /api/student/anam-session for the token,
+ * then @anam-ai/js-sdk in the browser).
  *
  * TO REMOVE IT: delete app/tester/ai-call/, delete tests/tester-ai-call-isolation.test.ts,
  * and delete the one "AI call test" option in app/student/dashboard/TestShortcutsDropdown.tsx
@@ -11,8 +13,9 @@
  * It stands alone on purpose: nothing in this folder imports from the project (no "@/",
  * no relative path outside the folder), nothing outside imports from it, and it talks
  * to the app only over HTTP with fetch. tests/tester-ai-call-isolation.test.ts checks
- * both directions. It writes nothing to the database itself; the endpoints it calls do
- * what they always do (both need a signed-in student and that student's attempt).
+ * both directions. Nothing here writes to the database. Only the avatar uses a project
+ * endpoint (the Anam session route, which needs a signed-in student and that student's
+ * attempt); text mode needs neither.
  *
  * Server component: with tester mode off it is a 404. The check is a copy of
  * isGateBypassEnabled() in lib/tempo-test-bypass.ts (copied, not imported).
