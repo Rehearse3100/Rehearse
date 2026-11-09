@@ -1,0 +1,4 @@
+{
+  "tempo_discovery": { "callLength": 900, "wrapUpStart": 720, "finalStretch": 840, "silence": 20, "backstop": 1080 },
+  "tempo_objections": { "callLength": 900, "wrapUpStart": 720, "finalStretch": 840, "silence": 20, "backstop": 1080 }
+}

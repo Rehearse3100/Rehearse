@@ -6,11 +6,15 @@
  * handling and the dash filter. Pure (no network); route.ts makes the model call.
  *
  * Message order: the fixed system prompt, the cleaned history, then at most one
- * situation note as a system message, then the student's message (none for a start or
- * silent turn). The note comes after the fixed prompt and history so the fixed prompt
- * stays cached.
+ * situation note as a system message, then the student's message (none for a start,
+ * silent or time-mark turn). The note comes after the fixed prompt and history so the
+ * fixed prompt stays cached.
+ *
+ * The call timings live in ../../timings.json (numbers only), which the page reads too:
+ * the page never imports this file.
  */
 
+import TIMINGS_FILE from "../../timings.json";
 import { buildPersonaSystemPrompt, CHAT_MAX_MESSAGE_CHARS, cleanChatHistory, type ChatMessage } from "./persona-copy";
 
 // ── Personas and settings ───
@@ -37,7 +41,7 @@ export type CallTimings = {
   wrapUpStart: number;
   /** From here the persona wraps up now. */
   finalStretch: number;
-  /** The page's auto silence turn fires at this much silence (the page keeps its own copy: it can't import this server file). */
+  /** The page's silence check-in fires at this much silence. */
   silence: number;
   /** From here there is no model call at all: the call just ends. */
   backstop: number;
@@ -51,7 +55,10 @@ export type TesterPersonaSettings = {
   timings: CallTimings;
 };
 
-/** Everything tunable, one object per persona. */
+/** The timings file, typed: a persona or a number missing there fails the type check. */
+const TIMINGS: Record<TesterPersona, CallTimings> = TIMINGS_FILE;
+
+/** Everything tunable, one object per persona (the timings come from timings.json). */
 export const TESTER_PERSONA_SETTINGS: Record<TesterPersona, TesterPersonaSettings> = {
   tempo_discovery: {
     defaultModel: "gpt-6-luna",
@@ -59,7 +66,7 @@ export const TESTER_PERSONA_SETTINGS: Record<TesterPersona, TesterPersonaSetting
       "gpt-6-luna": { model: "gpt-6-luna", reasoning_effort: "none", max_completion_tokens: 200 },
       "gpt-4o": { model: "gpt-4o", max_tokens: 200 },
     },
-    timings: { callLength: 900, wrapUpStart: 720, finalStretch: 840, silence: 20, backstop: 1080 },
+    timings: TIMINGS.tempo_discovery,
   },
   tempo_objections: {
     defaultModel: "gpt-6-luna",
@@ -67,7 +74,7 @@ export const TESTER_PERSONA_SETTINGS: Record<TesterPersona, TesterPersonaSetting
       "gpt-6-luna": { model: "gpt-6-luna", reasoning_effort: "none", max_completion_tokens: 200 },
       "gpt-4o": { model: "gpt-4o", max_tokens: 200 },
     },
-    timings: { callLength: 900, wrapUpStart: 720, finalStretch: 840, silence: 20, backstop: 1080 },
+    timings: TIMINGS.tempo_objections,
   },
 };
 
@@ -96,12 +103,14 @@ export type TesterTurn = {
   persona: TesterPersona;
   model: TesterModel;
   history: ChatMessage[];
-  /** The student's message; null for a start or silent turn (no student text is added). */
+  /** The student's message; null for a start, silent or time-mark turn (no student text is added). */
   newMessage: string | null;
   callSeconds: number;
   silenceSeconds: number;
   isStart: boolean;
   isSilent: boolean;
+  /** The page's turn at a time mark: the persona speaks first, with the note for callSeconds. */
+  isTimeMark: boolean;
 };
 
 function wholeSeconds(value: unknown): number {
@@ -109,11 +118,12 @@ function wholeSeconds(value: unknown): number {
 }
 
 /**
- * Reads { persona, model?, messages, newMessage?, callSeconds, silenceSeconds, silent?, start? }.
+ * Reads { persona, model?, messages, newMessage?, callSeconds, silenceSeconds, silent?, start?, timeMark? }.
  * persona must be one of the two; model one of the two (the persona's default when missing);
- * newMessage is required unless start or silent is true (start wins over silent); every
- * message is at most CHAT_MAX_MESSAGE_CHARS, as in /api/chat. callSeconds and
- * silenceSeconds that aren't numbers count as 0. Returns the turn or a short error.
+ * newMessage is required unless start, timeMark or silent is true (in that order, the first
+ * true one wins); every message is at most CHAT_MAX_MESSAGE_CHARS, as in /api/chat.
+ * callSeconds and silenceSeconds that aren't numbers count as 0. Returns the turn or a
+ * short error.
  */
 export function parseTesterTurn(body: unknown): { turn: TesterTurn } | { error: string } {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -129,9 +139,10 @@ export function parseTesterTurn(body: unknown): { turn: TesterTurn } | { error: 
     return { error: "Unknown model." };
   }
   const isStart = raw.start === true;
-  const isSilent = !isStart && raw.silent === true;
+  const isTimeMark = !isStart && raw.timeMark === true;
+  const isSilent = !isStart && !isTimeMark && raw.silent === true;
   let newMessage: string | null = null;
-  if (!isStart && !isSilent) {
+  if (!isStart && !isTimeMark && !isSilent) {
     if (typeof raw.newMessage !== "string" || !raw.newMessage) {
       return { error: "newMessage is required." };
     }
@@ -151,6 +162,7 @@ export function parseTesterTurn(body: unknown): { turn: TesterTurn } | { error: 
       silenceSeconds: wholeSeconds(raw.silenceSeconds),
       isStart,
       isSilent,
+      isTimeMark,
     },
   };
 }
@@ -164,7 +176,8 @@ export function isPastBackstop(turn: TesterTurn, timings: CallTimings): boolean 
  * The turn's one situation note, or null. When several apply, the first of: start,
  * time up (callLength), final stretch, silent, wrap-up start. The ending notes beat the
  * silence check-in so a quiet student can't keep the call from ending; the check-in beats
- * the gentle wrap-up nudge because a silent turn has nothing else to answer.
+ * the gentle wrap-up nudge because a silent turn has nothing else to answer. A time-mark
+ * turn gets the note for its callSeconds, like any other turn.
  */
 export function pickSituationNote(turn: TesterTurn, timings: CallTimings): string | null {
   if (turn.isStart) {

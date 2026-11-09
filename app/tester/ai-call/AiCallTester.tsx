@@ -5,18 +5,27 @@
  * (api/chat/route.ts: a copy of how /api/chat builds Dana's and Dr. Kim's calls, plus the
  * new call behaviour), an optional Anam avatar, and a call timer with test controls. The
  * real /api/chat is not used here. Never import anything from api/ into this file: the
- * persona prompts there are server only.
+ * persona prompts there are server only. The call timings come from ./timings.json
+ * (numbers only), which the brain reads too.
  *
  * ── Fields sent to the tester brain (the real call will use the same names later) ───
  * Every POST /tester/ai-call/api/chat sends { persona, model, messages, callSeconds,
  * silenceSeconds } plus one of:
  * - newMessage: the student's typed or spoken turn;
  * - start: true (no newMessage): "Start call" asks for the persona's opening;
- * - silent: true (no newMessage): the auto silence turn; no student text joins the history.
+ * - timeMark: true (no newMessage): the call time crossed wrapUpStart, finalStretch or
+ *   callLength, so the persona speaks first; each mark once per call, and when "+30 sec"
+ *   jumps over several at once, only the latest;
+ * - silent: true (no newMessage): the silence check-in, when Silence reaches the silence
+ *   timing; once per silent stretch (the student's next turn re-arms it).
+ * Start, time-mark and silent turns add no student text to the history. Time marks and the
+ * check-in wait while the persona's reply is coming or being spoken, then go right after
+ * it (a time mark first, if both are due).
  * callSeconds: the call time shown on the page at send time, in whole seconds, every
  * "+30 sec" offset included (Start call or the first turn starts the call, so it sends 0
  * plus offsets). silenceSeconds: the Silence readout at send time: whole seconds since the
- * persona's last reply finished (or since the call started, before any reply).
+ * persona's last reply finished (or since the call started, before any reply), plus 30 for
+ * each "+30 sec" pressed while it was counting.
  * The response is { reply, endCall?, ms }. endCall: true → the persona ended the call:
  * the timer stops, sending is disabled and "Call ended by the persona" shows; the avatar
  * says the goodbye, then stops. "Reset chat" re-enables it all.
@@ -34,6 +43,9 @@
  *   (each Anam message id is handled once);
  * - talk(reply) makes the avatar speak, once SESSION_READY has fired;
  * - stopStreaming() plus stopping the mic tracks to stop.
+ * The mic starts muted each time the avatar starts (the SDK's muteInputAudio() right after
+ * createClient(); the stream picks the state up), and the Mute / Unmute mic button calls
+ * muteInputAudio() / unmuteInputAudio(). Muted, the avatar still speaks and typed turns work.
  */
 
 "use client";
@@ -41,6 +53,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnamEvent, MessageRole, createClient, type AnamClient, type Message } from "@anam-ai/js-sdk";
+import TIMINGS_FILE from "./timings.json";
 
 // ── Config ───
 
@@ -63,13 +76,31 @@ type ModelKey = (typeof MODELS)[number];
 /** The <video> the Anam SDK streams into (it looks the element up by id). */
 const VIDEO_ELEMENT_ID = "tester-ai-call-video";
 
-/** Call time colours (display only; nothing is enforced here): amber from 12:00, red from 15:00. */
-const CALL_AMBER_SECONDS = 12 * 60;
-const CALL_RED_SECONDS = 15 * 60;
-/** "+30 sec" moves the call time forward by this much. */
+/** Call timings, in seconds (timings.json, shared with the brain). The page uses all but the backstop. */
+export type CallTimings = {
+  callLength: number;
+  wrapUpStart: number;
+  finalStretch: number;
+  silence: number;
+  backstop: number;
+};
+
+/** The timings file, typed: a persona or a number missing there fails the type check. */
+const CALL_TIMINGS: Record<PersonaKey, CallTimings> = TIMINGS_FILE;
+
+/** The time marks in call-time order; each fires once per call. Call time is amber from the first, red from the last. */
+const TIME_MARKS = ["wrapUpStart", "finalStretch", "callLength"] as const;
+
+type TimeMark = (typeof TIME_MARKS)[number];
+
+const TIME_MARK_LABELS: Record<TimeMark, string> = {
+  wrapUpStart: "wrap-up start",
+  finalStretch: "final stretch",
+  callLength: "time up",
+};
+
+/** "+30 sec" moves the call time (and a counting Silence readout) forward by this much. */
 const CALL_OFFSET_STEP_SECONDS = 30;
-/** The auto silence turn fires when the Silence readout reaches this (the brain's settings say the same). */
-const SILENCE_TURN_SECONDS = 20;
 /** How often the readouts refresh. */
 const CLOCK_TICK_MS = 250;
 /** No end of speech from Anam this long after talk(): count the reply as finished (or stop after the goodbye) anyway. */
@@ -83,7 +114,7 @@ type ChatTurn = { role: "user" | "assistant"; content: string };
 /** The turns that carry the student's text. */
 type StudentTurnSource = "typed" | "spoken";
 
-type TurnSource = StudentTurnSource | "silence" | "start";
+export type TurnSource = StudentTurnSource | "silence" | "start" | "timeMark";
 
 type TranscriptLine =
   | { id: number; kind: "user"; text: string; via: StudentTurnSource }
@@ -120,13 +151,15 @@ export type CallClock = {
   offsetSeconds: number;
   /** What the Silence readout counts from; null = the persona's turn (shown as 00:00). */
   silenceSince: number | null;
-  /** The auto silence turn may fire; firing disarms it until the next real student turn. */
+  /** The silence check-in may fire; firing disarms it until the student's next turn (or Start call). */
   isSilenceTurnArmed: boolean;
+  /** How many of TIME_MARKS are done this call (0 to 3); a mark jumped over counts as done. */
+  timeMarksDone: number;
 };
 
 /** A stopped clock at 00:00 (the page's start, and "Reset chat"). */
 export function emptyCallClock(): CallClock {
-  return { startedAt: null, endedAt: null, offsetSeconds: 0, silenceSince: null, isSilenceTurnArmed: true };
+  return { startedAt: null, endedAt: null, offsetSeconds: 0, silenceSince: null, isSilenceTurnArmed: true, timeMarksDone: 0 };
 }
 
 /** Starts the call at `now` (Silence counts from the start); no change once started. */
@@ -134,9 +167,16 @@ export function startCallClock(clock: CallClock, now: number): CallClock {
   return clock.startedAt === null ? { ...clock, startedAt: now, silenceSince: now } : clock;
 }
 
-/** "+30 sec": moves the call time forward; the Silence readout is untouched. */
+/**
+ * "+30 sec": moves the call time forward, and the Silence readout too while it counts
+ * (call running and not the persona's turn; at 00:00 during the persona's turn it stays).
+ */
 export function addCallOffset(clock: CallClock): CallClock {
-  return { ...clock, offsetSeconds: clock.offsetSeconds + CALL_OFFSET_STEP_SECONDS };
+  const silenceSince =
+    clock.silenceSince !== null && clock.startedAt !== null && clock.endedAt === null
+      ? clock.silenceSince - CALL_OFFSET_STEP_SECONDS * 1000
+      : clock.silenceSince;
+  return { ...clock, offsetSeconds: clock.offsetSeconds + CALL_OFFSET_STEP_SECONDS, silenceSince };
 }
 
 /** The call time shown at `now`, in whole seconds: real elapsed time (frozen at the end) plus offsets. */
@@ -153,13 +193,29 @@ export function silenceSecondsAt(clock: CallClock, now: number): number {
   return Math.max(0, Math.floor(((clock.endedAt ?? now) - clock.silenceSince) / 1000));
 }
 
+/** How many of TIME_MARKS the call time `seconds` has reached (0 to 3). */
+export function timeMarksReached(seconds: number, timings: CallTimings): number {
+  return TIME_MARKS.filter((mark) => seconds >= timings[mark]).length;
+}
+
 /**
  * A turn was sent at `now`: starts the call if needed, and holds Silence at 00:00 until the
- * reply finishes. A real turn (or Start call) re-arms the auto silence turn; the silence
- * turn disarms it.
+ * reply finishes. The student's turn (or Start call) re-arms the silence check-in; the
+ * check-in disarms it; a time mark leaves it as it was. A time-mark or student turn marks
+ * every time mark reached so far as done: the brain adds the note for the call time to
+ * every turn, so a student turn sent after a crossing has already carried it.
  */
-export function clockAfterTurnSent(clock: CallClock, now: number, isSilenceTurn: boolean): CallClock {
-  return { ...startCallClock(clock, now), silenceSince: null, isSilenceTurnArmed: !isSilenceTurn };
+export function clockAfterTurnSent(clock: CallClock, now: number, via: TurnSource, timings: CallTimings): CallClock {
+  const started = startCallClock(clock, now);
+  const isMarkDelivered = via === "timeMark" || via === "typed" || via === "spoken";
+  return {
+    ...started,
+    silenceSince: null,
+    isSilenceTurnArmed: via === "silence" ? false : via === "timeMark" ? started.isSilenceTurnArmed : true,
+    timeMarksDone: isMarkDelivered
+      ? Math.max(started.timeMarksDone, timeMarksReached(callSecondsAt(started, now), timings))
+      : started.timeMarksDone,
+  };
 }
 
 /** The persona's reply finished at `now` (or the turn failed): Silence counts from here. No change once ended. */
@@ -172,17 +228,23 @@ export function endCallClock(clock: CallClock, now: number): CallClock {
   return clock.endedAt === null ? { ...clock, endedAt: now } : clock;
 }
 
-/** True when the auto silence turn should be sent now: on, armed, call running, nothing in flight, 20 s of silence. */
-export function shouldSendSilenceTurn(clock: CallClock, now: number, isAutoSilenceOn: boolean, isBusy: boolean): boolean {
-  return (
-    isAutoSilenceOn &&
-    clock.isSilenceTurnArmed &&
-    clock.startedAt !== null &&
-    clock.endedAt === null &&
-    !isBusy &&
-    clock.silenceSince !== null &&
-    silenceSecondsAt(clock, now) >= SILENCE_TURN_SECONDS
-  );
+/** True while the call runs and it's the student's turn: no reply coming or being spoken. */
+function isStudentsTurn(clock: CallClock, isBusy: boolean): boolean {
+  return clock.startedAt !== null && clock.endedAt === null && !isBusy && clock.silenceSince !== null;
+}
+
+/**
+ * The time mark to send now, or null: the latest mark the call time has reached that
+ * isn't done yet (so a jump over several sends only the last), on the student's turn.
+ */
+export function dueTimeMark(clock: CallClock, now: number, timings: CallTimings, isBusy: boolean): TimeMark | null {
+  const reached = timeMarksReached(callSecondsAt(clock, now), timings);
+  return isStudentsTurn(clock, isBusy) && reached > clock.timeMarksDone ? TIME_MARKS[reached - 1] ?? null : null;
+}
+
+/** True when the silence check-in should be sent now: armed, on the student's turn, Silence at the silence timing. */
+export function shouldSendSilenceTurn(clock: CallClock, now: number, silenceTurnSeconds: number, isBusy: boolean): boolean {
+  return clock.isSilenceTurnArmed && isStudentsTurn(clock, isBusy) && silenceSecondsAt(clock, now) >= silenceTurnSeconds;
 }
 
 /** Whole seconds as mm:ss (minutes keep counting past 59). */
@@ -237,8 +299,9 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
   const [isSessionReady, setIsSessionReady] = useState(false);
   const [clock, setClock] = useState<CallClock>(emptyCallClock);
   const [now, setNow] = useState<number>(() => Date.now());
-  const [isAutoSilenceOn, setIsAutoSilenceOn] = useState(false);
   const [isStartPending, setIsStartPending] = useState(false);
+  /** The student's mic as Anam hears it; muted each time the avatar starts. */
+  const [isMicMuted, setIsMicMuted] = useState(true);
 
   // Refs: the Anam callbacks, the timer tick and async turns read the latest values without re-subscribing.
   const attemptIdRef = useRef(attemptId);
@@ -259,7 +322,6 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
   /** SESSION_READY has fired: the real call speaks only after it, so this page does too. */
   const isSessionReadyRef = useRef(false);
   const clockRef = useRef<CallClock>(clock);
-  const isAutoSilenceOnRef = useRef(isAutoSilenceOn);
   /** The avatar is speaking a reply: Silence waits for Anam's end of speech (or the fallback). */
   const isAwaitingSpeechEndRef = useRef(false);
   const speechSentAtRef = useRef(0);
@@ -275,7 +337,6 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
   attemptIdRef.current = attemptId;
   personaRef.current = persona;
   modelRef.current = model;
-  isAutoSilenceOnRef.current = isAutoSilenceOn;
 
   const addLine = useCallback((line: NewTranscriptLine): void => {
     lineIdRef.current += 1;
@@ -370,6 +431,7 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
     }
     setAvatarPhase("off");
     setIsSessionReady(false);
+    setIsMicMuted(true);
   }, [clearGoodbyeStop, markReplyFinished, setStartPending]);
 
   /**
@@ -403,6 +465,20 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
 
   // ── Turns ───
 
+  /**
+   * Sends what the call clock says is due, at most one turn: a time mark first, else the
+   * silence check-in. Runs on every tick, right after "+30 sec", and when a reply finishes.
+   */
+  const runClockChecks = useCallback((): void => {
+    const at = Date.now();
+    const timings = CALL_TIMINGS[personaRef.current];
+    if (dueTimeMark(clockRef.current, at, timings, isBusyRef.current)) {
+      void sendTurnRef.current("", "timeMark");
+    } else if (shouldSendSilenceTurn(clockRef.current, at, timings.silence, isBusyRef.current)) {
+      void sendTurnRef.current("", "silence");
+    }
+  }, []);
+
   /** Sends the queued spoken turns as one, once nothing is in flight. */
   const flushPendingSpoken = useCallback((): void => {
     if (isBusyRef.current || pendingSpokenRef.current.length === 0) {
@@ -415,10 +491,12 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
 
   /**
    * One turn to the tester brain: the history so far, the student's text (typed or
-   * spoken) or start: true / silent: true, and the call time fields. Shows the reply with
-   * its round-trip and brain times (and speaks it when the avatar is on). An error shows
-   * the HTTP status and the body as-is; a failed turn adds nothing to the history.
-   * Nothing is sent once the call has ended; Start call only opens a call not yet started.
+   * spoken) or start / timeMark / silent: true, and the call time fields. Shows the reply
+   * with its round-trip and brain times (and speaks it when the avatar is on). An error
+   * shows the HTTP status and the body as-is; a failed turn adds nothing to the history.
+   * Nothing is sent once the call has ended; Start call only opens a call not yet started;
+   * a time-mark turn goes only when a mark is due. When it's done, a due time mark or
+   * check-in goes next.
    */
   const sendTurn = useCallback(
     async (text: string, via: TurnSource): Promise<void> => {
@@ -436,6 +514,12 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
       if (via === "start" && clockRef.current.startedAt !== null) {
         return;
       }
+      const timings = CALL_TIMINGS[personaRef.current];
+      const sentAt = Date.now();
+      const timeMark = via === "timeMark" ? dueTimeMark(clockRef.current, sentAt, timings, false) : null;
+      if (via === "timeMark" && !timeMark) {
+        return;
+      }
 
       isBusyRef.current = true;
       setIsBusy(true);
@@ -445,9 +529,8 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
       const prior = historyRef.current;
       // The readouts at send time: Silence before this turn resets it; the call time after
       // this turn starts the call (so the first turn sends 0 plus any +30 sec).
-      const sentAt = Date.now();
       const silenceSeconds = silenceSecondsAt(clockRef.current, sentAt);
-      updateClock((current) => clockAfterTurnSent(current, sentAt, via === "silence"));
+      updateClock((current) => clockAfterTurnSent(current, sentAt, via, timings));
       const callSeconds = callSecondsAt(clockRef.current, sentAt);
       setNow(sentAt);
       // A new turn: an older reply's end of speech no longer moves the Silence readout.
@@ -457,7 +540,11 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
       } else {
         addLine({
           kind: "note",
-          text: via === "start" ? "Start call: asking for the opening (start: true)." : "Auto silence turn (silent: true).",
+          text: timeMark
+            ? `Time mark: ${TIME_MARK_LABELS[timeMark]} (${formatClock(timings[timeMark])}), sent at ${formatClock(callSeconds)} (timeMark: true).`
+            : via === "start"
+              ? "Start call: asking for the opening (start: true)."
+              : `Silence check-in after ${silenceSeconds} s of silence (silent: true).`,
         });
       }
       const startedAt = performance.now();
@@ -475,6 +562,7 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
             silenceSeconds,
             ...(via === "silence" ? { silent: true } : {}),
             ...(via === "start" ? { start: true } : {}),
+            ...(via === "timeMark" ? { timeMark: true } : {}),
           }),
         });
         const bodyText = await response.text();
@@ -490,7 +578,7 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
         if (!response.ok) {
           addLine({ kind: "error", text: `HTTP ${response.status}\n${bodyText}`, ms });
         } else if (reply !== null) {
-          // A start or silent turn adds only the persona's reply: no student text.
+          // A start, time-mark or silent turn adds only the persona's reply: no student text.
           const studentTurn: ChatTurn[] = isStudentText ? [{ role: "user", content: trimmed }] : [];
           historyRef.current = [...prior, ...studentTurn, { role: "assistant", content: reply }];
           addLine({ kind: "reply", text: reply, ms, brainMs });
@@ -520,11 +608,14 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
         if (epoch === conversationEpochRef.current) {
           isBusyRef.current = false;
           setIsBusy(false);
+          // Queued speech goes first; otherwise a time mark or check-in that came due meanwhile
+          // (if the avatar is still speaking, they wait for its end of speech).
           flushPendingSpoken();
+          runClockChecks();
         }
       }
     },
-    [addLine, updateClock, markReplyFinished, setStartPending, speakReply, endCall, flushPendingSpoken]
+    [addLine, updateClock, markReplyFinished, setStartPending, speakReply, endCall, flushPendingSpoken, runClockChecks]
   );
 
   sendTurnRef.current = sendTurn;
@@ -534,8 +625,8 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
   const isCallEnded = clock.endedAt !== null;
   const isClockRunning = clock.startedAt !== null && !isCallEnded;
 
-  // While the call runs: refresh the readouts, apply the end-of-speech fallback, and fire
-  // the auto silence turn (once; a real turn re-arms it).
+  // While the call runs: refresh the readouts, apply the end-of-speech fallback, and send
+  // a due time mark or silence check-in.
   useEffect(() => {
     if (!isClockRunning) {
       return undefined;
@@ -551,14 +642,12 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
         });
         markReplyFinished();
       }
-      if (shouldSendSilenceTurn(clockRef.current, at, isAutoSilenceOnRef.current, isBusyRef.current)) {
-        void sendTurnRef.current("", "silence");
-      }
+      runClockChecks();
     };
     tick();
     const timer = window.setInterval(tick, CLOCK_TICK_MS);
     return () => window.clearInterval(timer);
-  }, [isClockRunning, addLine, markReplyFinished]);
+  }, [isClockRunning, addLine, markReplyFinished, runClockChecks]);
 
   // ── Avatar: start ───
 
@@ -566,7 +655,8 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
    * Token → mic → Anam client → stream into the video element. Spoken turns arrive as
    * MESSAGE_HISTORY_UPDATED and go through sendTurn like typed ones; the same event
    * ending on the persona marks the spoken reply finished (and, after an endCall, stops
-   * the avatar). SESSION_READY sends a waiting Start call's opening request.
+   * the avatar). SESSION_READY sends a waiting Start call's opening request. The mic is
+   * muted before the stream starts.
    */
   const startAvatar = useCallback(async (): Promise<void> => {
     const stage = anamStageFor(personaRef.current);
@@ -616,6 +706,8 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
       micRef.current = mic;
 
       const client = createClient(sessionToken);
+      // Muted by default: the SDK keeps this state and applies it to the mic when the stream starts.
+      setIsMicMuted(client.muteInputAudio().isMuted);
       clientRef.current = client;
       client.addListener(AnamEvent.MESSAGE_HISTORY_UPDATED, (history: Message[]): void => {
         if (clientRef.current !== client) {
@@ -626,10 +718,12 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
           return;
         }
         if (last.role === MessageRole.PERSONA) {
-          // The avatar finished speaking the reply: Silence counts from here.
+          // The avatar finished speaking the reply: Silence counts from here, and a time mark
+          // or check-in that came due while it spoke goes now.
           if (isAwaitingSpeechEndRef.current) {
             isAwaitingSpeechEndRef.current = false;
             markReplyFinished();
+            runClockChecks();
           }
           // The goodbye is said: now the avatar stops.
           if (stopAvatarAfterSpeechRef.current) {
@@ -690,7 +784,7 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
       addLine({ kind: "error", text: `Avatar failed to start: ${errorText(error)}`, ms: null });
       stopAvatar();
     }
-  }, [addLine, markReplyFinished, setStartPending, stopAvatar]);
+  }, [addLine, markReplyFinished, runClockChecks, setStartPending, stopAvatar]);
 
   // Stop cleanly when the page closes or the component unmounts.
   useEffect(() => {
@@ -746,6 +840,20 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
     }
   };
 
+  /** "+30 sec": moves the clock, then sends a time mark or check-in that is now due. */
+  const handleAddOffset = (): void => {
+    updateClock(addCallOffset);
+    runClockChecks();
+  };
+
+  /** Mute / Unmute mic: whether Anam hears the student's mic. The avatar still speaks; typing still works. */
+  const toggleMicMute = (): void => {
+    const client = clientRef.current;
+    if (client) {
+      setIsMicMuted((isMicMuted ? client.unmuteInputAudio() : client.muteInputAudio()).isMuted);
+    }
+  };
+
   /** Start call: the opening now, or, with the avatar still connecting, once it's ready. */
   const handleStartCall = (): void => {
     if (clockRef.current.startedAt !== null || clockRef.current.endedAt !== null || isBusyRef.current) {
@@ -773,14 +881,19 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
     token: "Getting a session token…",
     mic: "Asking for the microphone…",
     connecting: "Connecting the avatar…",
-    live: isSessionReady ? "Avatar ready: speak or type." : "Streaming; waiting for the session to be ready…",
+    live: isSessionReady
+      ? isMicMuted
+        ? "Avatar ready: type, or unmute the mic to speak."
+        : "Avatar ready: speak or type."
+      : "Streaming; waiting for the session to be ready…",
   };
   const simulationHref =
     simulationId && classId ? `/student/simulation/${encodeURIComponent(simulationId)}?classId=${encodeURIComponent(classId)}` : "";
+  const timings = CALL_TIMINGS[persona];
   const callSeconds = callSecondsAt(clock, now);
   const silenceSeconds = silenceSecondsAt(clock, now);
   const callTimeTone =
-    callSeconds >= CALL_RED_SECONDS ? "text-red-600" : callSeconds >= CALL_AMBER_SECONDS ? "text-amber-600" : "text-gray-900";
+    callSeconds >= timings.callLength ? "text-red-600" : callSeconds >= timings.wrapUpStart ? "text-amber-600" : "text-gray-900";
   const canStartCall = clock.startedAt === null && !isCallEnded && !isBusy && !isStartPending;
 
   return (
@@ -862,6 +975,20 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
             />
             <span className="font-semibold">Avatar and voice</span>
           </label>
+          {isAvatarOn ? (
+            <button
+              type="button"
+              className={`rounded border px-3 py-1 font-semibold disabled:opacity-50 ${
+                isMicMuted
+                  ? "border-red-400 bg-red-50 text-red-800 hover:bg-red-100"
+                  : "border-green-600 bg-green-50 text-green-800 hover:bg-green-100"
+              }`}
+              onClick={toggleMicMute}
+              disabled={avatarPhase === "token" || avatarPhase === "mic"}
+            >
+              {isMicMuted ? "Mic muted · Unmute mic" : "Mic on · Mute mic"}
+            </button>
+          ) : null}
           <span className="text-gray-600">{avatarStatus[avatarPhase]}</span>
         </div>
       </section>
@@ -881,7 +1008,7 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
               ? null
               : clock.startedAt === null
                 ? "Starts with Start call or the first turn."
-                : "Amber from 12:00, red from 15:00 (display only)."}
+                : `Amber from ${formatClock(timings.wrapUpStart)}, red from ${formatClock(timings.callLength)}. The persona speaks first at ${TIME_MARKS.map((mark) => formatClock(timings[mark])).join(", ")}; check-in after ${timings.silence} s of silence.`}
           </span>
         </div>
         {isCallEnded ? (
@@ -901,7 +1028,7 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
           <button
             type="button"
             className="rounded border border-gray-400 px-3 py-1 font-semibold hover:bg-gray-100"
-            onClick={() => updateClock(addCallOffset)}
+            onClick={handleAddOffset}
           >
             +30 sec
           </button>
@@ -912,17 +1039,6 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
           >
             Reset chat
           </button>
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={isAutoSilenceOn}
-              onChange={(event) => {
-                isAutoSilenceOnRef.current = event.target.checked;
-                setIsAutoSilenceOn(event.target.checked);
-              }}
-            />
-            <span>Auto silence turn at {SILENCE_TURN_SECONDS} s</span>
-          </label>
         </div>
       </section>
 
