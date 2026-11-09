@@ -1,9 +1,10 @@
 /**
  * brain.ts — SERVER ONLY (tester AI call)
- * The tester call brain's own behaviour, on top of the copied prompts (persona-copy.ts):
- * the settings for each persona (models and call timings), reading the request body,
- * the one situation note per turn, the message list sent to the model, [END_CALL]
- * handling and the dash filter. Pure (no network); route.ts makes the model call.
+ * The tester call brain's own behaviour, around the persona prompts (persona-cards.ts):
+ * the settings for each persona (models and call timings), reading the request body and
+ * cleaning its history, the one situation note per turn, the message list sent to the
+ * model, [END_CALL] handling and the dash filter. Pure (no network); route.ts makes the
+ * model call.
  *
  * Message order: the fixed system prompt, the cleaned history, then at most one
  * situation note as a system message, then the student's message (none for a start,
@@ -15,7 +16,7 @@
  */
 
 import TIMINGS_FILE from "../../timings.json";
-import { buildPersonaSystemPrompt, CHAT_MAX_MESSAGE_CHARS, cleanChatHistory, type ChatMessage } from "./persona-copy";
+import { buildCardPrompt } from "./persona-cards";
 
 // ── Personas and settings ───
 
@@ -95,6 +96,36 @@ export const END_CALL_MARKER = "[END_CALL]";
 
 /** The reply when the model call fails twice or returns nothing. */
 export const FALLBACK_REPLY = "Sorry, could you say that again?";
+
+// ── History (as /api/chat cleans it: types/index.ts, lib/constants.ts, lib/chat-history.ts at d984823) ───
+
+export type ChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+/** /api/chat: the most history turns sent to the model (the latest ones). */
+export const CHAT_MAX_HISTORY_MESSAGES = 60;
+/** /api/chat: the longest history message or new message accepted (longer → 400). */
+export const CHAT_MAX_MESSAGE_CHARS = 2_000;
+
+/**
+ * The history the model sees: user and assistant turns with string content, in
+ * order, the latest CHAT_MAX_HISTORY_MESSAGES (60). Anything that isn't an array → [].
+ */
+export function cleanChatHistory(raw: unknown): ChatMessage[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const turns = raw.flatMap((entry: unknown): ChatMessage[] => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+    const { role, content } = entry as Record<string, unknown>;
+    return (role === "user" || role === "assistant") && typeof content === "string" ? [{ role, content }] : [];
+  });
+  return turns.slice(-CHAT_MAX_HISTORY_MESSAGES);
+}
 
 // ── The request ───
 
@@ -204,14 +235,13 @@ export type TesterMessage =
   | { role: "assistant"; content: string };
 
 /**
- * The messages for the model: as /api/chat assembles them (the persona's system prompt,
- * trimmed; the history; the new message), plus the situation note as a system message
- * right before the student's message.
+ * The messages for the model: the persona's card prompt (shared rules, then the card),
+ * the history, the situation note as a system message, then the student's message.
  */
 export function buildTesterMessages(turn: TesterTurn, timings: CallTimings): TesterMessage[] {
   const note = pickSituationNote(turn, timings);
   return [
-    { role: "system", content: buildPersonaSystemPrompt(turn.persona).trim() },
+    { role: "system", content: buildCardPrompt(turn.persona) },
     ...turn.history.map((message): TesterMessage => ({ role: message.role, content: message.content })),
     ...(note ? [{ role: "system" as const, content: note }] : []),
     ...(turn.newMessage !== null ? [{ role: "user" as const, content: turn.newMessage }] : []),
