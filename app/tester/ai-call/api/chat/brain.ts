@@ -81,13 +81,12 @@ export const TESTER_PERSONA_SETTINGS: Record<TesterPersona, TesterPersonaSetting
 
 // ── Situation notes ───
 
+/** The fixed note texts. wrapUpStart and finalStretch follow "About <N> minutes are left." (from the timings; see minutesLeft). */
 export const SITUATION_NOTES = {
   start:
     "The call has just started. Open it naturally in your own words and in character: greet them and set the scene in one or two sentences.",
-  wrapUpStart:
-    "About three minutes are left. Do not end the call yet. Keep the conversation going, and gently start steering towards a summary and next steps.",
-  finalStretch:
-    "About one minute is left. Do not end the call yet unless the student says goodbye. Briefly sum up and agree a next step.",
+  wrapUpStart: "Do not end the call yet. Keep the conversation going, and gently start steering towards a summary and next steps.",
+  finalStretch: "Do not end the call yet unless the student says goodbye. Briefly sum up and agree a next step.",
   callLength:
     "Time is up. End the call now: thank them and say goodbye in one or two sentences, then end your reply with [END_CALL].",
   silent: "The student has been quiet for a while. Check in briefly and naturally, in character.",
@@ -144,19 +143,38 @@ export type TesterTurn = {
   isSilent: boolean;
   /** The page's turn at a time mark: the persona speaks first, with the note for callSeconds. */
   isTimeMark: boolean;
+  /** The student's local weekday and part of day (the page sends it with start), or null. */
+  localTime: LocalTime | null;
 };
+
+const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
+const PARTS_OF_DAY = ["morning", "afternoon", "evening"] as const;
+
+export type LocalTime = { weekday: (typeof WEEKDAYS)[number]; partOfDay: (typeof PARTS_OF_DAY)[number] };
 
 function wholeSeconds(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
 }
 
+/** { weekday, partOfDay } when both are one of the allowed words, else null. */
+function parseLocalTime(value: unknown): LocalTime | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const { weekday, partOfDay } = value as Record<string, unknown>;
+  const day = WEEKDAYS.find((name) => name === weekday);
+  const part = PARTS_OF_DAY.find((name) => name === partOfDay);
+  return day && part ? { weekday: day, partOfDay: part } : null;
+}
+
 /**
- * Reads { persona, model?, messages, newMessage?, callSeconds, silenceSeconds, silent?, start?, timeMark? }.
+ * Reads { persona, model?, messages, newMessage?, callSeconds, silenceSeconds, silent?, start?, timeMark?, localTime? }.
  * persona must be one of the two; model one of the two (the persona's default when missing);
  * newMessage is required unless start, timeMark or silent is true (in that order, the first
  * true one wins); every message is at most CHAT_MAX_MESSAGE_CHARS, as in /api/chat.
- * callSeconds and silenceSeconds that aren't numbers count as 0. Returns the turn or a
- * short error.
+ * callSeconds and silenceSeconds that aren't numbers count as 0. localTime is
+ * { weekday: "Monday"…"Sunday", partOfDay: "morning" | "afternoon" | "evening" }; when it's
+ * missing or anything else it is null (not an error). Returns the turn or a short error.
  */
 export function parseTesterTurn(body: unknown): { turn: TesterTurn } | { error: string } {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -196,6 +214,7 @@ export function parseTesterTurn(body: unknown): { turn: TesterTurn } | { error: 
       isStart,
       isSilent,
       isTimeMark,
+      localTime: parseLocalTime(raw.localTime),
     },
   };
 }
@@ -205,38 +224,46 @@ export function isPastBackstop(turn: TesterTurn, timings: CallTimings): boolean 
   return turn.callSeconds >= timings.backstop;
 }
 
-const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
+const NUMBER_WORDS = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"] as const;
 
-/** "It is <weekday> <part of day>." in server time: morning before 12:00, afternoon before 17:00, then evening. */
-function describeNow(now: Date): string {
-  const hour = now.getHours();
-  const partOfDay = hour < 12 ? "morning" : hour < 17 ? "afternoon" : "evening";
-  return `It is ${WEEKDAYS[now.getDay()]} ${partOfDay}.`;
+/**
+ * "About <N> minutes are left." for this many seconds, N rounded to whole minutes: in
+ * words from one to ten, digits otherwise; "About one minute is left." for one.
+ */
+function minutesLeft(seconds: number): string {
+  const minutes = Math.round(seconds / 60);
+  if (minutes === 1) {
+    return "About one minute is left.";
+  }
+  return `About ${NUMBER_WORDS[minutes - 1] ?? String(minutes)} minutes are left.`;
 }
 
 /**
- * The turn's one situation note, or null. The start note also gets the current weekday
- * and part of day (server time), so openings vary. When several apply, the first of: start,
- * time up (callLength), final stretch, silent, wrap-up start. The ending notes beat the
- * silence check-in so a quiet student can't keep the call from ending; the check-in beats
- * the gentle wrap-up nudge because a silent turn has nothing else to answer. A time-mark
- * turn gets the note for its callSeconds, like any other turn.
+ * The turn's one situation note, or null. The start note gets "It is <weekday> <part of
+ * day>." from the student's localTime when there is one, so openings vary; the wrap-up
+ * and final stretch notes start with the minutes left until callLength. When several
+ * apply, the first of: start, time up (callLength), final stretch, silent, wrap-up start.
+ * The ending notes beat the silence check-in so a quiet student can't keep the call from
+ * ending; the check-in beats the gentle wrap-up nudge because a silent turn has nothing
+ * else to answer. A time-mark turn gets the note for its callSeconds, like any other turn.
  */
 export function pickSituationNote(turn: TesterTurn, timings: CallTimings): string | null {
   if (turn.isStart) {
-    return `${SITUATION_NOTES.start}\n${describeNow(new Date())}`;
+    return turn.localTime
+      ? `${SITUATION_NOTES.start}\nIt is ${turn.localTime.weekday} ${turn.localTime.partOfDay}.`
+      : SITUATION_NOTES.start;
   }
   if (turn.callSeconds >= timings.callLength) {
     return SITUATION_NOTES.callLength;
   }
   if (turn.callSeconds >= timings.finalStretch) {
-    return SITUATION_NOTES.finalStretch;
+    return `${minutesLeft(timings.callLength - timings.finalStretch)} ${SITUATION_NOTES.finalStretch}`;
   }
   if (turn.isSilent) {
     return SITUATION_NOTES.silent;
   }
   if (turn.callSeconds >= timings.wrapUpStart) {
-    return SITUATION_NOTES.wrapUpStart;
+    return `${minutesLeft(timings.callLength - timings.wrapUpStart)} ${SITUATION_NOTES.wrapUpStart}`;
   }
   return null;
 }

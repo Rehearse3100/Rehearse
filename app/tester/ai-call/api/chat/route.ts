@@ -9,7 +9,7 @@
  * isGateBypassEnabled() in lib/tempo-test-bypass.ts). No attempt id and no sign-in: tester
  * mode is local only (docs/tempo-test-bypass.md), and nothing is written anywhere.
  *
- * Body: { persona, model?, messages, newMessage?, callSeconds, silenceSeconds, silent?, start?, timeMark? }.
+ * Body: { persona, model?, messages, newMessage?, callSeconds, silenceSeconds, silent?, start?, timeMark?, localTime? }.
  * Response: { reply, endCall?: true, ms } (ms: this handler's time). From the backstop on
  * there is no model call: { reply: "", endCall: true }. A failed, timed-out (15 s) or empty
  * model call is retried once, then the reply is FALLBACK_REPLY; an error's text never

@@ -12,7 +12,10 @@
  * Every POST /tester/ai-call/api/chat sends { persona, model, messages, callSeconds,
  * silenceSeconds } plus one of:
  * - newMessage: the student's typed or spoken turn;
- * - start: true (no newMessage): "Start call" asks for the persona's opening;
+ * - start: true (no newMessage): "Start call" asks for the persona's opening; it also sends
+ *   localTime: { weekday: "Monday"…"Sunday", partOfDay: "morning" | "afternoon" | "evening" }
+ *   from the browser's clock (morning before 12:00, afternoon 12:00 to 16:59, evening from
+ *   17:00), so the opening can fit the student's day;
  * - timeMark: true (no newMessage): the call time crossed wrapUpStart, finalStretch or
  *   callLength, so the persona speaks first; each mark once per call, and when "+30 sec"
  *   jumps over several at once, only the latest;
@@ -245,6 +248,17 @@ export function dueTimeMark(clock: CallClock, now: number, timings: CallTimings,
 /** True when the silence check-in should be sent now: armed, on the student's turn, Silence at the silence timing. */
 export function shouldSendSilenceTurn(clock: CallClock, now: number, silenceTurnSeconds: number, isBusy: boolean): boolean {
   return clock.isSilenceTurnArmed && isStudentsTurn(clock, isBusy) && silenceSecondsAt(clock, now) >= silenceTurnSeconds;
+}
+
+const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
+
+/** The start request's localTime: the weekday and part of day of `date` in the browser's own time zone. */
+export function localTimeAt(date: Date): { weekday: string; partOfDay: "morning" | "afternoon" | "evening" } {
+  const hour = date.getHours();
+  return {
+    weekday: WEEKDAY_NAMES[date.getDay()] ?? "Sunday",
+    partOfDay: hour < 12 ? "morning" : hour < 17 ? "afternoon" : "evening",
+  };
 }
 
 /** Whole seconds as mm:ss (minutes keep counting past 59). */
@@ -561,7 +575,7 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
             callSeconds,
             silenceSeconds,
             ...(via === "silence" ? { silent: true } : {}),
-            ...(via === "start" ? { start: true } : {}),
+            ...(via === "start" ? { start: true, localTime: localTimeAt(new Date()) } : {}),
             ...(via === "timeMark" ? { timeMark: true } : {}),
           }),
         });
