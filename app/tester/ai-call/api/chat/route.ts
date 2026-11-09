@@ -10,10 +10,13 @@
  * mode is local only (docs/tempo-test-bypass.md), and nothing is written anywhere.
  *
  * Body: { persona, model?, messages, newMessage?, callSeconds, silenceSeconds, silent?, afterCheckIn?, start?, timeMark?, localTime?, strikes? }.
- * Response: { reply, endCall?: true, label?, ms } (ms: this handler's time). From the
- * backstop on there is no model call: { reply: "", endCall: true }. A failed, timed-out
- * (15 s) or empty reply call is retried once, then the reply is FALLBACK_REPLY; an error's
- * text never reaches the page.
+ * Response: { reply, endCall?: true, label?, ms } (ms: this handler's time). endCall: true
+ * exactly when the turn's situation note is an ending note (crisis, callLength, goodbye,
+ * rudeEnd, breakEnd, silentEnd), whatever the reply says; [END_CALL] in the reply is only
+ * removed from the text. From the backstop on there is no model call: { reply: "",
+ * endCall: true }. A failed, timed-out (15 s) or empty reply call is retried once, then the
+ * reply is FALLBACK_REPLY (endCall still follows the note); an error's text never reaches
+ * the page.
  *
  * A turn with a newMessage also gets a label call (gpt-6-luna, no retries, 5 s timeout)
  * that classifies the student's message, in parallel with the usual reply call. A label
@@ -30,6 +33,7 @@ import {
   buildTesterMessages,
   FALLBACK_REPLY,
   finishReply,
+  isEndingNote,
   isPastBackstop,
   LABEL_REQUEST_SETTINGS,
   parseLabel,
@@ -125,10 +129,13 @@ export async function POST(request: Request): Promise<NextResponse> {
       isLabelled ? askLabel(openai, buildLabelMessages(turn)) : Promise.resolve<StudentLabel>("normal"),
       askModel(openai, replySettings, buildTesterMessages(turn, settings.timings)),
     ]);
+    const note = pickSituationNote(turn, settings.timings, label);
     // A label whose note doesn't win this turn would resend the same messages: keep the reply.
-    const isNoteChanged = label !== "normal" && pickSituationNote(turn, settings.timings, label) !== pickSituationNote(turn, settings.timings);
+    const isNoteChanged = note !== pickSituationNote(turn, settings.timings);
     const content = isNoteChanged ? await askModel(openai, replySettings, buildTesterMessages(turn, settings.timings, label)) : normalContent;
-    const { reply, isEndCall } = content === null ? { reply: FALLBACK_REPLY, isEndCall: false } : finishReply(content);
+    const reply = content === null ? FALLBACK_REPLY : finishReply(content);
+    // The code decides every ending: the note, never [END_CALL] in the reply.
+    const isEndCall = isEndingNote(note);
     return NextResponse.json({ reply, ...(isEndCall ? { endCall: true } : {}), ...(isLabelled ? { label } : {}), ms: elapsedMs() });
   } catch (error) {
     console.error("[tester-chat] unexpected:", error);

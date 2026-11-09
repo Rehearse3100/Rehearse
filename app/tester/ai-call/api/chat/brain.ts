@@ -4,8 +4,8 @@
  * the settings for each persona (models and call timings), reading the request body and
  * cleaning its history, the label call that classifies the student's message, the one
  * situation note per turn (picked by code from the turn, the label and the strikes), the
- * message list sent to the model, [END_CALL] handling and the dash filter. Pure (no
- * network); route.ts makes the model calls.
+ * message list sent to the model, which notes end the call, and the reply's clean-up
+ * ([END_CALL] removed, the dash filter). Pure (no network); route.ts makes the model calls.
  *
  * Message order: the fixed system prompt, the cleaned history, then at most one
  * situation note as a system message, then the student's message (none for a start,
@@ -158,7 +158,7 @@ export function parseLabel(content: string | null): StudentLabel {
   return STUDENT_LABELS.find((label) => label === word) ?? "normal";
 }
 
-/** The marker the model ends its last reply with; removed from the reply, it becomes endCall: true. */
+/** The marker the ending notes tell the model to end its reply with; finishReply removes it. It decides nothing. */
 export const END_CALL_MARKER = "[END_CALL]";
 
 /** The reply when the model call fails twice or returns nothing. */
@@ -386,6 +386,17 @@ export function pickSituationNote(turn: TesterTurn, timings: CallTimings, label:
   return null;
 }
 
+/** The notes that end the call: the code decides every ending, not the reply. */
+const ENDING_NOTE_KEYS = ["crisis", "callLength", "goodbye", "rudeEnd", "breakEnd", "silentEnd"] as const;
+
+/**
+ * Whether this situation note ends the call (crisis, callLength, goodbye, rudeEnd, breakEnd
+ * or silentEnd). The route sends endCall: true exactly when the turn's note is one of these.
+ */
+export function isEndingNote(note: string | null): boolean {
+  return ENDING_NOTE_KEYS.some((key) => SITUATION_NOTES[key] === note);
+}
+
 export type TesterMessage =
   | { role: "system"; content: string }
   | { role: "user"; content: string }
@@ -453,11 +464,12 @@ export function removeDashes(text: string): string {
 }
 
 /**
- * The reply as sent to the page: [END_CALL] removed (and reported as isEndCall), then
- * the dash filter. A reply without either comes back trimmed and otherwise unchanged.
+ * The reply as sent to the page: [END_CALL] removed (it no longer ends the call; the
+ * turn's note does), then the dash filter. A reply without either comes back trimmed and
+ * otherwise unchanged.
  */
-export function finishReply(raw: string): { reply: string; isEndCall: boolean } {
-  const isEndCall = raw.toUpperCase().includes(END_CALL_MARKER);
-  const withoutMarker = isEndCall ? tidyAfterRemoval(raw.replace(/\[END_CALL\]/gi, " ")) : raw.trim();
-  return { reply: removeDashes(withoutMarker), isEndCall };
+export function finishReply(raw: string): string {
+  const hasMarker = raw.toUpperCase().includes(END_CALL_MARKER);
+  const withoutMarker = hasMarker ? tidyAfterRemoval(raw.replace(/\[END_CALL\]/gi, " ")) : raw.trim();
+  return removeDashes(withoutMarker);
 }
