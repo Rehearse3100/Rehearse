@@ -1,15 +1,15 @@
 /**
  * route.ts — POST /tester/ai-call/api/chat (TESTER ONLY)
  * The tester AI call's own call brain for Dana (tempo_discovery) and Dr. Kim
- * (tempo_objections): a copy of how POST /api/chat builds their messages
- * (persona-copy.ts) with the new call behaviour on top (brain.ts). The real /api/chat
+ * (tempo_objections): the persona prompts, shared rules plus one card per persona
+ * (persona-cards.ts), and the call behaviour around them (brain.ts). The real /api/chat
  * is untouched.
  *
  * 404 unless tester mode is on (the same check as page.tsx: a copy of
  * isGateBypassEnabled() in lib/tempo-test-bypass.ts). No attempt id and no sign-in: tester
  * mode is local only (docs/tempo-test-bypass.md), and nothing is written anywhere.
  *
- * Body: { persona, model?, messages, newMessage?, callSeconds, silenceSeconds, silent?, start?, timeMark?, localTime? }.
+ * Body: { persona, model?, messages, newMessage?, callSeconds, silenceSeconds, silent?, afterCheckIn?, start?, timeMark?, localTime? }.
  * Response: { reply, endCall?: true, ms } (ms: this handler's time). From the backstop on
  * there is no model call: { reply: "", endCall: true }. A failed, timed-out (15 s) or empty
  * model call is retried once, then the reply is FALLBACK_REPLY; an error's text never

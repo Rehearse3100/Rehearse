@@ -44,6 +44,8 @@ export type CallTimings = {
   finalStretch: number;
   /** The page's silence check-in fires at this much silence. */
   silence: number;
+  /** Still silent this long after the check-in's reply: the page's afterCheckIn turn (the persona ends the call). */
+  silenceAfterCheckIn: number;
   /** From here there is no model call at all: the call just ends. */
   backstop: number;
 };
@@ -90,6 +92,8 @@ export const SITUATION_NOTES = {
   callLength:
     "Time is up. End the call now: thank them and say goodbye in one or two sentences, then end your reply with [END_CALL].",
   silent: "The student has been quiet for a while. Check in briefly and naturally, in character.",
+  silentEnd:
+    "The student has stayed silent even after you checked in. Say politely that now does not seem like a good time and that you will end the call here, then end your reply with [END_CALL].",
 } as const;
 
 /** The marker the model ends its last reply with; removed from the reply, it becomes endCall: true. */
@@ -143,6 +147,8 @@ export type TesterTurn = {
   isSilent: boolean;
   /** The page's turn at a time mark: the persona speaks first, with the note for callSeconds. */
   isTimeMark: boolean;
+  /** A silent turn sent because the student stayed silent after the check-in (only with isSilent). */
+  isAfterCheckIn: boolean;
   /** The student's local weekday and part of day (the page sends it with start), or null. */
   localTime: LocalTime | null;
 };
@@ -168,10 +174,11 @@ function parseLocalTime(value: unknown): LocalTime | null {
 }
 
 /**
- * Reads { persona, model?, messages, newMessage?, callSeconds, silenceSeconds, silent?, start?, timeMark?, localTime? }.
+ * Reads { persona, model?, messages, newMessage?, callSeconds, silenceSeconds, silent?, afterCheckIn?, start?, timeMark?, localTime? }.
  * persona must be one of the two; model one of the two (the persona's default when missing);
  * newMessage is required unless start, timeMark or silent is true (in that order, the first
- * true one wins); every message is at most CHAT_MAX_MESSAGE_CHARS, as in /api/chat.
+ * true one wins); afterCheckIn: true counts only on a silent turn (otherwise it is ignored);
+ * every message is at most CHAT_MAX_MESSAGE_CHARS, as in /api/chat.
  * callSeconds and silenceSeconds that aren't numbers count as 0. localTime is
  * { weekday: "Monday"…"Sunday", partOfDay: "morning" | "afternoon" | "evening" }; when it's
  * missing or anything else it is null (not an error). Returns the turn or a short error.
@@ -192,6 +199,7 @@ export function parseTesterTurn(body: unknown): { turn: TesterTurn } | { error: 
   const isStart = raw.start === true;
   const isTimeMark = !isStart && raw.timeMark === true;
   const isSilent = !isStart && !isTimeMark && raw.silent === true;
+  const isAfterCheckIn = isSilent && raw.afterCheckIn === true;
   let newMessage: string | null = null;
   if (!isStart && !isTimeMark && !isSilent) {
     if (typeof raw.newMessage !== "string" || !raw.newMessage) {
@@ -214,6 +222,7 @@ export function parseTesterTurn(body: unknown): { turn: TesterTurn } | { error: 
       isStart,
       isSilent,
       isTimeMark,
+      isAfterCheckIn,
       localTime: parseLocalTime(raw.localTime),
     },
   };
@@ -242,10 +251,11 @@ function minutesLeft(seconds: number): string {
  * The turn's one situation note, or null. The start note gets "It is <weekday> <part of
  * day>." from the student's localTime when there is one, so openings vary; the wrap-up
  * and final stretch notes start with the minutes left until callLength. When several
- * apply, the first of: start, time up (callLength), final stretch, silent, wrap-up start.
- * The ending notes beat the silence check-in so a quiet student can't keep the call from
- * ending; the check-in beats the gentle wrap-up nudge because a silent turn has nothing
- * else to answer. A time-mark turn gets the note for its callSeconds, like any other turn.
+ * apply, the first of: start, time up (callLength), final stretch, silent (silentEnd for
+ * an afterCheckIn turn, else the check-in), wrap-up start. The ending notes beat the
+ * silence notes so a quiet student can't keep the call from ending; the silence notes beat
+ * the gentle wrap-up nudge because a silent turn has nothing else to answer. A time-mark
+ * turn gets the note for its callSeconds, like any other turn.
  */
 export function pickSituationNote(turn: TesterTurn, timings: CallTimings): string | null {
   if (turn.isStart) {
@@ -260,7 +270,7 @@ export function pickSituationNote(turn: TesterTurn, timings: CallTimings): strin
     return `${minutesLeft(timings.callLength - timings.finalStretch)} ${SITUATION_NOTES.finalStretch}`;
   }
   if (turn.isSilent) {
-    return SITUATION_NOTES.silent;
+    return turn.isAfterCheckIn ? SITUATION_NOTES.silentEnd : SITUATION_NOTES.silent;
   }
   if (turn.callSeconds >= timings.wrapUpStart) {
     return `${minutesLeft(timings.callLength - timings.wrapUpStart)} ${SITUATION_NOTES.wrapUpStart}`;

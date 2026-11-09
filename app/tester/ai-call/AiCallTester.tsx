@@ -20,7 +20,9 @@
  *   callLength, so the persona speaks first; each mark once per call, and when "+30 sec"
  *   jumps over several at once, only the latest;
  * - silent: true (no newMessage): the silence check-in, when Silence reaches the silence
- *   timing; once per silent stretch (the student's next turn re-arms it).
+ *   timing; once per silent stretch (the student's next turn re-arms it). If the student
+ *   is still silent silenceAfterCheckIn seconds after the check-in's reply finished, one
+ *   more with afterCheckIn: true too (the persona then ends the call); also once per stretch.
  * Start, time-mark and silent turns add no student text to the history. Time marks and the
  * check-in wait while the persona's reply is coming or being spoken, then go right after
  * it (a time mark first, if both are due).
@@ -85,6 +87,8 @@ export type CallTimings = {
   wrapUpStart: number;
   finalStretch: number;
   silence: number;
+  /** Further silence after the check-in's reply finished before the afterCheckIn turn. */
+  silenceAfterCheckIn: number;
   backstop: number;
 };
 
@@ -154,15 +158,18 @@ export type CallClock = {
   offsetSeconds: number;
   /** What the Silence readout counts from; null = the persona's turn (shown as 00:00). */
   silenceSince: number | null;
-  /** The silence check-in may fire; firing disarms it until the student's next turn (or Start call). */
-  isSilenceTurnArmed: boolean;
+  /**
+   * Silent turns sent since the student's last turn (or Start call): 0 = the check-in may
+   * fire, 1 = the afterCheckIn turn may fire, 2 = neither until the student speaks.
+   */
+  silenceTurnsSent: number;
   /** How many of TIME_MARKS are done this call (0 to 3); a mark jumped over counts as done. */
   timeMarksDone: number;
 };
 
 /** A stopped clock at 00:00 (the page's start, and "Reset chat"). */
 export function emptyCallClock(): CallClock {
-  return { startedAt: null, endedAt: null, offsetSeconds: 0, silenceSince: null, isSilenceTurnArmed: true, timeMarksDone: 0 };
+  return { startedAt: null, endedAt: null, offsetSeconds: 0, silenceSince: null, silenceTurnsSent: 0, timeMarksDone: 0 };
 }
 
 /** Starts the call at `now` (Silence counts from the start); no change once started. */
@@ -203,10 +210,11 @@ export function timeMarksReached(seconds: number, timings: CallTimings): number 
 
 /**
  * A turn was sent at `now`: starts the call if needed, and holds Silence at 00:00 until the
- * reply finishes. The student's turn (or Start call) re-arms the silence check-in; the
- * check-in disarms it; a time mark leaves it as it was. A time-mark or student turn marks
- * every time mark reached so far as done: the brain adds the note for the call time to
- * every turn, so a student turn sent after a crossing has already carried it.
+ * reply finishes. The student's turn (or Start call) re-arms both silent turns; each silent
+ * turn moves on to the next (check-in, then afterCheckIn, then none); a time mark leaves
+ * them as they were. A time-mark or student turn marks every time mark reached so far as
+ * done: the brain adds the note for the call time to every turn, so a student turn sent
+ * after a crossing has already carried it.
  */
 export function clockAfterTurnSent(clock: CallClock, now: number, via: TurnSource, timings: CallTimings): CallClock {
   const started = startCallClock(clock, now);
@@ -214,7 +222,7 @@ export function clockAfterTurnSent(clock: CallClock, now: number, via: TurnSourc
   return {
     ...started,
     silenceSince: null,
-    isSilenceTurnArmed: via === "silence" ? false : via === "timeMark" ? started.isSilenceTurnArmed : true,
+    silenceTurnsSent: via === "silence" ? Math.min(2, started.silenceTurnsSent + 1) : via === "timeMark" ? started.silenceTurnsSent : 0,
     timeMarksDone: isMarkDelivered
       ? Math.max(started.timeMarksDone, timeMarksReached(callSecondsAt(started, now), timings))
       : started.timeMarksDone,
@@ -245,9 +253,20 @@ export function dueTimeMark(clock: CallClock, now: number, timings: CallTimings,
   return isStudentsTurn(clock, isBusy) && reached > clock.timeMarksDone ? TIME_MARKS[reached - 1] ?? null : null;
 }
 
-/** True when the silence check-in should be sent now: armed, on the student's turn, Silence at the silence timing. */
-export function shouldSendSilenceTurn(clock: CallClock, now: number, silenceTurnSeconds: number, isBusy: boolean): boolean {
-  return clock.isSilenceTurnArmed && isStudentsTurn(clock, isBusy) && silenceSecondsAt(clock, now) >= silenceTurnSeconds;
+/**
+ * The silent turn to send now, or null, on the student's turn: the check-in when Silence
+ * reaches the silence timing, or, once the check-in went, the afterCheckIn turn when
+ * Silence (counting again from the check-in's reply) reaches silenceAfterCheckIn.
+ */
+export function dueSilenceTurn(clock: CallClock, now: number, timings: CallTimings, isBusy: boolean): "checkIn" | "afterCheckIn" | null {
+  if (!isStudentsTurn(clock, isBusy)) {
+    return null;
+  }
+  const silenceSeconds = silenceSecondsAt(clock, now);
+  if (clock.silenceTurnsSent === 0 && silenceSeconds >= timings.silence) {
+    return "checkIn";
+  }
+  return clock.silenceTurnsSent === 1 && silenceSeconds >= timings.silenceAfterCheckIn ? "afterCheckIn" : null;
 }
 
 const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
@@ -488,7 +507,7 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
     const timings = CALL_TIMINGS[personaRef.current];
     if (dueTimeMark(clockRef.current, at, timings, isBusyRef.current)) {
       void sendTurnRef.current("", "timeMark");
-    } else if (shouldSendSilenceTurn(clockRef.current, at, timings.silence, isBusyRef.current)) {
+    } else if (dueSilenceTurn(clockRef.current, at, timings, isBusyRef.current)) {
       void sendTurnRef.current("", "silence");
     }
   }, []);
@@ -544,6 +563,8 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
       // The readouts at send time: Silence before this turn resets it; the call time after
       // this turn starts the call (so the first turn sends 0 plus any +30 sec).
       const silenceSeconds = silenceSecondsAt(clockRef.current, sentAt);
+      // A silent turn after the check-in (the check-in already went this silent stretch).
+      const isAfterCheckIn = via === "silence" && clockRef.current.silenceTurnsSent >= 1;
       updateClock((current) => clockAfterTurnSent(current, sentAt, via, timings));
       const callSeconds = callSecondsAt(clockRef.current, sentAt);
       setNow(sentAt);
@@ -558,7 +579,9 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
             ? `Time mark: ${TIME_MARK_LABELS[timeMark]} (${formatClock(timings[timeMark])}), sent at ${formatClock(callSeconds)} (timeMark: true).`
             : via === "start"
               ? "Start call: asking for the opening (start: true)."
-              : `Silence check-in after ${silenceSeconds} s of silence (silent: true).`,
+              : isAfterCheckIn
+                ? `Still silent ${silenceSeconds} s after the check-in (silent: true, afterCheckIn: true).`
+                : `Silence check-in after ${silenceSeconds} s of silence (silent: true).`,
         });
       }
       const startedAt = performance.now();
@@ -574,7 +597,7 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
             ...(isStudentText ? { newMessage: trimmed } : {}),
             callSeconds,
             silenceSeconds,
-            ...(via === "silence" ? { silent: true } : {}),
+            ...(via === "silence" ? { silent: true, ...(isAfterCheckIn ? { afterCheckIn: true } : {}) } : {}),
             ...(via === "start" ? { start: true, localTime: localTimeAt(new Date()) } : {}),
             ...(via === "timeMark" ? { timeMark: true } : {}),
           }),
