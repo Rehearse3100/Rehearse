@@ -84,8 +84,10 @@ export const TESTER_PERSONA_SETTINGS: Record<TesterPersona, TesterPersonaSetting
 export const SITUATION_NOTES = {
   start:
     "The call has just started. Open it naturally in your own words and in character: greet them and set the scene in one or two sentences.",
-  wrapUpStart: "Time is getting short. Start steering the conversation towards wrapping up.",
-  finalStretch: "You need to wrap up now. Summarise next steps briefly and politely.",
+  wrapUpStart:
+    "About three minutes are left. Do not end the call yet. Keep the conversation going, and gently start steering towards a summary and next steps.",
+  finalStretch:
+    "About one minute is left. Do not end the call yet unless the student says goodbye. Briefly sum up and agree a next step.",
   callLength:
     "Time is up. End the call now: thank them and say goodbye in one or two sentences, then end your reply with [END_CALL].",
   silent: "The student has been quiet for a while. Check in briefly and naturally, in character.",
@@ -203,8 +205,18 @@ export function isPastBackstop(turn: TesterTurn, timings: CallTimings): boolean 
   return turn.callSeconds >= timings.backstop;
 }
 
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
+
+/** "It is <weekday> <part of day>." in server time: morning before 12:00, afternoon before 17:00, then evening. */
+function describeNow(now: Date): string {
+  const hour = now.getHours();
+  const partOfDay = hour < 12 ? "morning" : hour < 17 ? "afternoon" : "evening";
+  return `It is ${WEEKDAYS[now.getDay()]} ${partOfDay}.`;
+}
+
 /**
- * The turn's one situation note, or null. When several apply, the first of: start,
+ * The turn's one situation note, or null. The start note also gets the current weekday
+ * and part of day (server time), so openings vary. When several apply, the first of: start,
  * time up (callLength), final stretch, silent, wrap-up start. The ending notes beat the
  * silence check-in so a quiet student can't keep the call from ending; the check-in beats
  * the gentle wrap-up nudge because a silent turn has nothing else to answer. A time-mark
@@ -212,7 +224,7 @@ export function isPastBackstop(turn: TesterTurn, timings: CallTimings): boolean 
  */
 export function pickSituationNote(turn: TesterTurn, timings: CallTimings): string | null {
   if (turn.isStart) {
-    return SITUATION_NOTES.start;
+    return `${SITUATION_NOTES.start}\n${describeNow(new Date())}`;
   }
   if (turn.callSeconds >= timings.callLength) {
     return SITUATION_NOTES.callLength;
