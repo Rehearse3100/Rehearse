@@ -2,8 +2,23 @@
  * AiCallTester.tsx
  * The client half of the throwaway /tester/ai-call page (see page.tsx for how to remove
  * it). A text chat with the call brain, POST /api/chat with the same body the real call
- * sends ({ attemptId, persona, messages, newMessage }), and an optional Anam avatar for
- * tempo_discovery and tempo_objections.
+ * sends ({ attemptId, persona, messages, newMessage }), an optional Anam avatar for
+ * tempo_discovery and tempo_objections, and a call timer with test controls.
+ *
+ * ── Call time fields (the real call will use the same names later) ───
+ * Every POST /api/chat also sends (today's route ignores fields it doesn't know):
+ * - callSeconds: the call time shown on the page at send time, in whole seconds, every
+ *   "+30 sec" offset included. The first turn starts the call, so it sends 0 plus offsets.
+ * - silenceSeconds: the Silence readout at send time, in whole seconds: time since the
+ *   persona's last reply finished (or since the call started, before any reply).
+ * - silent: true only on the automatic silence turn, whose newMessage is "(silence)".
+ *   Normal turns don't send it.
+ * And reads from the response, besides reply:
+ * - endCall: true → the persona ended the call: the timer stops, sending is disabled,
+ *   "Call ended by the persona" shows and the avatar stops. "Reset chat" re-enables it all.
+ * A reply "finishes" when it arrives, or, when the avatar speaks it, when Anam reports the
+ * persona's message done (MESSAGE_HISTORY_UPDATED ending on the persona). From a student
+ * turn until then, Silence stays at 00:00: it's the persona's turn.
  *
  * Self-contained on purpose: only React, Next.js and @anam-ai/js-sdk are imported. The
  * avatar part is a small copy of what the real call does (hooks/useSimulationVoiceSession.ts
@@ -39,12 +54,26 @@ type PersonaKey = (typeof PERSONAS)[number]["key"];
 /** The <video> the Anam SDK streams into (it looks the element up by id). */
 const VIDEO_ELEMENT_ID = "tester-ai-call-video";
 
+/** Call time colours (display only; nothing is enforced here): amber from 12:00, red from 15:00. */
+const CALL_AMBER_SECONDS = 12 * 60;
+const CALL_RED_SECONDS = 15 * 60;
+/** "+30 sec" moves the call time forward by this much. */
+const CALL_OFFSET_STEP_SECONDS = 30;
+/** The auto silence turn fires when the Silence readout reaches this. */
+const SILENCE_TURN_SECONDS = 20;
+/** The newMessage of the auto silence turn. */
+const SILENCE_MESSAGE = "(silence)";
+/** How often the readouts refresh. */
+const CLOCK_TICK_MS = 250;
+/** No end of speech from Anam this long after talk(): count the reply as finished anyway. */
+const SPEECH_END_FALLBACK_MS = 30_000;
+
 // ── Types ───
 
 /** One history turn, as /api/chat reads it (user and assistant turns only). */
 type ChatTurn = { role: "user" | "assistant"; content: string };
 
-type TurnSource = "typed" | "spoken";
+type TurnSource = "typed" | "spoken" | "silence";
 
 type TranscriptLine =
   | { id: number; kind: "user"; text: string; via: TurnSource }
@@ -69,24 +98,102 @@ type AiCallTesterProps = {
   classId: string;
 };
 
+// ── Call clock (pure: every rule takes the time as a number, so it needs no browser) ───
+
+/** The call timer's state. Times are Date.now() milliseconds. */
+export type CallClock = {
+  /** When the call started, or null before the first turn / the avatar being ready. */
+  startedAt: number | null;
+  /** When the persona ended the call; both readouts freeze here. */
+  endedAt: number | null;
+  /** The "+30 sec" presses, in seconds. */
+  offsetSeconds: number;
+  /** What the Silence readout counts from; null = the persona's turn (shown as 00:00). */
+  silenceSince: number | null;
+  /** The auto silence turn may fire; firing disarms it until the next real student turn. */
+  isSilenceTurnArmed: boolean;
+};
+
+/** A stopped clock at 00:00 (the page's start, and "Reset chat"). */
+export function emptyCallClock(): CallClock {
+  return { startedAt: null, endedAt: null, offsetSeconds: 0, silenceSince: null, isSilenceTurnArmed: true };
+}
+
+/** Starts the call at `now` (Silence counts from the start); no change once started. */
+export function startCallClock(clock: CallClock, now: number): CallClock {
+  return clock.startedAt === null ? { ...clock, startedAt: now, silenceSince: now } : clock;
+}
+
+/** "+30 sec": moves the call time forward; the Silence readout is untouched. */
+export function addCallOffset(clock: CallClock): CallClock {
+  return { ...clock, offsetSeconds: clock.offsetSeconds + CALL_OFFSET_STEP_SECONDS };
+}
+
+/** The call time shown at `now`, in whole seconds: real elapsed time (frozen at the end) plus offsets. */
+export function callSecondsAt(clock: CallClock, now: number): number {
+  const elapsedMs = clock.startedAt === null ? 0 : (clock.endedAt ?? now) - clock.startedAt;
+  return Math.max(0, Math.floor(elapsedMs / 1000)) + clock.offsetSeconds;
+}
+
+/** The Silence readout at `now`, in whole seconds (0 before the call and during the persona's turn). */
+export function silenceSecondsAt(clock: CallClock, now: number): number {
+  if (clock.startedAt === null || clock.silenceSince === null) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(((clock.endedAt ?? now) - clock.silenceSince) / 1000));
+}
+
+/**
+ * A turn was sent at `now`: starts the call if needed, and holds Silence at 00:00 until the
+ * reply finishes. A real turn re-arms the auto silence turn; the silence turn disarms it.
+ */
+export function clockAfterTurnSent(clock: CallClock, now: number, isSilenceTurn: boolean): CallClock {
+  return { ...startCallClock(clock, now), silenceSince: null, isSilenceTurnArmed: !isSilenceTurn };
+}
+
+/** The persona's reply finished at `now` (or the turn failed): Silence counts from here. No change once ended. */
+export function clockAfterReplyFinished(clock: CallClock, now: number): CallClock {
+  return clock.startedAt === null || clock.endedAt !== null ? clock : { ...clock, silenceSince: now };
+}
+
+/** endCall: freezes both readouts at `now`. */
+export function endCallClock(clock: CallClock, now: number): CallClock {
+  return clock.endedAt === null ? { ...clock, endedAt: now } : clock;
+}
+
+/** True when the auto silence turn should be sent now: on, armed, call running, nothing in flight, 20 s of silence. */
+export function shouldSendSilenceTurn(clock: CallClock, now: number, isAutoSilenceOn: boolean, isBusy: boolean): boolean {
+  return (
+    isAutoSilenceOn &&
+    clock.isSilenceTurnArmed &&
+    clock.startedAt !== null &&
+    clock.endedAt === null &&
+    !isBusy &&
+    clock.silenceSince !== null &&
+    silenceSecondsAt(clock, now) >= SILENCE_TURN_SECONDS
+  );
+}
+
+/** Whole seconds as mm:ss (minutes keep counting past 59). */
+export function formatClock(seconds: number): string {
+  const whole = Math.max(0, Math.floor(seconds));
+  return `${String(Math.floor(whole / 60)).padStart(2, "0")}:${String(whole % 60).padStart(2, "0")}`;
+}
+
 // ── Helpers ───
 
 function anamStageFor(persona: PersonaKey): "discovery" | "objections" | null {
   return PERSONAS.find((entry) => entry.key === persona)?.anamStage ?? null;
 }
 
-/** A string field of a JSON body, or null when the body isn't JSON or the field isn't a string. */
-function readStringField(bodyText: string, field: string): string | null {
+/** A JSON object body, or null when the body isn't one (the caller shows the body as-is). */
+function parseJsonObject(bodyText: string): Record<string, unknown> | null {
   try {
     const parsed: unknown = JSON.parse(bodyText);
-    if (parsed && typeof parsed === "object") {
-      const value = (parsed as Record<string, unknown>)[field];
-      return typeof value === "string" ? value : null;
-    }
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
   } catch {
-    // Not JSON: the caller shows the body as-is.
+    return null;
   }
-  return null;
 }
 
 function errorText(error: unknown): string {
@@ -97,10 +204,17 @@ function stopTracks(stream: MediaStream | null): void {
   stream?.getTracks().forEach((track) => track.stop());
 }
 
+const TURN_LABELS: Record<TurnSource, string> = {
+  typed: "You (typed)",
+  spoken: "You (spoken)",
+  silence: "Auto silence turn (silent: true)",
+};
+
 // ── Component ───
 
 /**
- * The tester page body: inputs, transcript, text box and the avatar switch.
+ * The tester page body: inputs, call timer and test controls, transcript, text box and
+ * the avatar switch.
  */
 export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCallTesterProps): React.ReactElement {
   const [attemptId, setAttemptId] = useState(initialAttemptId);
@@ -110,15 +224,18 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
   const [isBusy, setIsBusy] = useState(false);
   const [avatarPhase, setAvatarPhase] = useState<AvatarPhase>("off");
   const [isSessionReady, setIsSessionReady] = useState(false);
+  const [clock, setClock] = useState<CallClock>(emptyCallClock);
+  const [now, setNow] = useState<number>(() => Date.now());
+  const [isAutoSilenceOn, setIsAutoSilenceOn] = useState(false);
 
-  // Refs: the Anam callbacks and async turns read the latest values without re-subscribing.
+  // Refs: the Anam callbacks, the timer tick and async turns read the latest values without re-subscribing.
   const attemptIdRef = useRef(attemptId);
   const personaRef = useRef<PersonaKey>(persona);
   const historyRef = useRef<ChatTurn[]>([]);
   const isBusyRef = useRef(false);
   /** Spoken turns that arrived while a reply was in flight; sent together next (as the real call does). */
   const pendingSpokenRef = useRef<string[]>([]);
-  /** Bumped by Reset: replies to an older conversation are dropped. */
+  /** Bumped by Reset chat: replies to an older conversation are dropped. */
   const conversationEpochRef = useRef(0);
   const lineIdRef = useRef(0);
   const clientRef = useRef<AnamClient | null>(null);
@@ -128,18 +245,34 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
   const processedMessageIdsRef = useRef<Set<string>>(new Set());
   /** SESSION_READY has fired: the real call speaks only after it, so this page does too. */
   const isSessionReadyRef = useRef(false);
+  const clockRef = useRef<CallClock>(clock);
+  const isAutoSilenceOnRef = useRef(isAutoSilenceOn);
+  /** The avatar is speaking a reply: Silence waits for Anam's end of speech (or the fallback). */
+  const isAwaitingSpeechEndRef = useRef(false);
+  const speechSentAtRef = useRef(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const sendTurnRef = useRef<(text: string, via: TurnSource) => Promise<void>>(async () => undefined);
 
   attemptIdRef.current = attemptId;
   personaRef.current = persona;
+  isAutoSilenceOnRef.current = isAutoSilenceOn;
 
   const addLine = useCallback((line: NewTranscriptLine): void => {
     lineIdRef.current += 1;
     const id = lineIdRef.current;
     setLines((current) => [...current, { ...line, id }]);
   }, []);
+
+  /** Applies a clock rule to the latest clock (the ref is the source of truth; state re-renders). */
+  const updateClock = useCallback((rule: (current: CallClock) => CallClock): void => {
+    clockRef.current = rule(clockRef.current);
+    setClock(clockRef.current);
+  }, []);
+
+  const markReplyFinished = useCallback((): void => {
+    updateClock((current) => clockAfterReplyFinished(current, Date.now()));
+  }, [updateClock]);
 
   useEffect(() => {
     const box = transcriptRef.current;
@@ -150,21 +283,30 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
 
   // ── Avatar: speak / stop ───
 
-  /** Makes the avatar say the reply when it's streaming; a failure is shown as a note. */
+  /**
+   * Makes the avatar say the reply when its session is ready. True when the talk command
+   * went out (Silence then waits for the end of speech); a failure is shown as a note.
+   */
   const speakReply = useCallback(
-    async (reply: string): Promise<void> => {
+    async (reply: string): Promise<boolean> => {
       const client = clientRef.current;
       if (!client) {
-        return;
+        return false;
       }
       if (!client.isStreaming() || !isSessionReadyRef.current) {
         addLine({ kind: "note", text: "Avatar session isn't ready yet: this reply wasn't spoken." });
-        return;
+        return false;
       }
+      // Set before talk(): the end of speech may arrive before talk() resolves.
+      isAwaitingSpeechEndRef.current = true;
+      speechSentAtRef.current = Date.now();
       try {
         await client.talk(reply);
+        return true;
       } catch (error) {
+        isAwaitingSpeechEndRef.current = false;
         addLine({ kind: "note", text: `Avatar couldn't speak this reply: ${errorText(error)}` });
+        return false;
       }
     },
     [addLine]
@@ -187,9 +329,22 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
     processedMessageIdsRef.current.clear();
     pendingSpokenRef.current = [];
     isSessionReadyRef.current = false;
+    // A reply cut off by the stop counts as finished now.
+    if (isAwaitingSpeechEndRef.current) {
+      isAwaitingSpeechEndRef.current = false;
+      markReplyFinished();
+    }
     setAvatarPhase("off");
     setIsSessionReady(false);
-  }, []);
+  }, [markReplyFinished]);
+
+  /** endCall: true from the brain: freeze the timer, stop sending, stop the avatar. */
+  const endCall = useCallback((): void => {
+    updateClock((current) => endCallClock(current, Date.now()));
+    setNow(Date.now());
+    pendingSpokenRef.current = [];
+    stopAvatar();
+  }, [updateClock, stopAvatar]);
 
   // ── Turns ───
 
@@ -204,14 +359,15 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
   }, []);
 
   /**
-   * One turn: POST /api/chat with the history so far and the new message, then show the
-   * reply with its round-trip time (and speak it when the avatar is on). An error shows
-   * the HTTP status and the body as-is; a failed turn isn't added to the history.
+   * One turn: POST /api/chat with the history so far, the new message and the call time
+   * fields, then show the reply with its round-trip time (and speak it when the avatar is
+   * on). An error shows the HTTP status and the body as-is; a failed turn isn't added to
+   * the history. Nothing is sent once the call has ended.
    */
   const sendTurn = useCallback(
     async (text: string, via: TurnSource): Promise<void> => {
       const trimmed = text.trim();
-      if (!trimmed) {
+      if (!trimmed || clockRef.current.endedAt !== null) {
         return;
       }
       if (isBusyRef.current) {
@@ -225,6 +381,15 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
       setIsBusy(true);
       const epoch = conversationEpochRef.current;
       const prior = historyRef.current;
+      // The readouts at send time: Silence before this turn resets it; the call time after
+      // this turn starts the call (so the first turn sends 0 plus any +30 sec).
+      const sentAt = Date.now();
+      const silenceSeconds = silenceSecondsAt(clockRef.current, sentAt);
+      updateClock((current) => clockAfterTurnSent(current, sentAt, via === "silence"));
+      const callSeconds = callSecondsAt(clockRef.current, sentAt);
+      setNow(sentAt);
+      // A new turn: an older reply's end of speech no longer moves the Silence readout.
+      isAwaitingSpeechEndRef.current = false;
       addLine({ kind: "user", text: trimmed, via });
       const startedAt = performance.now();
 
@@ -237,6 +402,9 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
             persona: personaRef.current,
             messages: prior,
             newMessage: trimmed,
+            callSeconds,
+            silenceSeconds,
+            ...(via === "silence" ? { silent: true } : {}),
           }),
         });
         const bodyText = await response.text();
@@ -244,24 +412,38 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
         if (epoch !== conversationEpochRef.current) {
           return;
         }
+        const body = parseJsonObject(bodyText);
+        const reply = typeof body?.reply === "string" ? body.reply : null;
+        const isEndCall = body?.endCall === true;
+
         if (!response.ok) {
           addLine({ kind: "error", text: `HTTP ${response.status}\n${bodyText}`, ms });
-          return;
-        }
-        const reply = readStringField(bodyText, "reply");
-        if (reply === null) {
+        } else if (reply !== null) {
+          historyRef.current = [...prior, { role: "user", content: trimmed }, { role: "assistant", content: reply }];
+          addLine({ kind: "reply", text: reply, ms });
+        } else if (!isEndCall) {
           addLine({ kind: "error", text: `HTTP ${response.status}, but no reply in the body:\n${bodyText}`, ms });
+        }
+
+        if (isEndCall) {
+          endCall();
           return;
         }
-        historyRef.current = [...prior, { role: "user", content: trimmed }, { role: "assistant", content: reply }];
-        addLine({ kind: "reply", text: reply, ms });
-        await speakReply(reply);
+        if (!response.ok || reply === null) {
+          markReplyFinished();
+          return;
+        }
+        const isSpeaking = await speakReply(reply);
+        if (epoch === conversationEpochRef.current && !isSpeaking) {
+          markReplyFinished();
+        }
       } catch (error) {
         if (epoch === conversationEpochRef.current) {
           addLine({ kind: "error", text: `Request failed: ${errorText(error)}`, ms: Math.round(performance.now() - startedAt) });
+          markReplyFinished();
         }
       } finally {
-        // Reset already cleared the busy flag for an older conversation.
+        // Reset chat already cleared the busy flag for an older conversation.
         if (epoch === conversationEpochRef.current) {
           isBusyRef.current = false;
           setIsBusy(false);
@@ -269,16 +451,49 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
         }
       }
     },
-    [addLine, speakReply, flushPendingSpoken]
+    [addLine, updateClock, markReplyFinished, speakReply, endCall, flushPendingSpoken]
   );
 
   sendTurnRef.current = sendTurn;
+
+  // ── Timer tick ───
+
+  const isCallEnded = clock.endedAt !== null;
+  const isClockRunning = clock.startedAt !== null && !isCallEnded;
+
+  // While the call runs: refresh the readouts, apply the end-of-speech fallback, and fire
+  // the auto silence turn (once; a real turn re-arms it).
+  useEffect(() => {
+    if (!isClockRunning) {
+      return undefined;
+    }
+    const tick = (): void => {
+      const at = Date.now();
+      setNow(at);
+      if (isAwaitingSpeechEndRef.current && at - speechSentAtRef.current >= SPEECH_END_FALLBACK_MS) {
+        isAwaitingSpeechEndRef.current = false;
+        addLine({
+          kind: "note",
+          text: `No end of speech from Anam within ${SPEECH_END_FALLBACK_MS / 1000} s: Silence counts from now.`,
+        });
+        markReplyFinished();
+      }
+      if (shouldSendSilenceTurn(clockRef.current, at, isAutoSilenceOnRef.current, isBusyRef.current)) {
+        void sendTurnRef.current(SILENCE_MESSAGE, "silence");
+      }
+    };
+    tick();
+    const timer = window.setInterval(tick, CLOCK_TICK_MS);
+    return () => window.clearInterval(timer);
+  }, [isClockRunning, addLine, markReplyFinished]);
 
   // ── Avatar: start ───
 
   /**
    * Token → mic → Anam client → stream into the video element. Spoken turns arrive as
-   * MESSAGE_HISTORY_UPDATED and go through sendTurn like typed ones.
+   * MESSAGE_HISTORY_UPDATED and go through sendTurn like typed ones; the same event
+   * ending on the persona marks the spoken reply finished. SESSION_READY starts the call
+   * timer if no turn has.
    */
   const startAvatar = useCallback(async (): Promise<void> => {
     const stage = anamStageFor(personaRef.current);
@@ -313,7 +528,8 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
         stopAvatar();
         return;
       }
-      const sessionToken = readStringField(bodyText, "sessionToken")?.trim() ?? "";
+      const token = parseJsonObject(bodyText)?.sessionToken;
+      const sessionToken = typeof token === "string" ? token.trim() : "";
       if (!sessionToken) {
         addLine({ kind: "error", text: `Avatar session token: HTTP ${response.status}, but no sessionToken in the body:\n${bodyText}`, ms: null });
         stopAvatar();
@@ -336,7 +552,18 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
           return;
         }
         const last = history[history.length - 1];
-        if (!last || last.role !== MessageRole.USER || processedMessageIdsRef.current.has(last.id)) {
+        if (!last) {
+          return;
+        }
+        if (last.role === MessageRole.PERSONA) {
+          // The avatar finished speaking the reply: Silence counts from here.
+          if (isAwaitingSpeechEndRef.current) {
+            isAwaitingSpeechEndRef.current = false;
+            markReplyFinished();
+          }
+          return;
+        }
+        if (last.role !== MessageRole.USER || processedMessageIdsRef.current.has(last.id)) {
           return;
         }
         processedMessageIdsRef.current.add(last.id);
@@ -346,6 +573,7 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
         if (clientRef.current === client) {
           isSessionReadyRef.current = true;
           setIsSessionReady(true);
+          updateClock((current) => startCallClock(current, Date.now()));
         }
       });
       client.addListener(AnamEvent.CONNECTION_CLOSED, (reason: string, details?: string): void => {
@@ -384,7 +612,7 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
       addLine({ kind: "error", text: `Avatar failed to start: ${errorText(error)}`, ms: null });
       stopAvatar();
     }
-  }, [addLine, stopAvatar]);
+  }, [addLine, markReplyFinished, stopAvatar, updateClock]);
 
   // Stop cleanly when the page closes or the component unmounts.
   useEffect(() => {
@@ -398,14 +626,21 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
 
   // ── Controls ───
 
-  const resetConversation = useCallback((): void => {
+  /**
+   * Reset chat: clears the transcript and history, sets the call time and Silence to
+   * 00:00 and stops the timer until the next call start, and re-enables sending after an
+   * endCall. The avatar stays connected (only what it is saying stops).
+   */
+  const resetChat = useCallback((): void => {
     conversationEpochRef.current += 1;
     historyRef.current = [];
     pendingSpokenRef.current = [];
     isBusyRef.current = false;
     setIsBusy(false);
+    isAwaitingSpeechEndRef.current = false;
+    updateClock(() => emptyCallClock());
+    setNow(Date.now());
     setLines([]);
-    // The avatar stays on; just stop whatever it is saying.
     const client = clientRef.current;
     if (client?.isStreaming()) {
       try {
@@ -414,13 +649,13 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
         // Nothing was playing.
       }
     }
-  }, []);
+  }, [updateClock]);
 
   const handlePersonaChange = (next: PersonaKey): void => {
     setPersona(next);
     personaRef.current = next;
     // Another persona is another conversation: don't send it this one's history.
-    resetConversation();
+    resetChat();
   };
 
   const handleAvatarSwitch = (isOn: boolean): void => {
@@ -432,7 +667,7 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
   };
 
   const submitDraft = (): void => {
-    if (isBusy || !draft.trim()) {
+    if (isBusy || isCallEnded || !draft.trim()) {
       return;
     }
     const text = draft;
@@ -451,6 +686,10 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
   };
   const simulationHref =
     simulationId && classId ? `/student/simulation/${encodeURIComponent(simulationId)}?classId=${encodeURIComponent(classId)}` : "";
+  const callSeconds = callSecondsAt(clock, now);
+  const silenceSeconds = silenceSecondsAt(clock, now);
+  const callTimeTone =
+    callSeconds >= CALL_RED_SECONDS ? "text-red-600" : callSeconds >= CALL_AMBER_SECONDS ? "text-amber-600" : "text-gray-900";
 
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-4 bg-white p-4 text-sm text-gray-900">
@@ -501,7 +740,7 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
               </option>
             ))}
           </select>
-          <span className="text-xs text-gray-600">Changing it starts a new conversation. Turn the avatar off to change it.</span>
+          <span className="text-xs text-gray-600">Changing it resets the chat. Turn the avatar off to change it.</span>
         </label>
 
         <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
@@ -510,18 +749,63 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
               type="checkbox"
               checked={isAvatarOn}
               onChange={(event) => handleAvatarSwitch(event.target.checked)}
-              disabled={!stage}
+              disabled={!stage || isCallEnded}
             />
             <span className="font-semibold">Avatar and voice</span>
           </label>
           <span className="text-gray-600">{avatarStatus[avatarPhase]}</span>
+        </div>
+      </section>
+
+      <section className="flex flex-col gap-2 rounded border border-gray-300 bg-gray-50 px-3 py-2" aria-label="Call timer">
+        <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
+          <div className={`font-bold ${callTimeTone}`}>
+            <span className="text-xs uppercase tracking-wide">Call time </span>
+            <span className="font-mono text-3xl tabular-nums">{formatClock(callSeconds)}</span>
+          </div>
+          <div className="text-gray-700">
+            <span className="text-xs uppercase tracking-wide">Silence </span>
+            <span className="font-mono text-xl tabular-nums">{formatClock(silenceSeconds)}</span>
+          </div>
+          <span className="text-xs text-gray-500">
+            {isCallEnded
+              ? null
+              : clock.startedAt === null
+                ? "Starts with the first turn, or when the avatar is ready."
+                : "Amber from 12:00, red from 15:00 (display only)."}
+          </span>
+        </div>
+        {isCallEnded ? (
+          <p className="rounded bg-red-100 px-2 py-1 font-semibold text-red-800" role="status">
+            Call ended by the persona
+          </p>
+        ) : null}
+        <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
-            className="ml-auto rounded border border-gray-400 px-3 py-1 font-semibold hover:bg-gray-100"
-            onClick={resetConversation}
+            className="rounded border border-gray-400 px-3 py-1 font-semibold hover:bg-gray-100"
+            onClick={() => updateClock(addCallOffset)}
           >
-            Reset conversation
+            +30 sec
           </button>
+          <button
+            type="button"
+            className="rounded border border-gray-400 px-3 py-1 font-semibold hover:bg-gray-100"
+            onClick={resetChat}
+          >
+            Reset chat
+          </button>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={isAutoSilenceOn}
+              onChange={(event) => {
+                isAutoSilenceOnRef.current = event.target.checked;
+                setIsAutoSilenceOn(event.target.checked);
+              }}
+            />
+            <span>Auto silence turn at {SILENCE_TURN_SECONDS} s</span>
+          </label>
         </div>
       </section>
 
@@ -538,8 +822,11 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
         {lines.map((line) => {
           if (line.kind === "user") {
             return (
-              <div key={line.id} className="self-end rounded bg-blue-50 px-3 py-2">
-                <div className="text-xs font-semibold text-blue-800">You ({line.via})</div>
+              <div
+                key={line.id}
+                className={`self-end rounded px-3 py-2 ${line.via === "silence" ? "bg-amber-50" : "bg-blue-50"}`}
+              >
+                <div className="text-xs font-semibold text-blue-800">{TURN_LABELS[line.via]}</div>
                 <div className="whitespace-pre-wrap">{line.text}</div>
               </div>
             );
@@ -578,7 +865,7 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
         }}
       >
         <textarea
-          className="min-h-[3rem] flex-1 rounded border border-gray-300 px-2 py-1"
+          className="min-h-[3rem] flex-1 rounded border border-gray-300 px-2 py-1 disabled:bg-gray-100"
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
@@ -589,11 +876,12 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
           }}
           placeholder="Type a message"
           aria-label="Message"
+          disabled={isCallEnded}
         />
         <button
           type="submit"
           className="rounded bg-blue-700 px-4 py-1 font-semibold text-white disabled:bg-gray-400"
-          disabled={isBusy || !draft.trim()}
+          disabled={isBusy || isCallEnded || !draft.trim()}
         >
           Send
         </button>
