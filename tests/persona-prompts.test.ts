@@ -6,7 +6,9 @@
  * old client-built strings, taken before the move; the legacy ones against the old
  * client construction). The module refuses to load in a browser, and no "use client"
  * file reaches it through its imports (the import graph is walked), nor holds the
- * prompt text itself.
+ * prompt text itself. The same reachability guard covers the shared call brain's card
+ * text: lib/server/call-prompt.ts (the shared rules) and lib/server/tempo-call-cards.ts
+ * (the Dana and Dr. Kim cards).
  */
 
 import { createHash } from "node:crypto";
@@ -120,8 +122,14 @@ describe("the prompts stay on the server", () => {
   const files = ["app", "components", "hooks", "lib"].flatMap((dir) => sourceFiles(path.join(ROOT, dir)));
   const clientFiles = files.filter((file) => /^\s*(?:\/\*[\s\S]*?\*\/\s*|\/\/[^\n]*\n\s*)*["']use client["']/.test(readFileSync(file, "utf8")));
   const serverModule = path.join(ROOT, "lib", "server", "persona-prompts.ts");
+  // Server-only modules that hold persona or card text: none may reach the browser.
+  const serverOnlyModules = [
+    serverModule,
+    path.join(ROOT, "lib", "server", "call-prompt.ts"),
+    path.join(ROOT, "lib", "server", "tempo-call-cards.ts"),
+  ];
 
-  it("no \"use client\" file reaches lib/server/persona-prompts.ts through its imports", () => {
+  it("no \"use client\" file reaches lib/server/persona-prompts.ts, call-prompt.ts or tempo-call-cards.ts through its imports", () => {
     expect(clientFiles.length).toBeGreaterThan(20);
     const reachable = new Set<string>();
     const queue = [...clientFiles];
@@ -133,7 +141,10 @@ describe("the prompts stay on the server", () => {
       reachable.add(file);
       queue.push(...runtimeImports(file));
     }
-    expect(reachable.has(serverModule)).toBe(false);
+    for (const moduleFile of serverOnlyModules) {
+      expect(existsSync(moduleFile), path.relative(ROOT, moduleFile)).toBe(true);
+      expect(reachable.has(moduleFile), path.relative(ROOT, moduleFile)).toBe(false);
+    }
     // And no client-reachable file holds the persona text itself (phrases found only in
     // the prompts and stage hints; the Objection Handling tips the student sees say
     // "Dr. Kim leads with price…" on purpose).
@@ -146,6 +157,7 @@ describe("the prompts stay on the server", () => {
         "Take 25% off or we walk",
         "OBJECTION HANDLING STAGE:",
         "DISCOVERY STAGE: Ask open-ended questions",
+        "You are a character in a live voice role-play",
       ]) {
         expect(source.includes(marker), `${path.relative(ROOT, file)}: ${marker}`).toBe(false);
       }

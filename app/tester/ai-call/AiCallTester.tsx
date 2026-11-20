@@ -1,15 +1,15 @@
 /**
  * AiCallTester.tsx
  * The client half of the throwaway /tester/ai-call page (see page.tsx for how to remove
- * it). A text chat with the tester's own call brain, POST /tester/ai-call/api/chat
- * (api/chat/route.ts: a copy of how /api/chat builds Dana's and Dr. Kim's calls, plus the
- * new call behaviour), an optional Anam avatar, and a call timer with test controls. The
- * real /api/chat is not used here. Never import anything from api/ into this file: the
- * persona prompts there are server only. The call timings come from ./timings.json
- * (numbers only), which the brain reads too.
+ * it). A text chat with the shared call brain through the tester's own route, POST
+ * /tester/ai-call/api/chat (api/chat/route.ts: lib/server/call-brain.ts, the same brain
+ * POST /api/student/call-turn runs), an optional Anam avatar, and a call timer with test
+ * controls. The real /api/chat is not used here. Never import anything from api/ or
+ * lib/server/ into this file: the persona prompts are server only. The call timings come
+ * from CALL_TIMINGS in lib/call-config.ts, which the brain reads too.
  *
- * ── Fields sent to the tester brain (the real call will use the same names later) ───
- * Every POST /tester/ai-call/api/chat sends { persona, model, messages, callSeconds,
+ * ── Fields sent to the brain (CallTurnRequest in lib/call-config.ts, without attemptId) ───
+ * Every POST /tester/ai-call/api/chat sends { persona, messages, callSeconds,
  * silenceSeconds } plus one of:
  * - newMessage: the student's typed or spoken turn;
  * - start: true (no newMessage): "Start call" asks for the persona's opening; it also sends
@@ -69,7 +69,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnamEvent, MessageRole, createClient, type AnamClient, type Message } from "@anam-ai/js-sdk";
-import TIMINGS_FILE from "./timings.json";
+import { CALL_TIMINGS, type CallTimings } from "@/lib/call-config";
 
 // ── Config ───
 
@@ -86,27 +86,8 @@ const PERSONAS = [
 
 type PersonaKey = (typeof PERSONAS)[number]["key"];
 
-/** The models the tester brain accepts (the first is its default). */
-const MODELS = ["gpt-6-luna", "gpt-4o"] as const;
-
-type ModelKey = (typeof MODELS)[number];
-
 /** The <video> the Anam SDK streams into (it looks the element up by id). */
 const VIDEO_ELEMENT_ID = "tester-ai-call-video";
-
-/** Call timings, in seconds (timings.json, shared with the brain). The page uses all but the backstop. */
-export type CallTimings = {
-  callLength: number;
-  wrapUpStart: number;
-  finalStretch: number;
-  silence: number;
-  /** Further silence after the check-in's reply finished before the afterCheckIn turn. */
-  silenceAfterCheckIn: number;
-  backstop: number;
-};
-
-/** The timings file, typed: a persona or a number missing there fails the type check. */
-const CALL_TIMINGS: Record<PersonaKey, CallTimings> = TIMINGS_FILE;
 
 /** The time marks in call-time order; each fires once per call. Call time is amber from the first, red from the last. */
 const TIME_MARKS = ["wrapUpStart", "finalStretch", "callLength"] as const;
@@ -334,7 +315,6 @@ const TURN_LABELS: Record<StudentTurnSource, string> = {
  */
 export function AiCallTester({ simulationId, classId }: AiCallTesterProps): React.ReactElement {
   const [persona, setPersona] = useState<PersonaKey>("tempo_discovery");
-  const [model, setModel] = useState<ModelKey>("gpt-6-luna");
   const [lines, setLines] = useState<TranscriptLine[]>([]);
   const [draft, setDraft] = useState("");
   const [isBusy, setIsBusy] = useState(false);
@@ -348,7 +328,6 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
 
   // Refs: the Anam callbacks, the timer tick and async turns read the latest values without re-subscribing.
   const personaRef = useRef<PersonaKey>(persona);
-  const modelRef = useRef<ModelKey>(model);
   const historyRef = useRef<ChatTurn[]>([]);
   const isBusyRef = useRef(false);
   /** Spoken turns that arrived while a reply was in flight; sent together next (as the real call does). */
@@ -387,7 +366,6 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
   const strikesRef = useRef({ rude: 0, breakCharacter: 0 });
 
   personaRef.current = persona;
-  modelRef.current = model;
 
   const addLine = useCallback((line: NewTranscriptLine): void => {
     lineIdRef.current += 1;
@@ -628,7 +606,6 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             persona: personaRef.current,
-            model: modelRef.current,
             messages: prior,
             ...(isStudentText ? { newMessage: trimmed } : {}),
             callSeconds,
@@ -1018,22 +995,6 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
             ))}
           </select>
           <span className="text-xs text-gray-600">Changing it resets the chat. Turn the avatar off to change it.</span>
-        </label>
-
-        <label className="flex flex-col gap-1">
-          <span className="font-semibold">Model</span>
-          <select
-            className="rounded border border-gray-300 px-2 py-1"
-            value={model}
-            onChange={(event) => setModel(event.target.value as ModelKey)}
-          >
-            {MODELS.map((entry) => (
-              <option key={entry} value={entry}>
-                {entry}
-              </option>
-            ))}
-          </select>
-          <span className="text-xs text-gray-600">Applies from the next turn.</span>
         </label>
 
         <div className="flex flex-wrap items-center gap-3 sm:col-span-3">

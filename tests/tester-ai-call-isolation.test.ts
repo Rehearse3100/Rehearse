@@ -2,10 +2,12 @@
  * tester-ai-call-isolation.test.ts
  * Keeps the throwaway /tester/ai-call page (app/tester/ai-call/) removable with no
  * effect on the project:
- * - no file in app/tester/ai-call/ imports from the project: no "@/…", no relative path
- *   outside the folder, no absolute path, nothing but an installed package (React,
- *   Next.js, @anam-ai/js-sdk…). Type-only imports count too;
- * - no file outside the folder imports from it.
+ * - from the project, files in app/tester/ai-call/ import only the shared call brain's two
+ *   entry points, lib/call-config.ts and lib/server/call-brain.ts (what those import is
+ *   theirs, not the tester's); otherwise only installed packages (React, Next.js,
+ *   @anam-ai/js-sdk, openai…) or files inside the folder: no other "@/…", no relative path
+ *   outside the folder, no absolute path. Type-only imports count too;
+ * - no project file outside app/tester/ imports from app/tester/.
  * Reads source files only (static, re-export, side-effect and dynamic imports and
  * require); skips node_modules and dot folders (.next, .git, .claude, .eval). No
  * network, no database.
@@ -18,8 +20,11 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const ROOT = path.resolve(__dirname, "..");
-const TESTER_DIR = path.join(ROOT, "app", "tester", "ai-call");
+const TESTER_ROOT = path.join(ROOT, "app", "tester");
+const TESTER_DIR = path.join(TESTER_ROOT, "ai-call");
 const SOURCE_FILE = /\.[cm]?[jt]sx?$/;
+/** The only project modules the tester may import (paths without the extension). */
+const ALLOWED_PROJECT_MODULES = [path.join(ROOT, "lib", "call-config"), path.join(ROOT, "lib", "server", "call-brain")];
 
 // ── Scanning ───
 
@@ -65,13 +70,20 @@ function installedPackages(): Set<string> {
   return new Set([...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.devDependencies ?? {})]);
 }
 
+/** True when a resolved import target is one of ALLOWED_PROJECT_MODULES (with or without its extension). */
+function isAllowedProjectModule(target: string): boolean {
+  const withoutExtension = target.replace(/\.[cm]?[jt]sx?$/, "");
+  return ALLOWED_PROJECT_MODULES.includes(withoutExtension);
+}
+
 /** Why an import in a tester-folder file breaks the isolation, or null when it's fine. */
 function insideImportProblem(file: string, spec: string, installed: ReadonlySet<string>): string | null {
   if (spec.startsWith("@/")) {
-    return "imports the project through @/";
+    return isAllowedProjectModule(path.join(ROOT, spec.slice(2))) ? null : "imports the project through @/ (only lib/call-config and lib/server/call-brain are allowed)";
   }
   if (spec.startsWith(".")) {
-    return isInside(TESTER_DIR, path.resolve(path.dirname(file), spec)) ? null : "imports a path outside app/tester/ai-call";
+    const target = path.resolve(path.dirname(file), spec);
+    return isInside(TESTER_DIR, target) || isAllowedProjectModule(target) ? null : "imports a path outside app/tester/ai-call";
   }
   if (spec.startsWith("/") || spec.startsWith("~")) {
     return "imports by absolute path";
@@ -79,7 +91,7 @@ function insideImportProblem(file: string, spec: string, installed: ReadonlySet<
   return installed.has(packageName(spec)) ? null : "imports something that isn't an installed package";
 }
 
-/** True when an import in a file outside the tester folder reaches into it. */
+/** True when an import in a file outside app/tester/ reaches into it. */
 function reachesTesterFolder(file: string, spec: string): boolean {
   const target = spec.startsWith("@/")
     ? path.join(ROOT, spec.slice(2))
@@ -88,7 +100,7 @@ function reachesTesterFolder(file: string, spec: string): boolean {
       : spec.startsWith("/")
         ? spec
         : null;
-  return target ? isInside(TESTER_DIR, target) : spec.includes("tester/ai-call");
+  return target ? isInside(TESTER_ROOT, target) : spec.includes("app/tester");
 }
 
 // ── Tests ───
@@ -112,6 +124,16 @@ describe("the /tester/ai-call page stands alone", () => {
     ).toEqual(["next/navigation", "@/lib/chat-personas", "../x", "./AiCallTester", "./side.css", "@anam-ai/js-sdk", "react"]);
     expect(insideImportProblem(pageFile, "@/lib/chat-personas", installed)).not.toBeNull();
     expect(insideImportProblem(pageFile, "../../lib/x", installed)).not.toBeNull();
+    // The two shared entry points only, however they're written; nothing else from lib/.
+    expect(insideImportProblem(pageFile, "@/lib/call-config", installed)).toBeNull();
+    expect(insideImportProblem(pageFile, "@/lib/server/call-brain", installed)).toBeNull();
+    expect(insideImportProblem(pageFile, "../../../lib/call-config", installed)).toBeNull();
+    expect(insideImportProblem(pageFile, "@/lib/call-config.ts", installed)).toBeNull();
+    expect(insideImportProblem(pageFile, "@/lib/server/call-prompt", installed)).not.toBeNull();
+    expect(insideImportProblem(pageFile, "@/lib/server/tempo-call-cards", installed)).not.toBeNull();
+    expect(insideImportProblem(pageFile, "@/lib/server/persona-prompts", installed)).not.toBeNull();
+    expect(insideImportProblem(pageFile, "@/lib/call-config-extra", installed)).not.toBeNull();
+    expect(insideImportProblem(pageFile, "../../../lib/constants", installed)).not.toBeNull();
     expect(insideImportProblem(pageFile, "/abs/x", installed)).not.toBeNull();
     expect(insideImportProblem(pageFile, "left-pad", installed)).not.toBeNull();
     expect(insideImportProblem(pageFile, "./AiCallTester", installed)).toBeNull();
@@ -121,11 +143,12 @@ describe("the /tester/ai-call page stands alone", () => {
     expect(reachesTesterFolder(outsideFile, "@/app/tester/ai-call/AiCallTester")).toBe(true);
     expect(reachesTesterFolder(outsideFile, "../../tester/ai-call/page")).toBe(true);
     expect(reachesTesterFolder(outsideFile, "app/tester/ai-call")).toBe(true);
+    expect(reachesTesterFolder(outsideFile, "@/app/tester/other/thing")).toBe(true);
     expect(reachesTesterFolder(outsideFile, "@/lib/tempo-results")).toBe(false);
     expect(reachesTesterFolder(outsideFile, "next/navigation")).toBe(false);
   });
 
-  it("no file in app/tester/ai-call/ imports from the project or anything outside its folder", () => {
+  it("no file in app/tester/ai-call/ imports from the project (but the two shared entry points) or anything outside its folder", () => {
     expect(existsSync(path.join(TESTER_DIR, "page.tsx"))).toBe(true);
     const installed = installedPackages();
     const files = sourceFilesUnder(TESTER_DIR);
@@ -141,8 +164,8 @@ describe("the /tester/ai-call page stands alone", () => {
     expect(problems).toEqual([]);
   });
 
-  it("no file outside app/tester/ai-call/ imports from it", () => {
-    const outside = sourceFilesUnder(ROOT).filter((file) => !isInside(TESTER_DIR, file));
+  it("no file outside app/tester/ imports from it", () => {
+    const outside = sourceFilesUnder(ROOT).filter((file) => !isInside(TESTER_ROOT, file));
     expect(outside.length).toBeGreaterThan(100);
     const problems = outside.flatMap((file) =>
       moduleSpecifiers(readFileSync(file, "utf8"))

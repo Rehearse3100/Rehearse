@@ -8,8 +8,8 @@
  *    key (the same request supabase-js sends: GET /rest/v1/simulations with apikey and
  *    Authorization: Bearer headers);
  * 2. mint the token at Anam's POST /v1/auth/session-token with the custom-client LLM id
- *    (Anam's own LLM off: the tester brain's replies go to the avatar with talk()), plus
- *    the persona's voiceDetectionOptions from ../../timings.json.
+ *    (Anam's own LLM off: the call brain's replies go to the avatar with talk()), plus
+ *    the persona's voiceDetectionOptions from CALL_TIMINGS in lib/call-config.ts.
  *
  * 404 unless tester mode is on (the same check as page.tsx). Tester mode is local only
  * (docs/tempo-test-bypass.md). Reads one row, writes nothing.
@@ -19,7 +19,7 @@
  */
 
 import { NextResponse } from "next/server";
-import TIMINGS_FILE from "../../timings.json";
+import { CALL_TIMINGS } from "@/lib/call-config";
 
 export const dynamic = "force-dynamic";
 
@@ -121,7 +121,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           avatarId: ids.avatarId,
           voiceId: ids.voiceId,
           llmId: ANAM_CUSTOM_CLIENT_LLM_ID,
-          voiceDetectionOptions: TIMINGS_FILE[STAGE_PERSONAS[stage]].voiceDetectionOptions,
+          voiceDetectionOptions: CALL_TIMINGS[STAGE_PERSONAS[stage]].voiceDetectionOptions,
         },
       }),
       cache: "no-store",
