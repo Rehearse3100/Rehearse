@@ -2,11 +2,12 @@
  * route.ts — POST /api/student/call-turn
  * One turn of a live Tempo persona call (Dana or Dr. Kim) through the shared call brain
  * (lib/server/call-brain.ts): the persona's next line, whether the call ends with it, and
- * the student's message label. Signed-in students only, on their own Tempo attempt. Not
- * yet used by the live call (which still uses POST /api/chat).
+ * the student's message label. Signed-in students only, on their own Tempo attempt. The
+ * live Dana and Dr. Kim calls send every turn here (hooks/useSimulationVoiceSession.ts).
  *
  * Body: CallTurnRequest (lib/call-config.ts): the turn plus attemptId.
- * Response: CallTurnResponse { reply, endCall?: true, label? }. 401 signed out, 400 for a
+ * Response: CallTurnResponse { reply, endCall?: true, endReason?, label? } (endReason
+ * whenever endCall is sent). 401 signed out, 400 for a
  * bad body, 404 when the attempt isn't the student's or isn't Tempo, 500 otherwise. No
  * error ever carries OpenAI's or Supabase's text; the brain turns a failed model call into
  * a fallback line.
@@ -70,8 +71,12 @@ export async function POST(request: Request): Promise<NextResponse> {
       return NextResponse.json({ error: "Attempt not found." }, { status: 404 });
     }
 
-    const { reply, endCall, label } = await runCallTurn(parsed.turn, new OpenAI({ apiKey }));
-    const response: CallTurnResponse = { reply, ...(endCall ? { endCall: true } : {}), ...(label ? { label } : {}) };
+    const { reply, endCall, endReason, label } = await runCallTurn(parsed.turn, new OpenAI({ apiKey }));
+    const response: CallTurnResponse = {
+      reply,
+      ...(endCall ? { endCall: true, endReason } : {}),
+      ...(label ? { label } : {}),
+    };
     return NextResponse.json(response);
   } catch (error) {
     console.error("[call-turn] unexpected:", error);

@@ -3,20 +3,32 @@
  * POST — mints a short-lived Anam session token for custom-LLM mode (CUSTOMER_CLIENT_V1).
  * Anam runs STT + TTS + avatar video; Rehearse supplies GPT via client talk stream.
  * Server-only ANAM_API_KEY; client receives sessionToken + avatarId only.
+ * A Tempo attempt's discovery and objections sessions (the live Dana and Dr. Kim calls)
+ * also send that persona's voiceDetectionOptions from CALL_TIMINGS in lib/call-config.ts;
+ * every other session's personaConfig is unchanged.
  */
 
 import { NextResponse } from "next/server";
 import { requireStudentApi } from "@/lib/api-auth";
+import { CALL_TIMINGS, type CallPersona } from "@/lib/call-config";
+import { TEMPO_SIMULATION_ID } from "@/lib/constants";
 import {
   ANAM_CUSTOM_CLIENT_LLM_ID,
   getAnamAvatarId,
   getAnamVoiceId,
   isAnamSessionStage,
   normalizeAnamIdMap,
+  type AnamSessionStage,
 } from "@/lib/tempo-anam-config";
 import { createServiceClient } from "@/lib/supabase/server";
 
 const ANAM_SESSION_TOKEN_URL = "https://api.anam.ai/v1/auth/session-token";
+
+/** The call persona a Tempo attempt's stage runs (its voice settings come from CALL_TIMINGS). */
+const TEMPO_STAGE_PERSONAS: Record<AnamSessionStage, CallPersona> = {
+  discovery: "tempo_discovery",
+  objections: "tempo_objections",
+};
 
 type AnamSessionBody = {
   attemptId?: unknown;
@@ -128,6 +140,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     // Shown in Anam dashboard (persona name + client label). Updated client-side to
     // Anam session UUID on SESSION_READY when supported.
     const sessionLabel = `${stage}:${attemptId}`;
+    // Tempo only: a legacy simulation can use these stages too, and keeps Anam's defaults.
+    const isTempoCall = attempt.simulation_id === TEMPO_SIMULATION_ID;
 
     const anamResponse = await fetch(ANAM_SESSION_TOKEN_URL, {
       method: "POST",
@@ -142,6 +156,9 @@ export async function POST(request: Request): Promise<NextResponse> {
           avatarId,
           voiceId,
           llmId: ANAM_CUSTOM_CLIENT_LLM_ID,
+          ...(isTempoCall
+            ? { voiceDetectionOptions: CALL_TIMINGS[TEMPO_STAGE_PERSONAS[stage]].voiceDetectionOptions }
+            : {}),
         },
       }),
     });

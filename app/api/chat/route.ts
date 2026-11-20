@@ -1,18 +1,21 @@
 /**
  * route.ts — /api/chat
- * POST — a call persona's next spoken line (GPT-4o). Signed-in students only, and the
- * attempt must be theirs. The browser sends a persona key (lib/chat-personas.ts),
- * never a prompt: the server builds the system prompt (lib/server/persona-prompts.ts),
- * byte-for-byte what the browser used to send. "simulation" (legacy teacher-made
- * simulations) reads the attempt's simulation persona prompt and, at objections, the
- * attempt's saved presentation transcript. A systemPrompt in the body is ignored.
- * History keeps only user and assistant turns, the latest 60; every message and the
- * new one are at most 2,000 characters.
+ * POST — the persona's next line for the Tempo negotiation scenarios
+ * (tempo_negotiation_a / _b) and the legacy teacher-made simulations ("simulation"), from
+ * the model named below. Signed-in students only, and the attempt must be theirs. The
+ * browser sends a persona key (lib/chat-personas.ts), never a prompt: the server builds
+ * the system prompt (lib/server/persona-prompts.ts). "simulation" reads the attempt's
+ * simulation persona prompt and, at objections, the attempt's saved presentation
+ * transcript. A systemPrompt in the body is ignored. The live call personas (Dana and
+ * Dr. Kim: CALL_PERSONAS in lib/call-config.ts) get 400: their turns go to
+ * /api/student/call-turn. History keeps only user and assistant turns, the latest 60;
+ * every message and the new one are at most 2,000 characters.
  */
 
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { requireStudentApi } from "@/lib/api-auth";
+import { isCallPersona } from "@/lib/call-config";
 import { cleanChatHistory } from "@/lib/chat-history";
 import { parseChatPersona, parseLegacyChatStage, type LegacyChatStage } from "@/lib/chat-personas";
 import { CHAT_MAX_MESSAGE_CHARS, MAX_TOKENS } from "@/lib/constants";
@@ -49,6 +52,9 @@ export async function POST(req: Request): Promise<NextResponse> {
     const persona = parseChatPersona(body.persona);
     if (!persona) {
       return NextResponse.json({ error: "Unknown persona." }, { status: 400 });
+    }
+    if (isCallPersona(persona)) {
+      return NextResponse.json({ error: "This persona uses /api/student/call-turn." }, { status: 400 });
     }
     const attemptId = typeof body.attemptId === "string" ? body.attemptId.trim() : "";
     if (!attemptId) {

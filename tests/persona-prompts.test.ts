@@ -1,10 +1,12 @@
 /**
  * persona-prompts.test.ts
- * The call personas' system prompts now built on the server
+ * The /api/chat personas' system prompts, built on the server
  * (lib/server/persona-prompts.ts) from a persona key: each one is byte-for-byte what
- * the browser built and sent before (the Tempo prompts pinned by the SHA-256 of the
- * old client-built strings, taken before the move; the legacy ones against the old
- * client construction). The module refuses to load in a browser, and no "use client"
+ * the browser built and sent before (the Tempo negotiation prompts pinned by the SHA-256
+ * of the old client-built strings, taken before the move; the legacy ones against the old
+ * client construction). Dana and Dr. Kim are not here any more: the live calls use the
+ * shared call brain (tests/call-brain.test.ts pins its prompts). The module refuses to
+ * load in a browser, and no "use client"
  * file reaches it through its imports (the import graph is walked), nor holds the
  * prompt text itself. The same reachability guard covers the shared call brain's card
  * text: lib/server/call-prompt.ts (the shared rules) and lib/server/tempo-call-cards.ts
@@ -29,23 +31,17 @@ afterEach(() => {
 });
 
 describe("each persona's system prompt is exactly what the browser sent before", () => {
-  // SHA-256 of the client-built strings before the move (2026-11-06):
-  // buildVoiceSystemPrompt(DANA_REYES_SYSTEM_PROMPT, TEMPO_DISCOVERY_STAGE_HINT),
-  // buildVoiceSystemPrompt(DR_KIM_SYSTEM_PROMPT, TEMPO_OBJECTIONS_STAGE_HINT), and the
-  // two negotiation scenario prompts as they were.
+  // SHA-256 of the client-built strings before the move (2026-11-06): the two
+  // negotiation scenario prompts as they were.
   const BEFORE: Record<string, string> = {
-    tempo_discovery: "3fead491a07b4fb3b1a1ce301987dc1f0de4b773a21d3b10b5f76404e42f7642",
-    tempo_objections: "c059505174f9db0bc4aedc27e8ae34660eada900568b5779e5c02c712f8a5618",
     tempo_negotiation_a: "09bd3f2071666c5ba75cb06b60fef7c2ec00d01f3a731319ed48caa7ab0280dd",
     tempo_negotiation_b: "20dfd6d2dc97c8c1d034f2f80511b31bd3b04f53f6268882b434fe6b793eee09",
   };
 
-  it("the four Tempo personas", () => {
-    for (const persona of ["tempo_discovery", "tempo_objections", "tempo_negotiation_a", "tempo_negotiation_b"] as const) {
+  it("the two Tempo negotiation personas", () => {
+    for (const persona of ["tempo_negotiation_a", "tempo_negotiation_b"] as const) {
       expect(sha256(buildPersonaSystemPrompt(persona)), persona).toBe(BEFORE[persona]);
     }
-    expect(buildPersonaSystemPrompt("tempo_discovery").startsWith("You are Dana Reyes, Director of Operations")).toBe(true);
-    expect(buildPersonaSystemPrompt("tempo_objections").startsWith("You are Dr. Saul Kim, Founder and Owner")).toBe(true);
   });
 
   it("a legacy simulation: its own prompt, the listening rules and the stage's hint, as each stage component built it", () => {

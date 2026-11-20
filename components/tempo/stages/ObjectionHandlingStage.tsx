@@ -25,6 +25,7 @@ import { ObjectionHandlingStageLayout } from "@/components/tempo/stages/Objectio
 import { ObjectionHandlingTopBar } from "@/components/tempo/stages/ObjectionHandlingTopBar";
 import { resumePlaybackContext } from "@/lib/audio-playback";
 import { completeStage } from "@/lib/attempt-actions";
+import type { CallSessionEndReason } from "@/lib/call-config";
 import {
   EMPTY_TRACKER,
   type ObjectionHandlingPhase,
@@ -67,6 +68,7 @@ export function ObjectionHandlingStage({
   const [phase, setPhase] = useState<ObjectionHandlingPhase>("lobby");
   const [connectError, setConnectError] = useState("");
   const [callSeconds, setCallSeconds] = useState(0);
+  const [callEndReason, setCallEndReason] = useState<CallSessionEndReason | null>(null);
   const [transcript, setTranscript] = useState<ObjectionTranscriptEntry[]>([]);
   const [objectionTracker, setObjectionTracker] = useState<ObjectionTracker>(EMPTY_TRACKER);
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
@@ -84,6 +86,7 @@ export function ObjectionHandlingStage({
   const handleJoinCall = useCallback((streams: ObjectionJoinStreams): void => {
     setConnectError("");
     setCallSeconds(0);
+    setCallEndReason(null);
     setTranscript([]);
     setObjectionTracker(EMPTY_TRACKER);
     setAudioStream(streams.audioStream);
@@ -114,7 +117,8 @@ export function ObjectionHandlingStage({
       transcriptText: string,
       seconds: number,
       entries: ObjectionTranscriptEntry[],
-      tracker: ObjectionTracker
+      tracker: ObjectionTracker,
+      endReason: CallSessionEndReason
     ): Promise<void> => {
       if (submittingRef.current) {
         return;
@@ -122,6 +126,7 @@ export function ObjectionHandlingStage({
       submittingRef.current = true;
 
       setCallSeconds(seconds);
+      setCallEndReason(endReason);
       setTranscript(entries);
       setObjectionTracker(tracker);
       setAudioStream(null);
@@ -132,6 +137,7 @@ export function ObjectionHandlingStage({
       try {
         const payload = JSON.stringify({
           callDurationSeconds: seconds,
+          endReason,
           transcript: transcriptText,
           transcriptEntries: entries,
           objectionTracker: tracker,
@@ -154,7 +160,7 @@ export function ObjectionHandlingStage({
   };
 
   const handleSkipCall = useCallback((): void => {
-    void handleCallEnded("[TEST] Skipped objections call", 0, [], EMPTY_TRACKER);
+    void handleCallEnded("[TEST] Skipped objections call", 0, [], EMPTY_TRACKER, "student");
   }, [handleCallEnded]);
 
   return (
@@ -174,6 +180,7 @@ export function ObjectionHandlingStage({
         <ObjectionHandlingStageLayout
           phase={phase}
           callSeconds={callSeconds}
+          callEndReason={callEndReason}
           transcript={transcript}
           objectionTracker={objectionTracker}
           testBypass={testBypass}
@@ -196,8 +203,8 @@ export function ObjectionHandlingStage({
                 onTranscriptChange={setTranscript}
                 onTrackerChange={setObjectionTracker}
                 onSecondsChange={setCallSeconds}
-                onEnded={(text, seconds, entries, tracker) => {
-                  void handleCallEnded(text, seconds, entries, tracker);
+                onEnded={(text, seconds, entries, tracker, endReason) => {
+                  void handleCallEnded(text, seconds, entries, tracker, endReason);
                 }}
               />
             ) : null

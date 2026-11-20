@@ -2,7 +2,9 @@
  * DiscoveryCallSession.tsx
  * Anam video call for Tempo Stage 2 Discovery — shares the Objection Handling
  * in-call shell (video frame, PiP, speaking rings, control bar).
- * Receives the microphone stream the student enabled in the lobby.
+ * Receives the microphone stream the student enabled in the lobby. Dana's lines, the call
+ * clock and the call's end come from the voice hook (the shared call brain); the call
+ * ends with the hook's endReason, or "student" from the end-call button.
  *
  * Avatar must stay mounted for the whole call (no remount on connect) — remounting
  * tears down the Anam WebRTC session and silences Dana.
@@ -18,7 +20,7 @@ import {
   parseDiscoveryTranscript,
   type DiscoveryTranscriptEntry,
 } from "@/lib/tempo-discovery";
-import { TEMPO_DISCOVERY_OPENING_GREETING } from "@/lib/constants";
+import type { CallSessionEndReason } from "@/lib/call-config";
 import { resumePlaybackContext } from "@/lib/audio-playback";
 import { useSimulationVoiceSession } from "@/hooks/useSimulationVoiceSession";
 import type { AvatarRef } from "@/types";
@@ -34,7 +36,8 @@ type DiscoveryCallSessionProps = {
   onEnded: (
     transcriptText: string,
     seconds: number,
-    entries: DiscoveryTranscriptEntry[]
+    entries: DiscoveryTranscriptEntry[],
+    endReason: CallSessionEndReason
   ) => void;
 };
 
@@ -82,22 +85,24 @@ export function DiscoveryCallSession({
   const [isStudentSpeaking, setIsStudentSpeaking] = useState(false);
   const [micMuted, setMicMuted] = useState(false);
   const [cameraOff, setCameraOff] = useState(() => !hasLiveVideoTrack(videoStream));
-  const [seconds, setSeconds] = useState(0);
 
   const connectStartedRef = useRef(false);
   const isMutedRef = useRef(false);
-  const secondsRef = useRef(0);
+  const hasEndedRef = useRef(false);
   const studentVideoRef = useRef<HTMLVideoElement | null>(null);
   const activeAudioStreamRef = useRef(audioStream);
   const activeVideoStreamRef = useRef<MediaStream | null>(videoStream);
+  /** handleEndCall, for the hook's onCallEnd (the hook is set up before handleEndCall exists). */
+  const handleEndCallRef = useRef<(endReason: CallSessionEndReason) => void>(() => undefined);
 
   const voice = useSimulationVoiceSession({
-    // Dana: the server builds her prompt from this key.
+    // Dana: the server builds her lines from this key (the shared call brain).
     persona: "tempo_discovery",
-    openingGreeting: TEMPO_DISCOVERY_OPENING_GREETING,
     isMutedRef,
     attemptId,
     anamStage: "discovery",
+    // The brain ended the call and Dana's reply has been spoken: end it as the button does.
+    onCallEnd: (endReason) => handleEndCallRef.current(endReason),
   });
 
   const voiceRef = useRef(voice);
@@ -184,23 +189,10 @@ export function DiscoveryCallSession({
     void run();
   }, [audioStream]);
 
-  // ── Call timer (local) ───
+  // ── Call time (the hook's call clock) ───
   useEffect(() => {
-    if (!connected) {
-      return;
-    }
-    const startedAt = Date.now();
-    const id = window.setInterval(() => {
-      const elapsed = Math.floor((Date.now() - startedAt) / 1000);
-      secondsRef.current = elapsed;
-      setSeconds(elapsed);
-    }, 1000);
-    return () => window.clearInterval(id);
-  }, [connected]);
-
-  useEffect(() => {
-    onSecondsChange(seconds);
-  }, [seconds, onSecondsChange]);
+    onSecondsChange(voice.callSeconds);
+  }, [voice.callSeconds, onSecondsChange]);
 
   // ── Bubble live transcript up to parent ───
   useEffect(() => {
@@ -208,7 +200,7 @@ export function DiscoveryCallSession({
       return;
     }
     const raw = voiceRef.current.getFullTranscript();
-    onTranscriptChange(parseDiscoveryTranscript(raw, secondsRef.current));
+    onTranscriptChange(parseDiscoveryTranscript(raw, voiceRef.current.callSeconds));
   }, [voice.userTranscripts, voice.personaTranscripts, connected, onTranscriptChange]);
 
   // ── Speaking indicators ───
@@ -282,15 +274,30 @@ export function DiscoveryCallSession({
     })();
   }, [cameraOff, stopVideoTracks, attachVideoPreview]);
 
-  const handleEndCall = useCallback((): void => {
-    const finalSeconds = secondsRef.current;
-    voiceRef.current.endCall();
-    activeAudioStreamRef.current.getTracks().forEach((track) => track.stop());
-    activeVideoStreamRef.current?.getTracks().forEach((track) => track.stop());
-    const raw = voiceRef.current.getFullTranscript();
-    const entries = parseDiscoveryTranscript(raw, finalSeconds);
-    onEnded(raw, finalSeconds, entries);
-  }, [onEnded]);
+  const handleEndCall = useCallback(
+    (endReason: CallSessionEndReason): void => {
+      // Once only: the button and the brain's endCall can both end the call.
+      if (hasEndedRef.current) {
+        return;
+      }
+      hasEndedRef.current = true;
+      const finalSeconds = voiceRef.current.callSeconds;
+      voiceRef.current.endCall();
+      activeAudioStreamRef.current.getTracks().forEach((track) => track.stop());
+      activeVideoStreamRef.current?.getTracks().forEach((track) => track.stop());
+      const raw = voiceRef.current.getFullTranscript();
+      const entries = parseDiscoveryTranscript(raw, finalSeconds);
+      onEnded(raw, finalSeconds, entries, endReason);
+    },
+    [onEnded]
+  );
+
+  handleEndCallRef.current = handleEndCall;
+
+  /** The end-call button: stops at once. */
+  const handleEndCallButton = useCallback((): void => {
+    handleEndCall("student");
+  }, [handleEndCall]);
 
   const showCameraPreview = !cameraOff;
 
@@ -308,10 +315,10 @@ export function DiscoveryCallSession({
       showCameraPreview={showCameraPreview}
       micMuted={micMuted}
       cameraOff={cameraOff}
-      formattedTime={formatDiscoveryTime(seconds)}
+      formattedTime={formatDiscoveryTime(voice.callSeconds)}
       onToggleMute={toggleMute}
       onToggleCamera={toggleCamera}
-      onEndCall={handleEndCall}
+      onEndCall={handleEndCallButton}
     />
   );
 }

@@ -4,7 +4,8 @@
  * lobby centres safely (scrolls from the top, manager note first); the post-call
  * transcript stacks under the post-call content; during the call a Transcript
  * button opens the live transcript as a slide-over. At lg and up the docked
- * panels keep their exact classes. Rendered to static HTML; no network.
+ * panels keep their exact classes. A call ended for a crisis shows the 988 note
+ * after the call. Rendered to static HTML; no network.
  */
 
 import * as React from "react";
@@ -18,6 +19,7 @@ import {
 import { DiscoveryStageLayout } from "@/components/tempo/stages/DiscoveryStageLayout";
 import { ObjectionHandlingStageLayout } from "@/components/tempo/stages/ObjectionHandlingStageLayout";
 import { TempoCallLobby } from "@/components/tempo/stages/TempoCallLobby";
+import type { CallSessionEndReason } from "@/lib/call-config";
 import type { DiscoveryPhase } from "@/lib/tempo-discovery";
 import { EMPTY_TRACKER, type ObjectionHandlingPhase } from "@/lib/tempo-objections";
 
@@ -118,11 +120,12 @@ describe("transcript panel", () => {
 });
 
 describe("stage layouts", () => {
-  const discovery = (phase: DiscoveryPhase): string =>
+  const discovery = (phase: DiscoveryPhase, callEndReason: CallSessionEndReason | null = null): string =>
     render(
       React.createElement(DiscoveryStageLayout, {
         phase,
         callSeconds: 312,
+        callEndReason,
         transcript: [{ role: "dana", content: "Thanks for calling.", timestamp: "00:05" }],
         lobbySlot: null,
         callSlot: React.createElement("div", { id: "call-slot" }, "CALL"),
@@ -134,11 +137,12 @@ describe("stage layouts", () => {
       })
     );
 
-  const objections = (phase: ObjectionHandlingPhase): string =>
+  const objections = (phase: ObjectionHandlingPhase, callEndReason: CallSessionEndReason | null = null): string =>
     render(
       React.createElement(ObjectionHandlingStageLayout, {
         phase,
         callSeconds: 312,
+        callEndReason,
         transcript: [{ role: "drKim", content: "What does this cost?", timestamp: "00:05" }],
         objectionTracker: EMPTY_TRACKER,
         lobbySlot: null,
@@ -165,5 +169,22 @@ describe("stage layouts", () => {
       expect(bar).toBeGreaterThan(-1);
       expect(bar).toBeLessThan(html.indexOf('id="call-slot"'));
     }
+  });
+
+  it("a call the brain ended for a crisis: the 988 note at the top of the post-call screen; any other ending: none", () => {
+    for (const html of [discovery("summary", "crisis"), objections("summary", "crisis")]) {
+      expect(html).toContain("988 Suicide and Crisis Lifeline");
+      expect(html).toContain('href="tel:988"');
+      expect(html).toContain('href="sms:988"');
+      // Under the Submit bar, above the post-call card.
+      expect(html.indexOf("Call complete")).toBeLessThan(html.indexOf("988 Suicide and Crisis Lifeline"));
+      expect(html.indexOf("988 Suicide and Crisis Lifeline")).toBeLessThan(html.indexOf("Call completed"));
+    }
+    for (const reason of [null, "student", "goodbye", "time_up", "rude", "break_character", "silence", "backstop"] as const) {
+      expect(discovery("summary", reason), String(reason)).not.toContain("988");
+      expect(objections("summary", reason), String(reason)).not.toContain("988");
+    }
+    // Only after the call.
+    expect(discovery("active", "crisis")).not.toContain("988");
   });
 });

@@ -8,8 +8,10 @@
  * above the call opens it (with the strategy hint) as a slide-over; after the call
  * it stacks under the post-call content.
  * Objection tracker stays visible as live in-call feedback (not a post-call form).
+ * A call the brain ended for a crisis shows CallCrisisNotice at the top of the post-call screen.
  */
 
+import { CallCrisisNotice } from "@/components/tempo/CallCrisisNotice";
 import { CallTranscriptPanel, CallTranscriptSlideOver } from "@/components/tempo/CallTranscriptPanel";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import { PostCallCompletePanel } from "@/components/tempo/PostCallCompletePanel";
@@ -21,10 +23,13 @@ import {
   type ObjectionTracker,
   type ObjectionTranscriptEntry,
 } from "@/lib/tempo-objections";
+import type { CallSessionEndReason } from "@/lib/call-config";
 
 type ObjectionHandlingStageLayoutProps = {
   phase: ObjectionHandlingPhase;
   callSeconds: number;
+  /** Why the call ended (null before it has); "crisis" shows the crisis note after the call. */
+  callEndReason?: CallSessionEndReason | null;
   transcript: ObjectionTranscriptEntry[];
   objectionTracker: ObjectionTracker;
   lobbySlot: React.ReactNode;
@@ -72,6 +77,7 @@ function strategyHintText(objectionTracker: ObjectionTracker): string {
 export function ObjectionHandlingStageLayout({
   phase,
   callSeconds,
+  callEndReason = null,
   transcript,
   objectionTracker,
   lobbySlot,
@@ -237,6 +243,7 @@ export function ObjectionHandlingStageLayout({
                 onForward={onContinueAfterCall}
               />
             </div>
+            {callEndReason === "crisis" && <CallCrisisNotice />}
             {/* Below lg: post-call content, then the stacked transcript, scrolling together. */}
             <div className="flex flex-col lg:flex-row flex-1 min-w-0 min-h-0 overflow-y-auto lg:overflow-visible">
               <PostCallCompletePanel

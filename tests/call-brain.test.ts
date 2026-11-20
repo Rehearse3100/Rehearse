@@ -278,6 +278,8 @@ describe("each turn gets one situation note, by priority", () => {
       const second = fakeClient({ label });
       const secondResult = await runCallTurn(parsedTurn(message(0, { strikes: { [key]: 1 } })), second.openai);
       expect(secondResult.endCall, label).toBe(true);
+      expect(secondResult.endReason, label).toBe(label);
+      expect(first.endReason, label).toBeUndefined();
       expect(noteOf(second.replyCalls()[1] as SentCall)).toBe(NOTES[label === "rude" ? "rudeEnd" : "breakEnd"]);
     }
   });
@@ -297,7 +299,32 @@ describe("each turn gets one situation note, by priority", () => {
     const marked = await runCallTurn(parsedTurn(message(0)), fakeClient({ replies: ["Great, talk soon. [END_CALL]"] }).openai);
     expect(marked).toEqual({ reply: "Great, talk soon.", endCall: false, label: "normal" });
     const unmarked = await runCallTurn(parsedTurn(message(0)), fakeClient({ label: "goodbye", replies: ["Thanks, bye now."] }).openai);
-    expect(unmarked).toEqual({ reply: "Thanks, bye now.", endCall: true, label: "goodbye" });
+    expect(unmarked).toEqual({ reply: "Thanks, bye now.", endCall: true, endReason: "goodbye", label: "goodbye" });
+  });
+
+  it("endReason comes from the ending note, and only with endCall", async () => {
+    const cases: Array<[string, Record<string, unknown>, string]> = [
+      ["crisis", { newMessage: "I can't go on.", label: "crisis" }, "crisis"],
+      ["time up", { timeMark: true, callSeconds: 900 }, "time_up"],
+      ["goodbye", { newMessage: "Bye.", label: "goodbye" }, "goodbye"],
+      ["rude, second strike", { newMessage: "Whatever.", label: "rude", strikes: { rude: 1 } }, "rude"],
+      ["break character, second strike", { newMessage: "Are you a bot?", label: "break_character", strikes: { breakCharacter: 1 } }, "break_character"],
+      ["silence after the check-in", { silent: true, afterCheckIn: true }, "silence"],
+    ];
+    for (const [name, { label, ...body }, endReason] of cases) {
+      const result = await runCallTurn(
+        parsedTurn(body),
+        fakeClient(typeof label === "string" ? { label: label as StudentLabel } : {}).openai
+      );
+      expect(result.endCall, name).toBe(true);
+      expect(result.endReason, name).toBe(endReason);
+    }
+    // A turn that doesn't end the call has no endReason.
+    for (const body of [{ newMessage: "Hi" }, { silent: true }, { timeMark: true, callSeconds: 720 }, { start: true }]) {
+      const result = await runCallTurn(parsedTurn(body), fakeClient().openai);
+      expect(result.endCall, JSON.stringify(body)).toBe(false);
+      expect("endReason" in result, JSON.stringify(body)).toBe(false);
+    }
   });
 
   it("the reply call's messages: prompt, history, note, then the student's message", async () => {
@@ -334,7 +361,7 @@ describe("backstop, localTime and the minutes wording", () => {
       const client = fakeClient();
       for (const body of [{ newMessage: "Hi" }, { silent: true }, { timeMark: true }, { start: true }]) {
         const result = await runCallTurn(parsedTurn({ persona, callSeconds: CALL_TIMINGS[persona].backstop, ...body }), client.openai);
-        expect(result).toEqual({ reply: "", endCall: true });
+        expect(result).toEqual({ reply: "", endCall: true, endReason: "backstop" });
       }
       expect(client.create).not.toHaveBeenCalled();
     }
@@ -534,15 +561,18 @@ describe("the model calls", () => {
     expect(await runCallTurn(parsedTurn({ newMessage: "Bye" }), fakeClient({ label: "goodbye", replies: failing }).openai)).toEqual({
       reply: ENDING_FALLBACK_REPLY,
       endCall: true,
+      endReason: "goodbye",
       label: "goodbye",
     });
     expect(await runCallTurn(parsedTurn({ silent: true, afterCheckIn: true }), fakeClient({ replies: failing }).openai)).toEqual({
       reply: ENDING_FALLBACK_REPLY,
       endCall: true,
+      endReason: "silence",
     });
     expect(await runCallTurn(parsedTurn({ timeMark: true, callSeconds: 900 }), fakeClient({ replies: failing }).openai)).toEqual({
       reply: ENDING_FALLBACK_REPLY,
       endCall: true,
+      endReason: "time_up",
     });
     // The label changed the note and its reply call failed: the first reply isn't used.
     const secondFails = fakeClient({ label: "rude", replies: ["First reply.", new Error("secret internal detail")] });

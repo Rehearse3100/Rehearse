@@ -2,8 +2,8 @@
  * tester-ai-call-isolation.test.ts
  * Keeps the throwaway /tester/ai-call page (app/tester/ai-call/) removable with no
  * effect on the project:
- * - from the project, files in app/tester/ai-call/ import only the shared call brain's two
- *   entry points, lib/call-config.ts and lib/server/call-brain.ts (what those import is
+ * - from the project, files in app/tester/ai-call/ import only the shared call modules
+ *   lib/call-config.ts, lib/call-clock.ts and lib/server/call-brain.ts (what those import is
  *   theirs, not the tester's); otherwise only installed packages (React, Next.js,
  *   @anam-ai/js-sdk, openai…) or files inside the folder: no other "@/…", no relative path
  *   outside the folder, no absolute path. Type-only imports count too;
@@ -24,7 +24,11 @@ const TESTER_ROOT = path.join(ROOT, "app", "tester");
 const TESTER_DIR = path.join(TESTER_ROOT, "ai-call");
 const SOURCE_FILE = /\.[cm]?[jt]sx?$/;
 /** The only project modules the tester may import (paths without the extension). */
-const ALLOWED_PROJECT_MODULES = [path.join(ROOT, "lib", "call-config"), path.join(ROOT, "lib", "server", "call-brain")];
+const ALLOWED_PROJECT_MODULES = [
+  path.join(ROOT, "lib", "call-config"),
+  path.join(ROOT, "lib", "call-clock"),
+  path.join(ROOT, "lib", "server", "call-brain"),
+];
 
 // ── Scanning ───
 
@@ -79,7 +83,9 @@ function isAllowedProjectModule(target: string): boolean {
 /** Why an import in a tester-folder file breaks the isolation, or null when it's fine. */
 function insideImportProblem(file: string, spec: string, installed: ReadonlySet<string>): string | null {
   if (spec.startsWith("@/")) {
-    return isAllowedProjectModule(path.join(ROOT, spec.slice(2))) ? null : "imports the project through @/ (only lib/call-config and lib/server/call-brain are allowed)";
+    return isAllowedProjectModule(path.join(ROOT, spec.slice(2)))
+      ? null
+      : "imports the project through @/ (only lib/call-config, lib/call-clock and lib/server/call-brain are allowed)";
   }
   if (spec.startsWith(".")) {
     const target = path.resolve(path.dirname(file), spec);
@@ -124,8 +130,10 @@ describe("the /tester/ai-call page stands alone", () => {
     ).toEqual(["next/navigation", "@/lib/chat-personas", "../x", "./AiCallTester", "./side.css", "@anam-ai/js-sdk", "react"]);
     expect(insideImportProblem(pageFile, "@/lib/chat-personas", installed)).not.toBeNull();
     expect(insideImportProblem(pageFile, "../../lib/x", installed)).not.toBeNull();
-    // The two shared entry points only, however they're written; nothing else from lib/.
+    // The three shared call modules only, however they're written; nothing else from lib/.
     expect(insideImportProblem(pageFile, "@/lib/call-config", installed)).toBeNull();
+    expect(insideImportProblem(pageFile, "@/lib/call-clock", installed)).toBeNull();
+    expect(insideImportProblem(pageFile, "../../../lib/call-clock.ts", installed)).toBeNull();
     expect(insideImportProblem(pageFile, "@/lib/server/call-brain", installed)).toBeNull();
     expect(insideImportProblem(pageFile, "../../../lib/call-config", installed)).toBeNull();
     expect(insideImportProblem(pageFile, "@/lib/call-config.ts", installed)).toBeNull();
@@ -148,7 +156,7 @@ describe("the /tester/ai-call page stands alone", () => {
     expect(reachesTesterFolder(outsideFile, "next/navigation")).toBe(false);
   });
 
-  it("no file in app/tester/ai-call/ imports from the project (but the two shared entry points) or anything outside its folder", () => {
+  it("no file in app/tester/ai-call/ imports from the project (but the three shared call modules) or anything outside its folder", () => {
     expect(existsSync(path.join(TESTER_DIR, "page.tsx"))).toBe(true);
     const installed = installedPackages();
     const files = sourceFilesUnder(TESTER_DIR);

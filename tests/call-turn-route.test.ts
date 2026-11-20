@@ -159,18 +159,18 @@ describe("POST /api/student/call-turn", () => {
     expect(state.create).not.toHaveBeenCalled();
   });
 
-  it("success: the reply, endCall when the turn's note ends the call, and the label", async () => {
+  it("success: the reply, endCall and endReason when the turn's note ends the call, and the label", async () => {
     state.label = "goodbye";
     state.reply = "Thanks for your time, goodbye. [END_CALL]";
     const ending = await callTurn({ newMessage: "That's all from me, bye!" });
     expect(ending.status).toBe(200);
-    expect(await ending.json()).toEqual({ reply: "Thanks for your time, goodbye.", endCall: true, label: "goodbye" });
+    expect(await ending.json()).toEqual({ reply: "Thanks for your time, goodbye.", endCall: true, endReason: "goodbye", label: "goodbye" });
     expect(state.queries).toEqual([{ table: "attempts", eqs: [["id", "attempt-1"], ["student_id", "student-1"]] }]);
     for (const [body] of state.create.mock.calls as Array<[SentBody]>) {
       expect(body.model).toBe("gpt-6-luna");
     }
 
-    // A call that carries on: no endCall key at all.
+    // A call that carries on: no endCall or endReason key at all.
     state.label = "normal";
     state.reply = "We run eight practices.";
     const ongoing = await callTurn();
@@ -183,10 +183,10 @@ describe("POST /api/student/call-turn", () => {
     expect(state.create).toHaveBeenCalledTimes(1);
   });
 
-  it("from the backstop on: an empty reply and endCall, with no model call", async () => {
+  it("from the backstop on: an empty reply, endCall and endReason \"backstop\", with no model call", async () => {
     const res = await callTurn({ callSeconds: 1080 });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ reply: "", endCall: true });
+    expect(await res.json()).toEqual({ reply: "", endCall: true, endReason: "backstop" });
     expect(state.create).not.toHaveBeenCalled();
   });
 

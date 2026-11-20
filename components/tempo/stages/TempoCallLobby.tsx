@@ -83,7 +83,12 @@ export function TempoCallLobby({
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Echo cancellation keeps the persona's voice from the speakers out of the mic (so it
+      // can't cut the persona off or come back as the student's words); the other two clean
+      // up the student's voice. Browsers treat these as best-effort requests.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
       micStreamRef.current = stream;
       setMicOn(true);
     } catch {

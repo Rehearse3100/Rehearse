@@ -22,6 +22,7 @@ import { DiscoveryStageLayout } from "@/components/tempo/stages/DiscoveryStageLa
 import { DiscoveryTopBar } from "@/components/tempo/stages/DiscoveryTopBar";
 import { resumePlaybackContext } from "@/lib/audio-playback";
 import { completeStage } from "@/lib/attempt-actions";
+import type { CallSessionEndReason } from "@/lib/call-config";
 import {
   canBeginDiscoveryCall,
   clearDiscoveryPrepFromStorage,
@@ -83,6 +84,7 @@ export function DiscoveryStage({
   const [prepReady, setPrepReady] = useState(false);
   const [connectError, setConnectError] = useState("");
   const [callSeconds, setCallSeconds] = useState(0);
+  const [callEndReason, setCallEndReason] = useState<CallSessionEndReason | null>(null);
   const [referenceLibraryOpen, setReferenceLibraryOpen] = useState(false);
   const [transcript, setTranscript] = useState<DiscoveryTranscriptEntry[]>([]);
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
@@ -151,6 +153,7 @@ export function DiscoveryStage({
   const handleJoinCall = useCallback((streams: DiscoveryJoinStreams): void => {
     setConnectError("");
     setCallSeconds(0);
+    setCallEndReason(null);
     setTranscript([]);
     setAudioStream(streams.audioStream);
     setVideoStream(streams.videoStream);
@@ -173,7 +176,8 @@ export function DiscoveryStage({
     async (
       transcriptText: string,
       seconds: number,
-      entries: DiscoveryTranscriptEntry[]
+      entries: DiscoveryTranscriptEntry[],
+      endReason: CallSessionEndReason
     ): Promise<void> => {
       if (submittingRef.current) {
         return;
@@ -181,6 +185,7 @@ export function DiscoveryStage({
       submittingRef.current = true;
 
       setCallSeconds(seconds);
+      setCallEndReason(endReason);
       setTranscript(entries);
       setAudioStream(null);
       setVideoStream(null);
@@ -191,6 +196,7 @@ export function DiscoveryStage({
         const prep = prepFormRef.current;
         const payload = JSON.stringify({
           callDurationSeconds: seconds,
+          endReason,
           transcript: transcriptText,
           transcriptEntries: entries,
           preCallPrep: {
@@ -217,7 +223,7 @@ export function DiscoveryStage({
   };
 
   const handleSkipCall = useCallback((): void => {
-    void handleCallEnded("[TEST] Skipped discovery call", 0, []);
+    void handleCallEnded("[TEST] Skipped discovery call", 0, [], "student");
   }, [handleCallEnded]);
 
   return (
@@ -242,6 +248,7 @@ export function DiscoveryStage({
           <DiscoveryStageLayout
             phase={phase}
             callSeconds={callSeconds}
+            callEndReason={callEndReason}
             transcript={transcript}
             testBypass={testBypass}
             lobbySlot={
@@ -271,8 +278,8 @@ export function DiscoveryStage({
                   onError={handleCallError}
                   onTranscriptChange={setTranscript}
                   onSecondsChange={setCallSeconds}
-                  onEnded={(text, seconds, entries) => {
-                    void handleCallEnded(text, seconds, entries);
+                  onEnded={(text, seconds, entries, endReason) => {
+                    void handleCallEnded(text, seconds, entries, endReason);
                   }}
                 />
               ) : null

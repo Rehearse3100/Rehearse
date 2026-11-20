@@ -1,7 +1,9 @@
 /**
  * ObjectionHandlingCallSession.tsx
  * Anam video call for Tempo Stage 4 — Dr. Saul Kim with visible avatar feed,
- * student PiP, objection tracker, and call controls.
+ * student PiP, objection tracker, and call controls. Dr. Kim's lines, the call clock and
+ * the call's end come from the voice hook (the shared call brain); the call ends with the
+ * hook's endReason, or "student" from the end-call button.
  */
 
 "use client";
@@ -9,7 +11,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Avatar } from "@/components/Avatar";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
-import { TEMPO_OBJECTIONS_OPENING_GREETING } from "@/lib/constants";
+import type { CallSessionEndReason } from "@/lib/call-config";
 import { resumePlaybackContext } from "@/lib/audio-playback";
 import {
   deriveObjectionTracker,
@@ -34,7 +36,8 @@ type ObjectionHandlingCallSessionProps = {
     transcriptText: string,
     seconds: number,
     entries: ObjectionTranscriptEntry[],
-    tracker: ObjectionTracker
+    tracker: ObjectionTracker,
+    endReason: CallSessionEndReason
   ) => void;
 };
 
@@ -83,22 +86,24 @@ export function ObjectionHandlingCallSession({
   const [isStudentSpeaking, setIsStudentSpeaking] = useState(false);
   const [micMuted, setMicMuted] = useState(false);
   const [cameraOff, setCameraOff] = useState(() => !hasLiveVideoTrack(videoStream));
-  const [seconds, setSeconds] = useState(0);
 
   const connectStartedRef = useRef(false);
   const isMutedRef = useRef(false);
-  const secondsRef = useRef(0);
+  const hasEndedRef = useRef(false);
   const studentVideoRef = useRef<HTMLVideoElement | null>(null);
   const activeAudioStreamRef = useRef(audioStream);
   const activeVideoStreamRef = useRef<MediaStream | null>(videoStream);
+  /** handleEndCall, for the hook's onCallEnd (the hook is set up before handleEndCall exists). */
+  const handleEndCallRef = useRef<(endReason: CallSessionEndReason) => void>(() => undefined);
 
   const voice = useSimulationVoiceSession({
-    // Dr. Kim: the server builds his prompt from this key.
+    // Dr. Kim: the server builds his lines from this key (the shared call brain).
     persona: "tempo_objections",
-    openingGreeting: TEMPO_OBJECTIONS_OPENING_GREETING,
     isMutedRef,
     attemptId,
     anamStage: "objections",
+    // The brain ended the call and Dr. Kim's reply has been spoken: end it as the button does.
+    onCallEnd: (endReason) => handleEndCallRef.current(endReason),
   });
 
   const voiceRef = useRef(voice);
@@ -194,23 +199,10 @@ export function ObjectionHandlingCallSession({
     void run();
   }, [audioStream]);
 
-  // ── Call timer ───
+  // ── Call time (the hook's call clock) ───
   useEffect(() => {
-    if (!connected) {
-      return;
-    }
-    const startedAt = Date.now();
-    const id = window.setInterval(() => {
-      const elapsed = Math.floor((Date.now() - startedAt) / 1000);
-      secondsRef.current = elapsed;
-      setSeconds(elapsed);
-    }, 1000);
-    return () => window.clearInterval(id);
-  }, [connected]);
-
-  useEffect(() => {
-    onSecondsChange(seconds);
-  }, [seconds, onSecondsChange]);
+    onSecondsChange(voice.callSeconds);
+  }, [voice.callSeconds, onSecondsChange]);
 
   // ── Live transcript + objection tracker ───
   useEffect(() => {
@@ -218,7 +210,7 @@ export function ObjectionHandlingCallSession({
       return;
     }
     const raw = voiceRef.current.getFullTranscript();
-    const entries = parseObjectionTranscript(raw, secondsRef.current);
+    const entries = parseObjectionTranscript(raw, voiceRef.current.callSeconds);
     const nextTracker = deriveObjectionTracker(entries);
     setTracker(nextTracker);
     onTranscriptChange(entries);
@@ -296,16 +288,31 @@ export function ObjectionHandlingCallSession({
     })();
   }, [cameraOff, stopVideoTracks, attachVideoPreview]);
 
-  const handleEndCall = useCallback((): void => {
-    const finalSeconds = secondsRef.current;
-    voiceRef.current.endCall();
-    activeAudioStreamRef.current.getTracks().forEach((track) => track.stop());
-    activeVideoStreamRef.current?.getTracks().forEach((track) => track.stop());
-    const raw = voiceRef.current.getFullTranscript();
-    const entries = parseObjectionTranscript(raw, finalSeconds);
-    const finalTracker = deriveObjectionTracker(entries);
-    onEnded(raw, finalSeconds, entries, finalTracker);
-  }, [onEnded]);
+  const handleEndCall = useCallback(
+    (endReason: CallSessionEndReason): void => {
+      // Once only: the button and the brain's endCall can both end the call.
+      if (hasEndedRef.current) {
+        return;
+      }
+      hasEndedRef.current = true;
+      const finalSeconds = voiceRef.current.callSeconds;
+      voiceRef.current.endCall();
+      activeAudioStreamRef.current.getTracks().forEach((track) => track.stop());
+      activeVideoStreamRef.current?.getTracks().forEach((track) => track.stop());
+      const raw = voiceRef.current.getFullTranscript();
+      const entries = parseObjectionTranscript(raw, finalSeconds);
+      const finalTracker = deriveObjectionTracker(entries);
+      onEnded(raw, finalSeconds, entries, finalTracker, endReason);
+    },
+    [onEnded]
+  );
+
+  handleEndCallRef.current = handleEndCall;
+
+  /** The end-call button: stops at once. */
+  const handleEndCallButton = useCallback((): void => {
+    handleEndCall("student");
+  }, [handleEndCall]);
 
   const showCameraPreview = !cameraOff;
 
@@ -397,7 +404,7 @@ export function ObjectionHandlingCallSession({
         ))}
         <button
           type="button"
-          onClick={handleEndCall}
+          onClick={handleEndCallButton}
           disabled={!connected}
           className="w-20 h-14 rounded-3xl bg-error flex items-center justify-center text-white hover:opacity-90 shadow-lg shadow-error/20 transition-all disabled:opacity-40"
         >
@@ -406,7 +413,7 @@ export function ObjectionHandlingCallSession({
         {connected && (
           <div className="flex items-center gap-2 glass-panel px-4 h-14 rounded-full">
             <MaterialIcon name="timer" className="text-white/60 text-[18px]" />
-            <span className="font-code-md text-white/80 tabular-nums">{formatObjectionTime(seconds)}</span>
+            <span className="font-code-md text-white/80 tabular-nums">{formatObjectionTime(voice.callSeconds)}</span>
           </div>
         )}
       </div>

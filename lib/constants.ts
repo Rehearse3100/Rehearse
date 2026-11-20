@@ -208,9 +208,3 @@ export const LEADERBOARD_QUERY_LIMIT = 50;
 /** Appended to persona system prompts on voice stages — reduces interruptions. */
 export const PERSONA_LISTENING_RULES =
   "CRITICAL RULE: Let the student finish speaking completely before you respond. Never interrupt mid-sentence. Wait for a clear pause. Keep replies to 2-3 short sentences.";
-
-export const TEMPO_DISCOVERY_OPENING_GREETING =
-  "Thanks for jumping on — I've got about 15 minutes. What made you reach out to us?" as const;
-
-export const TEMPO_OBJECTIONS_OPENING_GREETING =
-  "Thanks for making time. I've had a chance to look at the proposal — I have a few concerns before we talk about moving forward." as const;

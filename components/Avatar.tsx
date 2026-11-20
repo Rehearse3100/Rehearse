@@ -41,6 +41,10 @@ export type AvatarVoiceCallbacks = {
   onMessageHistoryUpdated?: (messages: Message[]) => void;
   onTalkStreamInterrupted?: (correlationId: string) => void;
   onConnectionClosed?: (reason: string, details?: string) => void;
+  /** Anam's USER_SPEECH_STARTED: the student started speaking (before any transcript). */
+  onUserSpeechStarted?: (correlationId: string) => void;
+  /** Anam's USER_SPEECH_ENDED: the student stopped speaking. */
+  onUserSpeechEnded?: (correlationId: string) => void;
 };
 
 /** Extended imperative API used by useSimulationVoiceSession (not on AvatarRef). */
@@ -144,6 +148,14 @@ function registerClientListeners(client: AnamClient): void {
   client.addListener(AnamEvent.SESSION_READY, (sessionId: string) => {
     applyAnamSessionPersonaName(sessionId);
     notifySessionReady();
+  });
+
+  client.addListener(AnamEvent.USER_SPEECH_STARTED, (correlationId: string) => {
+    voiceCallbacks.onUserSpeechStarted?.(correlationId);
+  });
+
+  client.addListener(AnamEvent.USER_SPEECH_ENDED, (correlationId: string) => {
+    voiceCallbacks.onUserSpeechEnded?.(correlationId);
   });
 
   listenersRegistered = true;

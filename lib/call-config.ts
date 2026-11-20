@@ -3,8 +3,9 @@
  * The shared call brain's settings and wire types (client-safe: numbers and names only,
  * never prompt or card text). The server half is lib/server/call-brain.ts; the route is
  * POST /api/student/call-turn. The browser reads CALL_TIMINGS to run the call clock (time
- * marks, silence check-ins), and the Anam session route reads each persona's
- * voiceDetectionOptions. The /tester/ai-call page uses the same values.
+ * marks, silence check-ins; the clock rules are lib/call-clock.ts), and the Anam session
+ * routes read each persona's voiceDetectionOptions. The live Dana and Dr. Kim calls
+ * (hooks/useSimulationVoiceSession.ts) and the /tester/ai-call page use the same values.
  */
 
 import type { ChatPersona } from "@/lib/chat-personas";
@@ -16,6 +17,11 @@ import type { ChatMessage } from "@/types";
 export const CALL_PERSONAS = ["tempo_discovery", "tempo_objections"] as const satisfies readonly ChatPersona[];
 
 export type CallPersona = (typeof CALL_PERSONAS)[number];
+
+/** True for the personas the call brain runs (they use /api/student/call-turn, not /api/chat). */
+export function isCallPersona(persona: ChatPersona): persona is CallPersona {
+  return CALL_PERSONAS.some((key) => key === persona);
+}
 
 // ── Timings ───
 
@@ -71,6 +77,19 @@ export const STUDENT_LABELS = ["normal", "unclear", "off_topic", "rude", "break_
 
 export type StudentLabel = (typeof STUDENT_LABELS)[number];
 
+// ── End reasons ───
+
+/**
+ * Why the brain ended the call (sent with endCall): one per ending note (time up, goodbye,
+ * a second rude or break_character, silence after the check-in, crisis), or the backstop.
+ */
+export const CALL_END_REASONS = ["time_up", "goodbye", "rude", "break_character", "silence", "crisis", "backstop"] as const;
+
+export type CallEndReason = (typeof CALL_END_REASONS)[number];
+
+/** Why a live call ended, as saved with the transcript: the brain's reason, or "student" (the end-call button). */
+export type CallSessionEndReason = CallEndReason | "student";
+
 // ── POST /api/student/call-turn ───
 
 /**
@@ -97,10 +116,14 @@ export type CallTurnRequest = {
   strikes?: { rude: number; breakCharacter: number };
 };
 
-/** The response: the persona's line; endCall: true when the call ends with it; label on turns with the student's text. */
+/**
+ * The response: the persona's line; endCall: true when the call ends with it, with
+ * endReason; label on turns with the student's text.
+ */
 export type CallTurnResponse = {
   reply: string;
   endCall?: true;
+  endReason?: CallEndReason;
   label?: StudentLabel;
 };
 

@@ -10,7 +10,7 @@
  * parseCallTurn reads and checks the body (history cleaned as /api/chat cleans it:
  * cleanChatHistory, CHAT_MAX_HISTORY_MESSAGES and CHAT_MAX_MESSAGE_CHARS from lib/).
  * runCallTurn then:
- * - from the backstop on, makes no model call: { reply: "", endCall: true };
+ * - from the backstop on, makes no model call: { reply: "", endCall: true, endReason: "backstop" };
  * - on a turn with the student's text, runs a label call (what kind of message it is) in
  *   parallel with the reply call. A label of normal, a failed or timed-out label call, or
  *   an answer that isn't a label keeps that reply. If the label changes the turn's
@@ -18,8 +18,9 @@
  * - picks one situation note per turn by code (time, silence, the label and the strikes),
  *   in this order: start, crisis, the endings, the warnings, final stretch, silent,
  *   off topic or unclear, wrap-up start;
- * - ends the call exactly when the turn's note is an ending note; [END_CALL] in the reply
- *   is only removed from the text, and dashes are replaced.
+ * - ends the call exactly when the turn's note is an ending note, with the endReason that
+ *   note stands for; [END_CALL] in the reply is only removed from the text, and dashes are
+ *   replaced.
  * Message order: the fixed system prompt, the cleaned history, then at most one situation
  * note as a system message, then the student's message (none for a start, silent or
  * time-mark turn), so the fixed prompt stays cached.
@@ -30,7 +31,15 @@
  */
 
 import type OpenAI from "openai";
-import { CALL_PERSONAS, CALL_TIMINGS, STUDENT_LABELS, type CallPersona, type CallTimings, type StudentLabel } from "@/lib/call-config";
+import {
+  CALL_PERSONAS,
+  CALL_TIMINGS,
+  STUDENT_LABELS,
+  type CallEndReason,
+  type CallPersona,
+  type CallTimings,
+  type StudentLabel,
+} from "@/lib/call-config";
 import { cleanChatHistory } from "@/lib/chat-history";
 import { CHAT_MAX_MESSAGE_CHARS } from "@/lib/constants";
 import { buildCardPrompt } from "@/lib/server/call-prompt";
@@ -87,6 +96,16 @@ const SITUATION_NOTES = {
 
 /** The notes that end the call: the code decides every ending, not the reply. */
 const ENDING_NOTE_KEYS = ["crisis", "callLength", "goodbye", "rudeEnd", "breakEnd", "silentEnd"] as const;
+
+/** The endReason each ending note stands for. */
+const ENDING_NOTE_REASONS: Record<(typeof ENDING_NOTE_KEYS)[number], CallEndReason> = {
+  crisis: "crisis",
+  callLength: "time_up",
+  goodbye: "goodbye",
+  rudeEnd: "rude",
+  breakEnd: "break_character",
+  silentEnd: "silence",
+};
 
 // ── The label call ───
 
@@ -300,9 +319,13 @@ function pickSituationNote(turn: CallTurn, timings: CallTimings, label: StudentL
   return null;
 }
 
-/** Whether this situation note ends the call (crisis, callLength, goodbye, rudeEnd, breakEnd or silentEnd). */
-function isEndingNote(note: string | null): boolean {
-  return ENDING_NOTE_KEYS.some((key) => SITUATION_NOTES[key] === note);
+/**
+ * Why this situation note ends the call, or null when it doesn't: crisis, callLength
+ * (time_up), goodbye, rudeEnd (rude), breakEnd (break_character) or silentEnd (silence).
+ */
+function endReasonFor(note: string | null): CallEndReason | null {
+  const key = ENDING_NOTE_KEYS.find((ending) => SITUATION_NOTES[ending] === note);
+  return key ? ENDING_NOTE_REASONS[key] : null;
 }
 
 // ── Messages ───
@@ -446,14 +469,18 @@ async function askReply(openai: OpenAI, messages: CallMessage[]): Promise<string
 // ── The turn ───
 
 /**
- * Runs one parsed turn: the persona's next line, whether the call ends with it, and, on a
- * turn with the student's text, the label (the browser counts rude and break_character
- * as strikes). Never throws for a model failure: a fallback line comes back instead.
+ * Runs one parsed turn: the persona's next line, whether the call ends with it (and, if
+ * so, why: endReason), and, on a turn with the student's text, the label (the browser
+ * counts rude and break_character as strikes). Never throws for a model failure: a
+ * fallback line comes back instead.
  */
-export async function runCallTurn(turn: CallTurn, openai: OpenAI): Promise<{ reply: string; endCall: boolean; label?: StudentLabel }> {
+export async function runCallTurn(
+  turn: CallTurn,
+  openai: OpenAI
+): Promise<{ reply: string; endCall: boolean; endReason?: CallEndReason; label?: StudentLabel }> {
   const timings = CALL_TIMINGS[turn.persona];
   if (turn.callSeconds >= timings.backstop) {
-    return { reply: "", endCall: true };
+    return { reply: "", endCall: true, endReason: "backstop" };
   }
   const isLabelled = turn.newMessage !== null;
   // The label call and the usual reply call run at the same time.
@@ -466,7 +493,8 @@ export async function runCallTurn(turn: CallTurn, openai: OpenAI): Promise<{ rep
   const isNoteChanged = note !== pickSituationNote(turn, timings);
   const content = isNoteChanged ? await askReply(openai, buildReplyMessages(turn, timings, label)) : normalContent;
   // The code decides every ending: the note, never [END_CALL] in the reply.
-  const endCall = isEndingNote(note);
+  const endReason = endReasonFor(note);
+  const endCall = endReason !== null;
   const reply = content === null ? (endCall ? ENDING_FALLBACK_REPLY : FALLBACK_REPLY) : finishReply(content);
-  return { reply, endCall, ...(isLabelled ? { label } : {}) };
+  return { reply, endCall, ...(endReason ? { endReason } : {}), ...(isLabelled ? { label } : {}) };
 }

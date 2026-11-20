@@ -7,9 +7,11 @@
  * column that matches ProspectingWizard's. The active call center is injected
  * via callSlot so the mic session only mounts after Join Call. Below lg the docked
  * transcript is hidden: during the call a Transcript button above the call opens
- * it as a slide-over; after the call it stacks under the post-call content.
+ * it as a slide-over; after the call it stacks under the post-call content. A call the
+ * brain ended for a crisis shows CallCrisisNotice at the top of the post-call screen.
  */
 
+import { CallCrisisNotice } from "@/components/tempo/CallCrisisNotice";
 import { CallTranscriptPanel, CallTranscriptSlideOver } from "@/components/tempo/CallTranscriptPanel";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import { PostCallCompletePanel } from "@/components/tempo/PostCallCompletePanel";
@@ -20,10 +22,13 @@ import {
   type DiscoveryPhase,
   type DiscoveryTranscriptEntry,
 } from "@/lib/tempo-discovery";
+import type { CallSessionEndReason } from "@/lib/call-config";
 
 type DiscoveryStageLayoutProps = {
   phase: DiscoveryPhase;
   callSeconds: number;
+  /** Why the call ended (null before it has); "crisis" shows the crisis note after the call. */
+  callEndReason?: CallSessionEndReason | null;
   transcript: DiscoveryTranscriptEntry[];
   lobbySlot: React.ReactNode;
   callSlot: React.ReactNode;
@@ -79,6 +84,7 @@ function DiscoveryForwardBar({
 export function DiscoveryStageLayout({
   phase,
   callSeconds,
+  callEndReason = null,
   transcript,
   lobbySlot,
   callSlot,
@@ -216,6 +222,7 @@ export function DiscoveryStageLayout({
                 onForward={onContinueAfterCall}
               />
             </DiscoveryForwardBar>
+            {callEndReason === "crisis" && <CallCrisisNotice />}
             {/* Below lg: post-call content, then the stacked transcript, scrolling together. */}
             <div className="flex flex-col lg:flex-row flex-1 min-w-0 min-h-0 overflow-y-auto lg:overflow-visible">
               <PostCallCompletePanel
