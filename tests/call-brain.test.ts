@@ -9,8 +9,9 @@
  *   end; the note alone decides endCall; the backstop; localTime; the minutes wording;
  *   the dash filter and the [END_CALL] removal;
  * - with a stand-in OpenAI client: the label call runs alongside the reply call, a second
- *   reply call is made only when the label changes the note, a failed or timed-out label
- *   counts as normal, the reply call is retried once, and both fallback lines;
+ *   reply call is made only when the label changes the note, a failed label call is retried
+ *   once within its 5 s budget (then counts as normal), the reply call is retried once, and
+ *   the fallback lines (the crisis one still points to 988);
  * - parseCallTurn's checks, the window guards, and lib/call-config.ts's values.
  * No network: the client is a stub, and nothing here talks to OpenAI.
  */
@@ -75,6 +76,8 @@ type NoteKey = keyof typeof NOTES;
 const ENDING_NOTES: ReadonlySet<NoteKey> = new Set<NoteKey>(["crisis", "callLength", "goodbye", "rudeEnd", "breakEnd", "silentEnd"]);
 const FALLBACK_REPLY = "Sorry, could you say that again?";
 const ENDING_FALLBACK_REPLY = "Sorry, I have to go now. Thanks for your time, goodbye.";
+const CRISIS_FALLBACK_REPLY =
+  "I'm going to stop the role-play here. What you said matters more than this exercise. In the US you can call or text 988 to reach the Suicide and Crisis Lifeline any time. Take care.";
 
 // ── A stand-in OpenAI client ───
 
@@ -143,6 +146,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.doUnmock("@/lib/call-config");
@@ -525,14 +529,52 @@ describe("the model calls", () => {
     expect(await labelFor(null)).toBe("normal");
   });
 
-  it("a label call that fails or times out counts as normal, with no retry", async () => {
+  it("a label call that fails twice counts as normal (two tries), and the reply is kept", async () => {
     for (const failure of [new Error("secret internal detail"), new APIConnectionTimeoutError()]) {
       const client = fakeClient({ label: failure, replies: ["Hello."] });
       const result = await runCallTurn(parsedTurn({ newMessage: "You idiot" }), client.openai);
       expect(result).toEqual({ reply: "Hello.", endCall: false, label: "normal" });
-      expect(client.labelCalls()).toHaveLength(1);
+      expect(client.labelCalls()).toHaveLength(2);
       expect(client.replyCalls()).toHaveLength(1);
     }
+  });
+
+  it("a failed label call is retried once within the same 5 s budget; a try that used it up gets no retry", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 10, 20, 9, 0, 0));
+    /** The label tries in order (each takes `ms`, then answers or rejects); the reply call answers "Hello.". */
+    const labelWith = async (tries: Array<{ answer: Answer; ms: number }>): Promise<{ label?: StudentLabel; timeouts: number[] }> => {
+      const queue = [...tries];
+      const timeouts: number[] = [];
+      const create = vi.fn(async (body: CreateBody, options: CreateOptions) => {
+        if (!isLabelCall(body)) {
+          return completion("Hello.");
+        }
+        timeouts.push(options.timeout);
+        expect(options.maxRetries).toBe(0);
+        const next = queue.shift() ?? { answer: "normal", ms: 0 };
+        vi.setSystemTime(Date.now() + next.ms);
+        if (next.answer instanceof Error) {
+          throw next.answer;
+        }
+        return completion(next.answer);
+      });
+      const result = await runCallTurn(parsedTurn({ newMessage: "You idiot" }), { chat: { completions: { create } } } as unknown as OpenAI);
+      return { label: result.label, timeouts };
+    };
+    const failure = new Error("secret internal detail");
+
+    // A quick failure: the retry gets the whole budget that is left.
+    expect(await labelWith([{ answer: failure, ms: 0 }, { answer: "rude", ms: 0 }])).toEqual({ label: "rude", timeouts: [5_000, 5_000] });
+    // A failure after 2 s: the retry gets the 3 s left.
+    expect(await labelWith([{ answer: failure, ms: 2_000 }, { answer: "rude", ms: 0 }])).toEqual({ label: "rude", timeouts: [5_000, 3_000] });
+    // Timed out after the full 5 s: no time left, so no retry.
+    expect(await labelWith([{ answer: new APIConnectionTimeoutError(), ms: 5_000 }, { answer: "rude", ms: 0 }])).toEqual({
+      label: "normal",
+      timeouts: [5_000],
+    });
+    // An answer that isn't a label is not a failure: no retry.
+    expect(await labelWith([{ answer: "banana", ms: 0 }, { answer: "rude", ms: 0 }])).toEqual({ label: "normal", timeouts: [5_000] });
   });
 
   it("a failed or empty reply call is retried once", async () => {
@@ -577,6 +619,17 @@ describe("the model calls", () => {
     // The label changed the note and its reply call failed: the first reply isn't used.
     const secondFails = fakeClient({ label: "rude", replies: ["First reply.", new Error("secret internal detail")] });
     expect(await runCallTurn(parsedTurn({ newMessage: "Hi" }), secondFails.openai)).toEqual({ reply: FALLBACK_REPLY, endCall: false, label: "rude" });
+  });
+
+  it("the crisis fallback: the crisis note's reply call fails, and a fixed line still steps out and points to 988", async () => {
+    const crisisFails = fakeClient({ label: "crisis", replies: ["First reply.", new Error("secret internal detail")] });
+    const result = await runCallTurn(parsedTurn({ newMessage: "I don't want to be here anymore." }), crisisFails.openai);
+    expect(result).toEqual({ reply: CRISIS_FALLBACK_REPLY, endCall: true, endReason: "crisis", label: "crisis" });
+    expect(crisisFails.replyCalls().map(noteOf)).toEqual([null, NOTES.crisis, NOTES.crisis]);
+    expect(result.reply).toContain("988");
+    // Every reply call failing, at time up too: still the crisis line (crisis comes before the endings).
+    const allFail = fakeClient({ label: "crisis", replies: [new Error("secret internal detail")] });
+    expect((await runCallTurn(parsedTurn({ newMessage: "I can't go on.", callSeconds: 900 }), allFail.openai)).reply).toBe(CRISIS_FALLBACK_REPLY);
   });
 
   it("a model's error text never comes back", async () => {

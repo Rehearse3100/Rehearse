@@ -25,7 +25,8 @@
  * note as a system message, then the student's message (none for a start, silent or
  * time-mark turn), so the fixed prompt stays cached.
  * Model calls: gpt-6-luna with reasoning off. A reply call gives up after 15 s and is
- * retried once (then a fallback line); the label call gives up after 5 s with no retry.
+ * retried once (then a fallback line; on the crisis note a fixed line that still points to
+ * 988); the label call is retried once if it fails, both tries within one 5 s budget.
  * These are per-request options, so they hold whatever client is passed in. Errors are
  * logged here, never returned.
  */
@@ -62,8 +63,10 @@ const LABEL_REQUEST_SETTINGS = { model: "gpt-6-luna", reasoning_effort: "none", 
 const MODEL_ATTEMPTS = 2;
 /** Each reply try gives up after this long and counts as failed (the SDK's default is 10 minutes). */
 const MODEL_TIMEOUT_MS = 15_000;
-/** The label call gives up after this long (one try, no retry) and counts as normal. */
+/** The label call's budget: its first try and its one retry together; past it, the label counts as normal. */
 const LABEL_TIMEOUT_MS = 5_000;
+/** The label call's first try plus one retry (a failure only; an answer that isn't a label is not retried). */
+const LABEL_ATTEMPTS = 2;
 
 // ── Situation notes ───
 
@@ -128,6 +131,10 @@ const FALLBACK_REPLY = "Sorry, could you say that again?";
 
 /** The same, on a turn whose note ends the call (the call still ends). */
 const ENDING_FALLBACK_REPLY = "Sorry, I have to go now. Thanks for your time, goodbye.";
+
+/** The same, on the crisis note: it still steps out of the role-play and points to 988 (the call ends). */
+const CRISIS_FALLBACK_REPLY =
+  "I'm going to stop the role-play here. What you said matters more than this exercise. In the US you can call or text 988 to reach the Suicide and Crisis Lifeline any time. Take care.";
 
 // ── The turn ───
 
@@ -429,18 +436,26 @@ function finishReply(raw: string): string {
 
 // ── Model calls ───
 
-/** The student's label, or "normal" when the label call fails or times out (logged here only). */
+/**
+ * The student's label, or "normal" when the label call fails twice or the budget runs out
+ * (each failure is logged here only). The first try gets the whole LABEL_TIMEOUT_MS; the
+ * retry gets what is left of it, so a try that timed out leaves none.
+ */
 async function askLabel(openai: OpenAI, messages: CallMessage[]): Promise<StudentLabel> {
-  try {
-    const completion = await openai.chat.completions.create(
-      { ...LABEL_REQUEST_SETTINGS, messages },
-      { timeout: LABEL_TIMEOUT_MS, maxRetries: 0 }
-    );
-    return parseLabel(completion.choices[0]?.message?.content ?? null);
-  } catch (error) {
-    console.error("[call-brain] label call failed:", error);
-    return "normal";
+  const deadline = Date.now() + LABEL_TIMEOUT_MS;
+  for (let attempt = 1; attempt <= LABEL_ATTEMPTS; attempt += 1) {
+    const timeout = attempt === 1 ? LABEL_TIMEOUT_MS : deadline - Date.now();
+    if (timeout <= 0) {
+      break;
+    }
+    try {
+      const completion = await openai.chat.completions.create({ ...LABEL_REQUEST_SETTINGS, messages }, { timeout, maxRetries: 0 });
+      return parseLabel(completion.choices[0]?.message?.content ?? null);
+    } catch (error) {
+      console.error(`[call-brain] label call failed (attempt ${attempt}):`, error);
+    }
   }
+  return "normal";
 }
 
 /**
@@ -495,6 +510,7 @@ export async function runCallTurn(
   // The code decides every ending: the note, never [END_CALL] in the reply.
   const endReason = endReasonFor(note);
   const endCall = endReason !== null;
-  const reply = content === null ? (endCall ? ENDING_FALLBACK_REPLY : FALLBACK_REPLY) : finishReply(content);
+  const fallback = endReason === "crisis" ? CRISIS_FALLBACK_REPLY : endCall ? ENDING_FALLBACK_REPLY : FALLBACK_REPLY;
+  const reply = content === null ? fallback : finishReply(content);
   return { reply, endCall, ...(endReason ? { endReason } : {}), ...(isLabelled ? { label } : {}) };
 }

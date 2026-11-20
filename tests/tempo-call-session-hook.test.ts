@@ -4,9 +4,11 @@
  * the voice hook with the persona key, connects on mount with the lobby's microphone
  * stream, mutes and unmutes through Anam's own input mute (pauseMic / resumeMic: no new
  * microphone stream, no track stopped, so the lobby's echo-cancelled mic stays the input)
- * and ends the call once, stopping the lobby's tracks. React's hooks are a small
- * synchronous stand-in (as in tests/call-voice-session-hook.test.ts); the voice hook and
- * the audio context are mocked. Nothing leaves the machine.
+ * and ends the call once, stopping the lobby's tracks (End pressed during the persona's
+ * ending keeps that ending's reason). Unmounted before the call ended, it ends the voice
+ * session and stops the tracks (not on strict mode's test unmount and remount). React's
+ * hooks are a small synchronous stand-in (effects re-run when their deps change); the
+ * voice hook and the audio context are mocked. Nothing leaves the machine.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,14 +24,24 @@ import {
 const hooks = vi.hoisted(() => ({
   values: [] as unknown[],
   cleanups: [] as Array<(() => void) | undefined>,
+  deps: [] as Array<unknown[] | undefined>,
   index: 0,
 }));
 
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
-  /** Every effect runs on every render, after its previous cleanup (deps aren't compared). */
-  const runEffect = (effect: () => unknown): void => {
+  /**
+   * An effect runs, after its previous cleanup, on the first render and whenever its deps
+   * changed (every render when it has none), as React does. useCallback below returns a new
+   * function each render, so an effect that depends on one still re-runs every render.
+   */
+  const runEffect = (effect: () => unknown, deps?: unknown[]): void => {
     const slot = hooks.index++;
+    const previous = hooks.deps[slot];
+    if (deps && previous && deps.length === previous.length && deps.every((dep, i) => Object.is(dep, previous[i]))) {
+      return;
+    }
+    hooks.deps[slot] = deps;
     hooks.cleanups[slot]?.();
     const cleanup = effect();
     hooks.cleanups[slot] = typeof cleanup === "function" ? (cleanup as () => void) : undefined;
@@ -94,7 +106,16 @@ function fakeVoice(): Record<string, unknown> {
     replaceAudioStream: vi.fn(),
     pauseMic: vi.fn(),
     resumeMic: vi.fn(),
+    getPendingEndReason: vi.fn(() => null),
   };
+}
+
+/** Unmounts: every effect's cleanup runs (then the 0 ms timer the unmount stop waits for). */
+async function unmount(): Promise<void> {
+  hooks.cleanups.forEach((cleanup) => cleanup?.());
+  hooks.cleanups = [];
+  hooks.deps = [];
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 /** One render of the hook (state, refs and effects persist between renders). */
@@ -124,6 +145,7 @@ beforeEach(() => {
   audioTrack.stop.mockReset();
   hooks.values = [];
   hooks.cleanups = [];
+  hooks.deps = [];
   voiceHook.voice = fakeVoice();
   options = {
     persona: "tempo_discovery",
@@ -141,8 +163,9 @@ beforeEach(() => {
   };
 });
 
-afterEach(() => {
-  hooks.cleanups.forEach((cleanup) => cleanup?.());
+afterEach(async () => {
+  // Unmounted, and its 0 ms stop timer run, before the next test starts.
+  await unmount();
   vi.unstubAllGlobals();
 });
 
@@ -190,5 +213,49 @@ describe("useTempoCallSession", () => {
     // The brain's endCall after the button: nothing more.
     voiceHook.config?.onCallEnd?.("goodbye");
     expect(options.onEnded).toHaveBeenCalledTimes(1);
+
+    // Unmounted after the end: nothing more either.
+    await unmount();
+    expect(voiceHook.voice?.endCall).toHaveBeenCalledTimes(1);
+    expect(audioTrack.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("End pressed while the persona's ending is under way: the call keeps that ending's reason, not \"student\"", async () => {
+    const call = await connect();
+    vi.mocked(voiceHook.voice?.getPendingEndReason as () => string | null).mockReturnValue("crisis");
+    call.shell.onEndCall();
+    expect(voiceHook.voice?.endCall).toHaveBeenCalledTimes(1);
+    expect(options.onEnded).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(options.onEnded).mock.calls[0]?.[3]).toBe("crisis");
+    // The ending's own onCallEnd afterwards: nothing more.
+    voiceHook.config?.onCallEnd?.("crisis");
+    expect(options.onEnded).toHaveBeenCalledTimes(1);
+  });
+
+  it("unmounted before the call ended: the voice session ends and the microphone and camera tracks stop, once", async () => {
+    const videoTrack = { stop: vi.fn(), readyState: "live" };
+    options.videoStream = { getVideoTracks: () => [videoTrack], getTracks: () => [videoTrack] } as unknown as MediaStream;
+    await connect();
+    await unmount();
+    expect(voiceHook.voice?.endCall).toHaveBeenCalledTimes(1);
+    expect(audioTrack.stop).toHaveBeenCalledTimes(1);
+    expect(videoTrack.stop).toHaveBeenCalledTimes(1);
+    // Not a call end the student or the persona made: no post-call screen.
+    expect(options.onEnded).not.toHaveBeenCalled();
+    await unmount();
+    expect(voiceHook.voice?.endCall).toHaveBeenCalledTimes(1);
+  });
+
+  it("strict mode's test unmount and remount (development) doesn't end the call", async () => {
+    await connect();
+    // React runs the cleanups, then the effects again, on the same refs.
+    hooks.cleanups.forEach((cleanup) => cleanup?.());
+    hooks.cleanups = [];
+    hooks.deps = [];
+    render();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(voiceHook.voice?.endCall).not.toHaveBeenCalled();
+    expect(audioTrack.stop).not.toHaveBeenCalled();
+    expect(voiceHook.voice?.startCall).toHaveBeenCalledTimes(1);
   });
 });

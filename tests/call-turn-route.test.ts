@@ -1,9 +1,10 @@
 /**
  * call-turn-route.test.ts
  * POST /api/student/call-turn (app/api/student/call-turn/route.ts): signed-in students
- * only, on their own Tempo attempt; the body is the call brain's turn plus attemptId; the
- * response is { reply, endCall?: true, label? }; no error carries OpenAI's or Supabase's
- * text. Sign-in, the database and OpenAI are mocked (as in
+ * only, on their own Tempo attempt, and only for the stage the attempt is on (not one
+ * already completed; the local test bypass skips that check); the body is the call brain's
+ * turn plus attemptId; the response is { reply, endCall?: true, label? }; no error carries
+ * OpenAI's or Supabase's text. Sign-in, the database and OpenAI are mocked (as in
  * tests/chat-tts-score-routes.test.ts); nothing leaves the machine.
  */
 
@@ -18,6 +19,8 @@ const state = vi.hoisted(() => ({
   queries: [] as Array<{ table: string; eqs: Array<[string, unknown]> }>,
   attempt: null as Record<string, unknown> | null,
   attemptError: null as Record<string, unknown> | null,
+  stageScore: null as Record<string, unknown> | null,
+  stageScoreError: null as Record<string, unknown> | null,
   isLookupThrowing: false,
   label: "normal" as string | Error,
   reply: "Sure, go ahead." as string | Error,
@@ -46,7 +49,12 @@ vi.mock("@/lib/supabase/server", () => ({
             query.eqs.push([column, value]);
             return builder;
           },
-          maybeSingle: async () => (table === "attempts" ? { data: state.attempt, error: state.attemptError } : { data: null, error: null }),
+          maybeSingle: async () =>
+            table === "attempts"
+              ? { data: state.attempt, error: state.attemptError }
+              : table === "stage_scores"
+                ? { data: state.stageScore, error: state.stageScoreError }
+                : { data: null, error: null },
         };
         return builder;
       },
@@ -85,8 +93,11 @@ beforeEach(() => {
   state.auth.mockReset();
   state.auth.mockResolvedValue({ ok: true, session: { studentId: "student-1" } });
   state.queries = [];
-  state.attempt = { id: "attempt-1", simulation_id: TEMPO_SIMULATION_ID };
+  // On Discovery, Dana's stage.
+  state.attempt = { id: "attempt-1", simulation_id: TEMPO_SIMULATION_ID, status: "in_progress", current_stage: "discovery" };
   state.attemptError = null;
+  state.stageScore = null;
+  state.stageScoreError = null;
   state.isLookupThrowing = false;
   state.label = "normal";
   state.reply = "Sure, go ahead.";
@@ -99,7 +110,15 @@ beforeEach(() => {
     return { choices: [{ message: { content: answer } }] };
   });
   vi.stubEnv("OPENAI_API_KEY", "test-key");
+  // The local test bypass is off, as in production.
+  vi.stubEnv("TEMPO_TEST_BYPASS_GATES", "");
 });
+
+/** The two queries a turn on a live stage makes: the attempt, then that stage's saved score. */
+const STAGE_QUERIES = (stage: string): Array<{ table: string; eqs: Array<[string, unknown]> }> => [
+  { table: "attempts", eqs: [["id", "attempt-1"], ["student_id", "student-1"]] },
+  { table: "stage_scores", eqs: [["attempt_id", "attempt-1"], ["stage", stage]] },
+];
 
 describe("POST /api/student/call-turn", () => {
   it("401 without a signed-in student, before reading anything", async () => {
@@ -165,7 +184,7 @@ describe("POST /api/student/call-turn", () => {
     const ending = await callTurn({ newMessage: "That's all from me, bye!" });
     expect(ending.status).toBe(200);
     expect(await ending.json()).toEqual({ reply: "Thanks for your time, goodbye.", endCall: true, endReason: "goodbye", label: "goodbye" });
-    expect(state.queries).toEqual([{ table: "attempts", eqs: [["id", "attempt-1"], ["student_id", "student-1"]] }]);
+    expect(state.queries).toEqual(STAGE_QUERIES("discovery"));
     for (const [body] of state.create.mock.calls as Array<[SentBody]>) {
       expect(body.model).toBe("gpt-6-luna");
     }
@@ -181,6 +200,55 @@ describe("POST /api/student/call-turn", () => {
     const start = await callTurn({ newMessage: undefined, start: true, callSeconds: 0 });
     expect(await start.json()).toEqual({ reply: "We run eight practices." });
     expect(state.create).toHaveBeenCalledTimes(1);
+  });
+
+  it.each<[string, Record<string, unknown>, Record<string, unknown>]>([
+    ["Dr. Kim while the attempt is on Discovery", { persona: "tempo_objections" }, {}],
+    ["Dana once the attempt has moved on to Presentation", {}, { current_stage: "presentation" }],
+    ["Dana while the attempt is still on Prospecting", {}, { current_stage: "prospecting" }],
+    ["Dr. Kim on a completed attempt", { persona: "tempo_objections" }, { status: "completed", current_stage: "results" }],
+  ])("403 for %s: no model call, a generic message", async (_name, changes, attempt) => {
+    state.attempt = { ...state.attempt, ...attempt };
+    const res = await callTurn(changes);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "This call is not open on your attempt." });
+    expect(state.create).not.toHaveBeenCalled();
+  });
+
+  it("403 for a stage already completed (its score is saved), even with current_stage still on it", async () => {
+    state.stageScore = { id: "score-1" };
+    const res = await callTurn();
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "This call is not open on your attempt." });
+    expect(state.queries).toEqual(STAGE_QUERIES("discovery"));
+    expect(state.create).not.toHaveBeenCalled();
+  });
+
+  it("Dr. Kim on Objection Handling: the turn runs, and the score check is for that stage", async () => {
+    state.attempt = { ...state.attempt, current_stage: "objections" };
+    const res = await callTurn({ persona: "tempo_objections" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ reply: "Sure, go ahead.", label: "normal" });
+    expect(state.queries).toEqual(STAGE_QUERIES("objections"));
+  });
+
+  it("the stage score lookup fails: a generic 500, logged on the server, no model call", async () => {
+    state.stageScoreError = { message: "secret internal detail", code: "XX000" };
+    const res = await callTurn();
+    expect(res.status).toBe(500);
+    const text = await res.text();
+    expect(JSON.parse(text)).toEqual({ error: "Could not generate a reply." });
+    expect(text).not.toContain("secret");
+    expect(console.error).toHaveBeenCalledWith("[call-turn] stage score lookup failed:", state.stageScoreError);
+    expect(state.create).not.toHaveBeenCalled();
+  });
+
+  it("the local test bypass on (?teststage= jumps): any stage's call runs, with no stage check", async () => {
+    vi.stubEnv("TEMPO_TEST_BYPASS_GATES", "true");
+    state.attempt = { ...state.attempt, current_stage: "presentation" };
+    const res = await callTurn({ persona: "tempo_objections" });
+    expect(res.status).toBe(200);
+    expect(state.queries).toEqual([{ table: "attempts", eqs: [["id", "attempt-1"], ["student_id", "student-1"]] }]);
   });
 
   it("from the backstop on: an empty reply, endCall and endReason \"backstop\", with no model call", async () => {

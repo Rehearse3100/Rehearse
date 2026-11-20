@@ -4,7 +4,8 @@
  * calls (hooks/useSimulationVoiceSession.ts) and the /tester/ai-call page: the call time
  * and the Silence readout, the time marks (wrap-up start, final stretch, time up), the
  * two silent turns (the check-in, then afterCheckIn), the start request's localTime, the
- * mm:ss readout, the hold while the student is speaking, and the end-of-speech fallback's
+ * mm:ss readout, the hold while the student is speaking, a failed silent turn not counting,
+ * Silence restarting when the microphone is unmuted, and the end-of-speech fallback's
  * estimate (speechFallbackMs). Pure functions: every rule
  * takes the time as a number, so nothing here needs a browser or a timer.
  */
@@ -21,7 +22,9 @@ import {
   USER_SPEECH_DROPPED_MS,
   WEEKDAY_NAMES,
   callSecondsAt,
+  clockAfterMicUnmuted,
   clockAfterReplyFinished,
+  clockAfterSilentTurnFailed,
   clockAfterStudentSpeechStarted,
   clockAfterTurnSent,
   dueSilenceTurn,
@@ -242,6 +245,38 @@ describe("the student's speech holds Silence", () => {
     expect(clockAfterStudentSpeechStarted(ended, false)).toBe(ended);
     const empty = emptyCallClock();
     expect(clockAfterStudentSpeechStarted(empty, false)).toBe(empty);
+  });
+});
+
+describe("a failed silent turn and the microphone unmuted", () => {
+  it("clockAfterSilentTurnFailed: the failed silent turn doesn't count (never below 0)", () => {
+    const checkIn = clockAfterTurnSent(openedClock(), at(20), "silence", TIMINGS);
+    expect(clockAfterSilentTurnFailed(checkIn).silenceTurnsSent).toBe(0);
+    expect(clockAfterSilentTurnFailed({ ...checkIn, silenceTurnsSent: 2 }).silenceTurnsSent).toBe(1);
+    expect(clockAfterSilentTurnFailed({ ...checkIn, silenceTurnsSent: 0 }).silenceTurnsSent).toBe(0);
+    // Its reply's end still restarts Silence, and the check-in comes due again.
+    const released = clockAfterReplyFinished(clockAfterSilentTurnFailed(checkIn), at(21));
+    expect(dueSilenceTurn(released, at(21 + TIMINGS.silence), TIMINGS, false)).toBe("checkIn");
+  });
+
+  it("clockAfterMicUnmuted: on the student's turn Silence restarts from zero", () => {
+    const opened = openedClock(2);
+    const unmuted = clockAfterMicUnmuted(opened, at(60), false);
+    expect(unmuted.silenceSince).toBe(at(60));
+    expect(silenceSecondsAt(unmuted, at(60))).toBe(0);
+    expect(dueSilenceTurn(unmuted, at(60 + TIMINGS.silence - 1), TIMINGS, false)).toBeNull();
+    expect(dueSilenceTurn(unmuted, at(60 + TIMINGS.silence), TIMINGS, false)).toBe("checkIn");
+  });
+
+  it("clockAfterMicUnmuted: no change when it isn't the student's turn", () => {
+    const opened = openedClock(2);
+    expect(clockAfterMicUnmuted(opened, at(60), true)).toBe(opened);
+    const sent = clockAfterTurnSent(opened, at(10), "spoken", TIMINGS);
+    expect(clockAfterMicUnmuted(sent, at(60), false)).toBe(sent);
+    const ended = endCallClock(opened, at(5));
+    expect(clockAfterMicUnmuted(ended, at(60), false)).toBe(ended);
+    const empty = emptyCallClock();
+    expect(clockAfterMicUnmuted(empty, at(60), false)).toBe(empty);
   });
 });
 

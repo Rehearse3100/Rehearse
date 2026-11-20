@@ -24,6 +24,7 @@
  *   timing; once per silent stretch (the student's next turn re-arms it). If the student
  *   is still silent silenceAfterCheckIn seconds after the check-in's reply finished, one
  *   more with afterCheckIn: true too (the persona then ends the call); also once per stretch.
+ *   A silent turn whose request fails (or brings no reply) doesn't count: it can come due again.
  * Start, time-mark and silent turns add no student text to the history. Time marks and the
  * check-in wait while the persona's reply is coming or being spoken, then go right after
  * it (a time mark first, if both are due).
@@ -42,11 +43,14 @@
  * goodbye is in the transcript. With the avatar on, the mic is muted and the avatar says
  * the whole goodbye (after anything it is still saying), then stops: it stops at the end
  * of speech of the last talk() sent, or speechFallbackMs(goodbye) after the goodbye's talk()
- * (lib/call-clock.ts: an estimate of how long it takes to say) if Anam reports none.
- * "Reset chat" re-enables it all.
+ * (lib/call-clock.ts: an estimate of how long it takes to say; armed before talk() is
+ * awaited) if Anam reports none. Past CALL_TIMINGS.backstop the call ends here too (a
+ * local safety stop, as in the live call). "Reset chat" re-enables it all.
  * A reply "finishes" when it arrives, or, when the avatar speaks it, when Anam reports the
- * persona's message done (MESSAGE_HISTORY_UPDATED ending on the persona). From a turn
- * until then, Silence stays at 00:00: it's the persona's turn.
+ * persona's message done (MESSAGE_HISTORY_UPDATED ending on the persona, or adding nothing
+ * and ending on the student's message already handled: the persona's message is updated in
+ * place) and no other talk() is still in flight. From a turn until then, Silence stays at
+ * 00:00: it's the persona's turn.
  *
  * Self-contained on purpose: besides React, Next.js and @anam-ai/js-sdk, it imports only
  * lib/call-config.ts and lib/call-clock.ts (client-safe). The avatar part is a small copy
@@ -78,6 +82,7 @@ import {
   TIME_MARKS,
   callSecondsAt,
   clockAfterReplyFinished,
+  clockAfterSilentTurnFailed,
   clockAfterTurnSent,
   dueSilenceTurn,
   dueTimeMark,
@@ -378,16 +383,18 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
       // The student's speech could interrupt the goodbye: the call is over, so the mic goes off.
       setIsMicMuted(client.muteInputAudio().isMuted);
       stopAvatarAfterSpeechRef.current = true;
-      const isSpeaking = await speakReply(goodbye);
-      // Reset chat during the goodbye cancels the stop (the avatar stays on).
+      // speakReply sets the talk's time and estimate before it awaits talk(), so the fallback
+      // is armed first: a talk() that never settles still stops the avatar.
+      const speaking = speakReply(goodbye);
+      armGoodbyeFallback();
+      const isSpeaking = await speaking;
+      // Reset chat during the goodbye cancels the stop (the avatar stays on); the stop may also have happened already.
       if (!stopAvatarAfterSpeechRef.current) {
         return;
       }
       if (!isSpeaking) {
         stopAvatar();
-        return;
       }
-      armGoodbyeFallback();
     },
     [updateClock, stopAvatar, speakReply, armGoodbyeFallback]
   );
@@ -538,6 +545,10 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
           return;
         }
         if (!response.ok || reply === null) {
+          // A silent turn that failed doesn't count, so it can come due again.
+          if (via === "silence") {
+            updateClock(clockAfterSilentTurnFailed);
+          }
           markReplyFinished();
           return;
         }
@@ -548,6 +559,9 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
       } catch (error) {
         if (epoch === conversationEpochRef.current) {
           addLine({ kind: "error", text: `Request failed: ${errorText(error)}`, ms: Math.round(performance.now() - startedAt) });
+          if (via === "silence") {
+            updateClock(clockAfterSilentTurnFailed);
+          }
           markReplyFinished();
         }
       } finally {
@@ -572,8 +586,8 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
   const isCallEnded = clock.endedAt !== null;
   const isClockRunning = clock.startedAt !== null && !isCallEnded;
 
-  // While the call runs: refresh the readouts, apply the end-of-speech fallback, and send
-  // a due time mark or silence check-in.
+  // While the call runs: refresh the readouts, stop the call past the backstop (as the live
+  // call does), apply the end-of-speech fallback, and send a due time mark or silence check-in.
   useEffect(() => {
     if (!isClockRunning) {
       return undefined;
@@ -581,6 +595,12 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
     const tick = (): void => {
       const at = Date.now();
       setNow(at);
+      const backstop = CALL_TIMINGS[personaRef.current].backstop;
+      if (clockRef.current.endedAt === null && callSecondsAt(clockRef.current, at) >= backstop) {
+        addLine({ kind: "note", text: `Backstop (${formatClock(backstop)}) passed: the call ends here (local safety stop).` });
+        void endCall(null);
+        return;
+      }
       if (isAwaitingSpeechEndRef.current && at - speechSentAtRef.current >= speechFallbackMsRef.current) {
         isAwaitingSpeechEndRef.current = false;
         addLine({
@@ -594,7 +614,7 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
     tick();
     const timer = window.setInterval(tick, CLOCK_TICK_MS);
     return () => window.clearInterval(timer);
-  }, [isClockRunning, addLine, markReplyFinished, runClockChecks]);
+  }, [isClockRunning, addLine, markReplyFinished, runClockChecks, endCall]);
 
   // ── Avatar: start ───
 
@@ -653,19 +673,29 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
       // Muted by default: the SDK keeps this state and applies it to the mic when the stream starts.
       setIsMicMuted(client.muteInputAudio().isMuted);
       clientRef.current = client;
+      // The history's length at this client's last update. The SDK adds a message at the end
+      // only when it starts and updates a persona message in place, so an update that adds
+      // nothing and ends on the student's message already handled is the persona's end of
+      // speech (words heard while it spoke stay last), as in the live call.
+      let lastHistoryLength = 0;
       client.addListener(AnamEvent.MESSAGE_HISTORY_UPDATED, (history: Message[]): void => {
         if (clientRef.current !== client) {
           return;
         }
+        const previousLength = lastHistoryLength;
+        lastHistoryLength = history.length;
         const last = history[history.length - 1];
         if (!last) {
           return;
         }
-        if (last.role === MessageRole.PERSONA) {
+        const isPersonaEndInPlace =
+          last.role === MessageRole.USER && processedMessageIdsRef.current.has(last.id) && history.length === previousLength;
+        if (last.role === MessageRole.PERSONA || isPersonaEndInPlace) {
           talksInFlightRef.current = Math.max(0, talksInFlightRef.current - 1);
-          // The avatar finished speaking the reply: Silence counts from here, and a time mark
+          // The avatar finished speaking the reply (once no talk() is left in flight: an
+          // earlier reply's end leaves it playing): Silence counts from here, and a time mark
           // or check-in that came due while it spoke goes now.
-          if (isAwaitingSpeechEndRef.current) {
+          if (isAwaitingSpeechEndRef.current && talksInFlightRef.current === 0) {
             isAwaitingSpeechEndRef.current = false;
             markReplyFinished();
             runClockChecks();

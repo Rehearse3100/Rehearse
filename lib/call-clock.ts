@@ -122,6 +122,23 @@ export function clockAfterTurnSent(clock: CallClock, now: number, via: TurnSourc
   };
 }
 
+/**
+ * A silent turn whose request failed doesn't count: silenceTurnsSent goes back one (not
+ * below 0), so the same silent turn can come due again.
+ */
+export function clockAfterSilentTurnFailed(clock: CallClock): CallClock {
+  return { ...clock, silenceTurnsSent: Math.max(0, clock.silenceTurnsSent - 1) };
+}
+
+/**
+ * The student unmuted their mic. While muted, Silence is paused (the live call sends no
+ * check-in or silence ending); on the student's turn it starts again from zero at `now`.
+ * No change during the persona's turn (the reply's end starts it) or once ended.
+ */
+export function clockAfterMicUnmuted(clock: CallClock, now: number, isBusy: boolean): CallClock {
+  return isStudentsTurn(clock, isBusy) ? { ...clock, silenceSince: now } : clock;
+}
+
 /** The persona's reply finished at `now` (or the turn failed): Silence counts from here. No change once ended. */
 export function clockAfterReplyFinished(clock: CallClock, now: number): CallClock {
   return clock.startedAt === null || clock.endedAt !== null ? clock : { ...clock, silenceSince: now };

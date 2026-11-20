@@ -5,7 +5,9 @@
  * on mount with the microphone stream the student enabled in the lobby, the student's
  * camera preview, the speaking rings, mute and camera, the live transcript bubbled up,
  * and the call's end, once (the brain's endReason through onCallEnd, or "student" from
- * the end-call button). Returns what TempoCallSessionShell renders; each session adds
+ * the end-call button; pressed while the persona's ending is under way, the button keeps
+ * that ending's reason). Unmounted before the call ended, it ends the voice session and
+ * stops the microphone and camera tracks. Returns what TempoCallSessionShell renders; each session adds
  * its persona's name, role, connecting line and the Avatar, and its own extras (the
  * objection tracker).
  *
@@ -98,6 +100,8 @@ export function useTempoCallSession<PersonaRole extends string>({
   /** The voice hook's mute flag (pauseMic and resumeMic keep it). */
   const isMutedRef = useRef(false);
   const hasEndedRef = useRef(false);
+  /** False once unmounted (strict mode's test unmount sets it back to true on the remount). */
+  const isMountedRef = useRef(false);
   const studentVideoRef = useRef<HTMLVideoElement | null>(null);
   const activeVideoStreamRef = useRef<MediaStream | null>(videoStream);
   /** handleEndCall, for the voice hook's onCallEnd (the hook is set up before handleEndCall exists). */
@@ -114,6 +118,8 @@ export function useTempoCallSession<PersonaRole extends string>({
 
   const voiceRef = useRef(voice);
   voiceRef.current = voice;
+  const audioStreamRef = useRef(audioStream);
+  audioStreamRef.current = audioStream;
 
   const callbacksRef = useRef({ onActive, onError, connectErrorMessage });
   callbacksRef.current = { onActive, onError, connectErrorMessage };
@@ -286,10 +292,29 @@ export function useTempoCallSession<PersonaRole extends string>({
 
   handleEndCallRef.current = handleEndCall;
 
-  /** The end-call button: stops at once. */
+  /** The end-call button: stops at once. During the persona's ending, the call keeps that ending's reason. */
   const handleEndCallButton = useCallback((): void => {
-    handleEndCall("student");
+    handleEndCall(voiceRef.current.getPendingEndReason() ?? "student");
   }, [handleEndCall]);
+
+  // Unmounted before the call ended (the student navigated away): nothing is left running.
+  // React's strict mode (development) runs this cleanup once right after mounting and then
+  // mounts again, so the stop waits a moment and happens only if no remount followed.
+  useEffect(() => {
+    isMountedRef.current = true;
+    return (): void => {
+      isMountedRef.current = false;
+      window.setTimeout(() => {
+        if (isMountedRef.current || hasEndedRef.current) {
+          return;
+        }
+        hasEndedRef.current = true;
+        voiceRef.current.endCall();
+        audioStreamRef.current.getTracks().forEach((track) => track.stop());
+        activeVideoStreamRef.current?.getTracks().forEach((track) => track.stop());
+      }, 0);
+    };
+  }, []);
 
   return {
     avatarRef: voice.avatarRef,

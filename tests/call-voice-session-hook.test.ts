@@ -9,7 +9,12 @@
  * dropped-detection rule), endCall (mic muted, reply spoken in full, then the avatar stops
  * and onCallEnd gets the reason), the "[call]" diagnostics (no reply or student text),
  * mute (Anam's own input mute on the same stream) and the Anam session config (set at
- * render only).
+ * render only). The review fixes: the pending ending's reason, an interruption that keeps
+ * the turn in flight (and, during an ending, ends the call only when the closing line is
+ * the last talk in flight), mute pausing Silence, queued words flushed on unmute and by the
+ * tick, a failed silent turn not counting, an earlier reply's end of speech not finishing
+ * the current one, the ending fallback armed before talk() settles, and the local safety
+ * stops (the backstop and Anam's connection closing).
  * React's hooks are replaced by a small synchronous stand-in (state, refs and effects
  * kept by call order, like one mounted component); the Avatar module, the Anam SDK's
  * MessageRole and fetch are mocked; timers and Date are fake. Nothing leaves the machine.
@@ -81,11 +86,12 @@ vi.mock("@/components/Avatar", () => ({
 
 vi.mock("@anam-ai/js-sdk", () => ({ MessageRole: { USER: "user", PERSONA: "persona" } }));
 
-type Reply = Record<string, unknown> | number;
+/** A reply body, an error status, or a promise of either (a reply that comes back later). */
+type Reply = Record<string, unknown> | number | Promise<Record<string, unknown> | number>;
 const replies: Reply[] = [];
 
 const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
-  const next = replies.shift() ?? { reply: "Mm-hm.", label: "normal" };
+  const next = await (replies.shift() ?? { reply: "Mm-hm.", label: "normal" });
   const status = typeof next === "number" ? next : 200;
   return { ok: status === 200, status, json: async () => (typeof next === "number" ? {} : next) };
 });
@@ -476,6 +482,229 @@ describe("Dana / Dr. Kim: the shared call brain", () => {
       { attemptId: "attempt-7", stage: "objections" },
       { attemptId: "attempt-7", stage: "objections" },
     ]);
+  });
+
+  // ── The review fixes ───
+  // No render() while an ending is under way: this stand-in re-runs every effect on every
+  // render, so the effect that clears the ending's fallback timer on unmount would clear it.
+
+  it("getPendingEndReason: none before the ending, the brain's reason while the closing line plays, none after", async () => {
+    await startDanaCall();
+    await openingSpoken();
+    const voice = render();
+    expect(voice.getPendingEndReason()).toBeNull();
+    replies.push({ reply: "Take care.", endCall: true, endReason: "crisis", label: "crisis" });
+    await studentSaid("I don't want to be here anymore.");
+    // End pressed now saves this reason (useTempoCallSession), not "student".
+    expect(voice.getPendingEndReason()).toBe("crisis");
+    await personaFinished("Take care.");
+    expect(voice.getPendingEndReason()).toBeNull();
+  });
+
+  it("an interruption only stops playback: the turn in flight is kept, its reply spoken, and the student's next words wait for it", async () => {
+    const { avatar } = await startDanaCall();
+    await openingSpoken();
+    let release: (reply: Record<string, unknown>) => void = () => undefined;
+    replies.push(new Promise((resolve) => (release = resolve)));
+    await studentSaid("How many offices do you have?");
+    expect(sent()).toHaveLength(2);
+
+    avatarModule.callbacks.onTalkStreamInterrupted?.("talk-1");
+    expect(avatar.stopSpeaking).toHaveBeenCalledTimes(1);
+    // Still in flight: the student's next words are queued, not sent as a second turn.
+    await studentSaid("And how many people?");
+    expect(sent()).toHaveLength(2);
+
+    release({ reply: "We have eight offices.", label: "normal" });
+    await flush();
+    expect(avatar.talk).toHaveBeenLastCalledWith("We have eight offices.");
+    await personaFinished("We have eight offices.");
+    await vi.advanceTimersByTimeAsync(700);
+    expect(sent()).toHaveLength(3);
+    expect(lastSent()?.body).toMatchObject({ newMessage: "And how many people?" });
+    expect(lastSent()?.body.messages).toEqual([
+      { role: "assistant", content: "Hi, this is Dana." },
+      { role: "user", content: "How many offices do you have?" },
+      { role: "assistant", content: "We have eight offices." },
+    ]);
+  });
+
+  it("an interruption during the ending: the call ends at once when the closing line is the only talk in flight", async () => {
+    const { avatar, onCallEnd } = await startDanaCall();
+    await openingSpoken();
+    replies.push({ reply: "Thanks, bye now.", endCall: true, endReason: "goodbye", label: "goodbye" });
+    await studentSaid("That's all from me, bye.");
+    avatarModule.callbacks.onTalkStreamInterrupted?.("talk-2");
+    expect(onCallEnd).toHaveBeenCalledWith("goodbye");
+    expect(avatar.endSession).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(console.info).mock.calls.map((args) => args.join(" "))).toContain("[call] ending finished: by interrupted (goodbye)");
+  });
+
+  it("an interruption during the ending with an earlier talk still in flight: the closing line's fallback stands", async () => {
+    const { onCallEnd } = await startDanaCall();
+    // No end of speech for the opening: its fallback finishes it at 3.75 s, but its talk is still counted.
+    await vi.advanceTimersByTimeAsync(4_000);
+    replies.push({ reply: "Thanks, bye now.", endCall: true, endReason: "goodbye", label: "goodbye" });
+    await studentSaid("That's all from me, bye.");
+    // Two talks in flight: this interruption may be the opening's, so the call doesn't end yet.
+    avatarModule.callbacks.onTalkStreamInterrupted?.("talk-1");
+    expect(onCallEnd).not.toHaveBeenCalled();
+    // The closing line's estimate (3 words: 3.2 s from its talk()).
+    await vi.advanceTimersByTimeAsync(3_100);
+    expect(onCallEnd).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(onCallEnd).toHaveBeenCalledTimes(1);
+    expect(onCallEnd).toHaveBeenCalledWith("goodbye");
+  });
+
+  it("mute pauses Silence: no check-in while muted; unmuted, Silence starts again from zero", async () => {
+    const { avatar } = await startDanaCall();
+    await personaFinished();
+    const voice = render();
+    await vi.advanceTimersByTimeAsync(10_000);
+    voice.pauseMic();
+    await vi.advanceTimersByTimeAsync(50_000);
+    expect(sent()).toHaveLength(1);
+
+    // Unmuted at 60 s: the check-in comes 20 s later, at 80 s.
+    voice.resumeMic();
+    expect(avatar.setInputMuted).toHaveBeenLastCalledWith(false);
+    await vi.advanceTimersByTimeAsync(19_900);
+    expect(sent()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(lastSent()?.body).toMatchObject({ silent: true, silenceSeconds: 20, callSeconds: 80 });
+    expect(lastSent()?.body).not.toHaveProperty("afterCheckIn");
+
+    // The check-in has been spoken; muted again: no afterCheckIn (and so no silence ending) while muted.
+    await personaFinished();
+    voice.pauseMic();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(sent()).toHaveLength(2);
+    // Unmuted at 200.1 s: afterCheckIn is due 10 s later, seen at the 210.25 s tick.
+    voice.resumeMic();
+    await vi.advanceTimersByTimeAsync(9_800);
+    expect(sent()).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(400);
+    expect(lastSent()?.body).toMatchObject({ silent: true, afterCheckIn: true, silenceSeconds: 10 });
+  });
+
+  it("words queued while muted go as soon as the mic is unmuted", async () => {
+    await startDanaCall();
+    await openingSpoken();
+    const voice = render();
+    voice.pauseMic();
+    // A transcript Anam delivers while muted is queued, not sent.
+    await studentSaid("Sorry, I was on mute.");
+    expect(sent()).toHaveLength(1);
+    voice.resumeMic();
+    await flush();
+    expect(sent()).toHaveLength(2);
+    expect(lastSent()?.body).toMatchObject({ newMessage: "Sorry, I was on mute." });
+  });
+
+  it("the clock tick sends queued words (no waiting for the next flush timer)", async () => {
+    await startDanaCall();
+    await personaFinished();
+    // Heard during the 200 ms cooldown after the reply: queued.
+    await vi.advanceTimersByTimeAsync(100);
+    await studentSaid("Yes, go ahead.");
+    expect(sent()).toHaveLength(1);
+    // The 250 ms tick sends it, before the 600 ms flush timer.
+    await vi.advanceTimersByTimeAsync(300);
+    expect(sent()).toHaveLength(2);
+    expect(lastSent()?.body).toMatchObject({ newMessage: "Yes, go ahead." });
+  });
+
+  it("a silent turn whose request fails doesn't count: the check-in comes due again, not afterCheckIn", async () => {
+    await startDanaCall();
+    await personaFinished();
+    replies.push(500);
+    await vi.advanceTimersByTimeAsync(20_100);
+    expect(sent()).toHaveLength(2);
+    expect(lastSent()?.body).toMatchObject({ silent: true, silenceSeconds: 20 });
+    // Silence counts again from the failure (20 s): no afterCheckIn at 30 s.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(sent()).toHaveLength(2);
+    // The check-in again at 40 s.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(sent()).toHaveLength(3);
+    expect(lastSent()?.body).toMatchObject({ silent: true, silenceSeconds: 20, callSeconds: 40 });
+    expect(lastSent()?.body).not.toHaveProperty("afterCheckIn");
+  });
+
+  it("an earlier reply's end of speech doesn't finish the current reply; the current one's does", async () => {
+    await startDanaCall();
+    // No end of speech for the opening: its fallback finishes it at 3.75 s (its talk still counted).
+    await vi.advanceTimersByTimeAsync(4_000);
+    await studentSaid("Thanks for having me.");
+    expect(sent()).toHaveLength(2);
+    // At 4.1 s the opening's end of speech arrives: "Mm-hm." is still playing.
+    await vi.advanceTimersByTimeAsync(100);
+    await personaFinished("Hi, this is Dana.");
+    // At 5 s "Mm-hm." ends: Silence counts from 5 s, so the check-in is due at 25 s.
+    await vi.advanceTimersByTimeAsync(900);
+    await personaFinished("Mm-hm.");
+    await vi.advanceTimersByTimeAsync(19_900);
+    expect(sent()).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(sent()).toHaveLength(3);
+    expect(lastSent()?.body).toMatchObject({ silent: true, silenceSeconds: 20, callSeconds: 25 });
+  });
+
+  it("a closing talk() that never settles still ends the call at its estimate (the fallback is armed first)", async () => {
+    const { avatar, onCallEnd } = await startDanaCall();
+    await openingSpoken();
+    avatar.talk.mockImplementationOnce(() => new Promise(() => undefined));
+    replies.push({ reply: "Thanks, bye now.", endCall: true, endReason: "goodbye", label: "goodbye" });
+    await studentSaid("That's all from me, bye.");
+    expect(avatar.talk).toHaveBeenLastCalledWith("Thanks, bye now.");
+    await vi.advanceTimersByTimeAsync(3_100);
+    expect(onCallEnd).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(onCallEnd).toHaveBeenCalledWith("goodbye");
+    expect(avatar.endSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("past the backstop (18:00 of call time) the call ends locally with \"backstop\", once", async () => {
+    const { avatar, onCallEnd } = await startDanaCall();
+    await personaFinished();
+    // The stand-in brain never ends the call, so only the local stop can.
+    await vi.advanceTimersByTimeAsync(1_079_900);
+    expect(onCallEnd).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(onCallEnd).toHaveBeenCalledTimes(1);
+    expect(onCallEnd).toHaveBeenCalledWith("backstop");
+    expect(avatar.endSession).toHaveBeenCalledTimes(1);
+    const lines = vi.mocked(console.info).mock.calls.map((args) => args.join(" "));
+    expect(lines).toEqual(expect.arrayContaining(["[call] safety stop: clock", "[call] ending finished: by safety stop (backstop)"]));
+    const sentAtEnd = sent().length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(onCallEnd).toHaveBeenCalledTimes(1);
+    expect(sent()).toHaveLength(sentAtEnd);
+  });
+
+  it("Anam's connection closing mid-call ends the call with \"backstop\", once", async () => {
+    const { avatar, onCallEnd } = await startDanaCall();
+    await openingSpoken();
+    avatarModule.callbacks.onConnectionClosed?.("connection lost");
+    expect(onCallEnd).toHaveBeenCalledTimes(1);
+    expect(onCallEnd).toHaveBeenCalledWith("backstop");
+    expect(avatar.endSession).toHaveBeenCalledTimes(1);
+    // Our own endSession closing it again: nothing more.
+    avatarModule.callbacks.onConnectionClosed?.("closed");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(onCallEnd).toHaveBeenCalledTimes(1);
+    expect(sent()).toHaveLength(1);
+  });
+
+  it("the connection closing during the persona's ending ends it with the ending's own reason", async () => {
+    const { onCallEnd } = await startDanaCall();
+    await openingSpoken();
+    replies.push({ reply: "We're out of time, thanks.", endCall: true, endReason: "time_up" });
+    await studentSaid("One more thing.");
+    avatarModule.callbacks.onConnectionClosed?.("connection lost");
+    expect(onCallEnd).toHaveBeenCalledTimes(1);
+    expect(onCallEnd).toHaveBeenCalledWith("time_up");
   });
 
   it("a start turn that fails: the call doesn't start and the avatar session is closed", async () => {
