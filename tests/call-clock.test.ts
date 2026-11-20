@@ -4,7 +4,8 @@
  * calls (hooks/useSimulationVoiceSession.ts) and the /tester/ai-call page: the call time
  * and the Silence readout, the time marks (wrap-up start, final stretch, time up), the
  * two silent turns (the check-in, then afterCheckIn), the start request's localTime, the
- * mm:ss readout, and the hold while the student is speaking. Pure functions: every rule
+ * mm:ss readout, the hold while the student is speaking, and the end-of-speech fallback's
+ * estimate (speechFallbackMs). Pure functions: every rule
  * takes the time as a number, so nothing here needs a browser or a timer.
  */
 
@@ -12,7 +13,10 @@ import { describe, expect, it } from "vitest";
 import { CALL_PERSONAS, CALL_TIMINGS } from "@/lib/call-config";
 import {
   CLOCK_TICK_MS,
-  SPEECH_END_FALLBACK_MS,
+  SPEECH_FALLBACK_BASE_MS,
+  SPEECH_FALLBACK_MAX_MS,
+  SPEECH_FALLBACK_MIN_MS,
+  SPEECH_FALLBACK_PER_WORD_MS,
   TIME_MARKS,
   USER_SPEECH_DROPPED_MS,
   WEEKDAY_NAMES,
@@ -28,6 +32,7 @@ import {
   isStudentsTurn,
   localTimeAt,
   silenceSecondsAt,
+  speechFallbackMs,
   startCallClock,
   timeMarksReached,
   type CallClock,
@@ -47,7 +52,9 @@ function openedClock(repliedAt = 0): CallClock {
 describe("constants", () => {
   it("the timers and the time marks in call-time order", () => {
     expect(CLOCK_TICK_MS).toBe(250);
-    expect(SPEECH_END_FALLBACK_MS).toBe(30_000);
+    expect([SPEECH_FALLBACK_BASE_MS, SPEECH_FALLBACK_PER_WORD_MS, SPEECH_FALLBACK_MIN_MS, SPEECH_FALLBACK_MAX_MS]).toEqual([
+      2_000, 400, 3_000, 30_000,
+    ]);
     expect(USER_SPEECH_DROPPED_MS).toBe(10_000);
     expect([...TIME_MARKS]).toEqual(["wrapUpStart", "finalStretch", "callLength"]);
     for (const persona of CALL_PERSONAS) {
@@ -55,6 +62,22 @@ describe("constants", () => {
       expect(timings.wrapUpStart < timings.finalStretch && timings.finalStretch < timings.callLength, persona).toBe(true);
       expect(timings.callLength < timings.backstop, persona).toBe(true);
     }
+  });
+});
+
+describe("speechFallbackMs: the end-of-speech fallback, 2 s + 0.4 s per word, 3 s to 30 s", () => {
+  it.each([
+    ["no words: the 3 s floor", "", 3_000],
+    ["only whitespace: no words", "  \n\t ", 3_000],
+    ["one word (2.4 s): the 3 s floor", "Okay.", 3_000],
+    ["two words: exactly 2.8 s, still the floor", "Okay, bye.", 3_000],
+    ["three words: 3.2 s", "Thanks, bye now.", 3_200],
+    ["extra whitespace between words counts once", "  Thanks,\n  bye   now. ", 3_200],
+    ["ten words: 6 s", "one two three four five six seven eight nine ten", 6_000],
+    ["70 words: exactly 30 s", Array(70).fill("word").join(" "), 30_000],
+    ["100 words: the 30 s cap", Array(100).fill("word").join(" "), 30_000],
+  ])("%s", (_name, text, expected) => {
+    expect(speechFallbackMs(text)).toBe(expected);
   });
 });
 

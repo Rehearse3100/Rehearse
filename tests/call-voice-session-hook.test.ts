@@ -3,10 +3,13 @@
  * hooks/useSimulationVoiceSession.ts on the live Dana / Dr. Kim path (the shared call
  * brain, POST /api/student/call-turn) and on the legacy "simulation" path (POST /api/chat,
  * unchanged): the opening start turn and its gate, the spoken turns with strikes, Anam's
- * end of speech, the silence turns and time marks from the clock, the hold while the
- * student is speaking (and the dropped-detection rule), endCall (mic muted, reply
- * spoken in full, then the avatar stops and onCallEnd gets the reason), mute (Anam's own
- * input mute on the same stream) and the Anam session config (set at render only).
+ * end of speech (also when the persona's message is updated in place with the student's
+ * words still last) and, with none, the reply's estimate (speechFallbackMs), the silence
+ * turns and time marks from the clock, the hold while the student is speaking (and the
+ * dropped-detection rule), endCall (mic muted, reply spoken in full, then the avatar stops
+ * and onCallEnd gets the reason), the "[call]" diagnostics (no reply or student text),
+ * mute (Anam's own input mute on the same stream) and the Anam session config (set at
+ * render only).
  * React's hooks are replaced by a small synchronous stand-in (state, refs and effects
  * kept by call order, like one mounted component); the Avatar module, the Anam SDK's
  * MessageRole and fetch are mocked; timers and Date are fake. Nothing leaves the machine.
@@ -162,6 +165,8 @@ beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  // The hook's "[call]" diagnostics: silenced, and read by the tests that check them.
+  vi.spyOn(console, "info").mockImplementation(() => undefined);
   fetchMock.mockClear();
   replies.length = 0;
   hooks.values = [];
@@ -271,7 +276,7 @@ describe("Dana / Dr. Kim: the shared call brain", () => {
   it("the time marks go on the student's turn at 12:00, 14:00 and 15:00 of call time", async () => {
     await startDanaCall();
     await personaFinished();
-    // No end-of-speech events from here: each reply counts as spoken after the 30 s fallback.
+    // No end-of-speech events from here: each reply counts as spoken after its estimate (speechFallbackMs).
     await vi.advanceTimersByTimeAsync(900_100);
     const marks = sent().filter((request) => request.body.timeMark === true);
     expect(marks.map((request) => request.body.callSeconds)).toEqual([720, 840, 900]);
@@ -330,15 +335,100 @@ describe("Dana / Dr. Kim: the shared call brain", () => {
     expect(render().callSeconds).toBe(seconds);
   });
 
-  it("no end of speech after the closing reply: the call still ends after the fallback", async () => {
+  it("no end of speech after the closing reply: the call ends after the reply's estimate (5 words: 4 s), not 30 s", async () => {
     const { onCallEnd } = await startDanaCall();
     await openingSpoken();
     replies.push({ reply: "We're out of time, thanks.", endCall: true, endReason: "time_up" });
     await studentSaid("One more thing.");
-    await vi.advanceTimersByTimeAsync(29_900);
+    await vi.advanceTimersByTimeAsync(3_900);
     expect(onCallEnd).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(200);
     expect(onCallEnd).toHaveBeenCalledWith("time_up");
+  });
+
+  it("no end-of-speech event at all: the opening counts as spoken after its estimate; an ending turn ends the call after the closing line's", async () => {
+    const { avatar, onCallEnd } = await startDanaCall();
+    // "Hi, this is Dana." is 4 words: 2 s + 4 × 0.4 s = 3.6 s, seen at the 3.75 s tick; then the mic opens.
+    await vi.advanceTimersByTimeAsync(3_700);
+    expect(avatar.setInputMuted).not.toHaveBeenCalledWith(false);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(avatar.setInputMuted).toHaveBeenLastCalledWith(false);
+
+    replies.push({ reply: "Thanks, bye now.", endCall: true, endReason: "goodbye", label: "goodbye" });
+    await studentSaid("That's all from me, bye.");
+    expect(avatar.talk).toHaveBeenLastCalledWith("Thanks, bye now.");
+    // 3 words: 2 s + 3 × 0.4 s = 3.2 s from its talk().
+    await vi.advanceTimersByTimeAsync(3_100);
+    expect(onCallEnd).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(onCallEnd).toHaveBeenCalledWith("goodbye");
+    expect(avatar.endSession).toHaveBeenCalledTimes(1);
+
+    // The diagnostics: one "[call]" line per step, and never the reply's or the student's text.
+    const lines = vi.mocked(console.info).mock.calls.map((args) => args.join(" "));
+    expect(lines.every((line) => line.startsWith("[call] "))).toBe(true);
+    expect(lines).toEqual([
+      "[call] turn sent: start",
+      "[call] reply received: endCall false, endReason none, label none",
+      "[call] talk() sent: fallback 3600 ms, 1 talks in flight",
+      "[call] turn sent: spoken",
+      "[call] reply received: endCall true, endReason goodbye, label goodbye",
+      "[call] talk() sent: fallback 3200 ms, 2 talks in flight",
+      "[call] ending finished: by fallback (goodbye)",
+    ]);
+    for (const text of ["Hi, this is Dana", "Thanks, bye now", "That's all from me"]) {
+      expect(lines.join("\n"), text).not.toContain(text);
+    }
+  });
+
+  it("no end-of-speech event at all: the check-in at 20 s of Silence, afterCheckIn 10 s after the check-in's estimate", async () => {
+    await startDanaCall();
+    replies.push({ reply: "Hello? Are you still there?" });
+    // The opening counts as spoken at 3.75 s (its 3.6 s estimate), so the check-in is due at 23.75 s.
+    await vi.advanceTimersByTimeAsync(23_700);
+    expect(sent()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(lastSent()?.body).toMatchObject({ silent: true, silenceSeconds: 20, callSeconds: 23 });
+    expect(lastSent()?.body).not.toHaveProperty("afterCheckIn");
+
+    // Its reply (5 words: 4 s) counts as spoken at 27.75 s; afterCheckIn 10 s later, at 37.75 s.
+    await vi.advanceTimersByTimeAsync(13_900);
+    expect(sent()).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(lastSent()?.body).toMatchObject({ silent: true, afterCheckIn: true, silenceSeconds: 10, callSeconds: 37 });
+    expect(vi.mocked(console.info).mock.calls.map((args) => args.join(" "))).toEqual(
+      expect.arrayContaining(["[call] silence turn due: checkIn", "[call] silence turn due: afterCheckIn"])
+    );
+  });
+
+  it("the persona's end of speech with the student's words still last (Anam updates its message in place) counts: the closing line ends the call at once", async () => {
+    const { avatar, onCallEnd } = await startDanaCall();
+    // A growing history, as the SDK keeps it: a message is added at the end only when it starts.
+    const opening = { id: "persona::1", role: "persona", content: "Hi, this is Dana." } as unknown as Message;
+    const bye = { id: "user::2", role: "user", content: "That's all from me, bye." } as unknown as Message;
+    const closingStarted = { id: "persona::3", role: "persona", content: "Thanks," } as unknown as Message;
+    const closingSaid = { id: "persona::3", role: "persona", content: "Thanks, bye now." } as unknown as Message;
+    const late = { id: "user::4", role: "user", content: "Oh, and one more thing." } as unknown as Message;
+    const update = async (history: Message[]): Promise<void> => {
+      avatarModule.callbacks.onMessageHistoryUpdated?.(history);
+      await flush();
+    };
+
+    await update([opening]);
+    await vi.advanceTimersByTimeAsync(300);
+    replies.push({ reply: "Thanks, bye now.", endCall: true, endReason: "goodbye", label: "goodbye" });
+    await update([opening, bye]);
+    expect(avatar.talk).toHaveBeenLastCalledWith("Thanks, bye now.");
+
+    // The student's late words, heard while the closing line plays: added after it, not sent.
+    await update([opening, bye, closingStarted, late]);
+    expect(onCallEnd).not.toHaveBeenCalled();
+    // The closing line's end of speech: updated in place, so the student's message is still last.
+    await update([opening, bye, closingSaid, late]);
+    expect(onCallEnd).toHaveBeenCalledWith("goodbye");
+    expect(avatar.endSession).toHaveBeenCalledTimes(1);
+    expect(sent()).toHaveLength(2);
+    expect(vi.mocked(console.info).mock.calls.map((args) => args.join(" "))).toContain("[call] ending finished: by event (goodbye)");
   });
 
   it("the end-call button during the closing reply stops at once; onCallEnd is not called", async () => {

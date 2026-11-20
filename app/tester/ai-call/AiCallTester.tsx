@@ -41,8 +41,9 @@
  * the timer stops, sending is disabled and "Call ended by the persona" shows, after the
  * goodbye is in the transcript. With the avatar on, the mic is muted and the avatar says
  * the whole goodbye (after anything it is still saying), then stops: it stops at the end
- * of speech of the last talk() sent, or SPEECH_END_FALLBACK_MS after the last talk() or
- * end of speech if Anam reports none. "Reset chat" re-enables it all.
+ * of speech of the last talk() sent, or speechFallbackMs(goodbye) after the goodbye's talk()
+ * (lib/call-clock.ts: an estimate of how long it takes to say) if Anam reports none.
+ * "Reset chat" re-enables it all.
  * A reply "finishes" when it arrives, or, when the avatar speaks it, when Anam reports the
  * persona's message done (MESSAGE_HISTORY_UPDATED ending on the persona). From a turn
  * until then, Silence stays at 00:00: it's the persona's turn.
@@ -74,7 +75,6 @@ import { AnamEvent, MessageRole, createClient, type AnamClient, type Message } f
 import { CALL_TIMINGS } from "@/lib/call-config";
 import {
   CLOCK_TICK_MS,
-  SPEECH_END_FALLBACK_MS,
   TIME_MARKS,
   callSecondsAt,
   clockAfterReplyFinished,
@@ -86,6 +86,7 @@ import {
   formatClock,
   localTimeAt,
   silenceSecondsAt,
+  speechFallbackMs,
   type CallClock,
   type StudentTurnSource,
   type TimeMark,
@@ -227,6 +228,8 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
   /** The avatar is speaking a reply: Silence waits for Anam's end of speech (or the fallback). */
   const isAwaitingSpeechEndRef = useRef(false);
   const speechSentAtRef = useRef(0);
+  /** The last talk()'s fallback: speechFallbackMs of its text, counted from speechSentAtRef. */
+  const speechFallbackMsRef = useRef(0);
   /** Start call was clicked while the avatar was still connecting: the opening is asked for on SESSION_READY. */
   const pendingStartRef = useRef(false);
   /** The persona ended the call and the avatar is saying the goodbye: stop it at the end of speech. */
@@ -303,6 +306,7 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
       // Set before talk(): the end of speech may arrive before talk() resolves.
       isAwaitingSpeechEndRef.current = true;
       speechSentAtRef.current = Date.now();
+      speechFallbackMsRef.current = speechFallbackMs(reply);
       talksInFlightRef.current += 1;
       try {
         await client.talk(reply);
@@ -347,12 +351,13 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
     setIsMicMuted(true);
   }, [clearGoodbyeStop, markReplyFinished, setStartPending]);
 
-  /** (Re)starts the goodbye's fallback: the avatar stops this long from now even if Anam reports no end of speech. */
+  /** Arms the goodbye's fallback: even if Anam reports no end of speech, the avatar stops at the goodbye's estimate from its talk(). */
   const armGoodbyeFallback = useCallback((): void => {
     if (goodbyeTimerRef.current !== null) {
       window.clearTimeout(goodbyeTimerRef.current);
     }
-    goodbyeTimerRef.current = window.setTimeout(() => stopAvatar(), SPEECH_END_FALLBACK_MS);
+    const remainingMs = Math.max(0, speechSentAtRef.current + speechFallbackMsRef.current - Date.now());
+    goodbyeTimerRef.current = window.setTimeout(() => stopAvatar(), remainingMs);
   }, [stopAvatar]);
 
   /**
@@ -576,11 +581,11 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
     const tick = (): void => {
       const at = Date.now();
       setNow(at);
-      if (isAwaitingSpeechEndRef.current && at - speechSentAtRef.current >= SPEECH_END_FALLBACK_MS) {
+      if (isAwaitingSpeechEndRef.current && at - speechSentAtRef.current >= speechFallbackMsRef.current) {
         isAwaitingSpeechEndRef.current = false;
         addLine({
           kind: "note",
-          text: `No end of speech from Anam within ${SPEECH_END_FALLBACK_MS / 1000} s: Silence counts from now.`,
+          text: `No end of speech from Anam within ${speechFallbackMsRef.current / 1000} s of talk() (the reply's estimate): Silence counts from now.`,
         });
         markReplyFinished();
       }
@@ -666,13 +671,10 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
             runClockChecks();
           }
           // After an endCall: the avatar stops once the goodbye is said, i.e. once no talk() is
-          // left. An earlier reply still being spoken ends first; the goodbye's fallback then restarts.
-          if (stopAvatarAfterSpeechRef.current) {
-            if (talksInFlightRef.current === 0) {
-              stopAvatar();
-            } else {
-              armGoodbyeFallback();
-            }
+          // left. An earlier reply still being spoken ends first; the goodbye's fallback stays
+          // as it is (the goodbye's estimate from its talk()).
+          if (stopAvatarAfterSpeechRef.current && talksInFlightRef.current === 0) {
+            stopAvatar();
           }
           return;
         }
@@ -729,7 +731,7 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
       addLine({ kind: "error", text: `Avatar failed to start: ${errorText(error)}`, ms: null });
       stopAvatar();
     }
-  }, [addLine, markReplyFinished, runClockChecks, setStartPending, stopAvatar, armGoodbyeFallback]);
+  }, [addLine, markReplyFinished, runClockChecks, setStartPending, stopAvatar]);
 
   // Stop cleanly when the page closes or the component unmounts.
   useEffect(() => {

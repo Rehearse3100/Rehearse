@@ -17,14 +17,20 @@
  *   silent turns (the check-in, then afterCheckIn), from CALL_TIMINGS and the clock rules
  *   in lib/call-clock.ts, checked every CLOCK_TICK_MS on the student's turn.
  * A reply is "spoken" at Anam's real end of speech: MESSAGE_HISTORY_UPDATED ending on the
- * persona (talk() calls are counted against those events), or SPEECH_END_FALLBACK_MS after
- * talk() if none comes. Silence counts from there. While the student is speaking (Anam's
+ * persona, or one that adds nothing and ends on the student's message already handled (the
+ * SDK updates the persona's message in place, so words heard while it spoke stay last).
+ * talk() calls are counted against those events. If none comes, the reply counts as spoken
+ * speechFallbackMs(reply) after talk() (lib/call-clock.ts: an estimate of how long it takes
+ * to say). Silence counts from there. While the student is speaking (Anam's
  * USER_SPEECH_STARTED until USER_SPEECH_ENDED, or USER_SPEECH_DROPPED_MS with no end, as
  * Anam's events reference advises) Silence holds, so a long answer never gets the check-in.
  * endCall from the route: the mic is muted (the Avatar API), the reply is spoken in full,
  * the avatar stops, and onCallEnd(endReason) ends the call the way the end-call button
  * does. The hook exposes callSeconds from the clock. pauseMic / resumeMic are Anam's own
  * input mute (the Avatar's setInputMuted) on the stream startCall was given.
+ * Diagnostics: one console.info line, prefixed "[call]", per turn sent, reply received,
+ * talk() sent, persona end of speech, ending finished and silence turn due (types, labels
+ * and timings only: never the reply's or the student's text).
  *
  * ── Every other persona (legacy "simulation" calls): unchanged ───
  * GPT via POST /api/chat; the opening is openingGreeting (or the default greeting);
@@ -44,7 +50,6 @@ import {
 } from "@/lib/call-config";
 import {
   CLOCK_TICK_MS,
-  SPEECH_END_FALLBACK_MS,
   USER_SPEECH_DROPPED_MS,
   callSecondsAt,
   clockAfterReplyFinished,
@@ -57,6 +62,7 @@ import {
   isStudentsTurn,
   localTimeAt,
   silenceSecondsAt,
+  speechFallbackMs,
   type CallClock,
   type TurnSource,
 } from "@/lib/call-clock";
@@ -115,6 +121,9 @@ const CALL_TURN_ENDPOINT = "/api/student/call-turn";
 
 /** The rude and break_character labels this call has had (sent with every call turn). */
 type CallStrikes = { rude: number; breakCharacter: number };
+
+/** How the persona's ending finished: its end of speech, the fallback, cut off, or the reply couldn't be spoken. */
+type EndingFinish = "event" | "fallback" | "interrupted" | "not spoken";
 
 function getExtendedAvatar(ref: AvatarRef | null): ExtendedAvatarRef | null {
   return ref as ExtendedAvatarRef | null;
@@ -177,6 +186,10 @@ export function useSimulationVoiceSession(
   /** A reply is being spoken: Silence waits for Anam's end of speech (or the fallback). */
   const isAwaitingSpeechEndRef = useRef(false);
   const speechSentAtRef = useRef(0);
+  /** The last talk()'s fallback: speechFallbackMs of its text, counted from speechSentAtRef. */
+  const speechFallbackMsRef = useRef(0);
+  /** The history's length at Anam's last MESSAGE_HISTORY_UPDATED (an update adding nothing is a persona message ending in place). */
+  const historyLengthRef = useRef(0);
   /**
    * talk() commands sent this call whose end of speech hasn't come yet (one end of speech
    * per talk(), said in full or cut off, is assumed, as on the tester page). The ending
@@ -193,7 +206,7 @@ export function useSimulationVoiceSession(
   const sendCallTurnRef = useRef<(text: string, via: TurnSource) => Promise<boolean>>(async () => false);
   const runClockChecksRef = useRef<() => void>(() => undefined);
   const finishPersonaSpeechRef = useRef<(status?: string) => void>(() => undefined);
-  const completePersonaEndingRef = useRef<() => void>(() => undefined);
+  const completePersonaEndingRef = useRef<(how: EndingFinish) => void>(() => undefined);
   const releaseSilenceHoldRef = useRef<() => void>(() => undefined);
 
   useEffect(() => {
@@ -358,6 +371,7 @@ export function useSimulationVoiceSession(
       // Set before talk(): the end of speech may arrive before talk() resolves.
       isAwaitingSpeechEndRef.current = true;
       speechSentAtRef.current = Date.now();
+      speechFallbackMsRef.current = speechFallbackMs(text);
       talksInFlightRef.current += 1;
       const epoch = playbackEpochRef.current;
 
@@ -375,6 +389,7 @@ export function useSimulationVoiceSession(
         if (epoch !== playbackEpochRef.current) {
           return false;
         }
+        console.info(`[call] talk() sent: fallback ${speechFallbackMsRef.current} ms, ${talksInFlightRef.current} talks in flight`);
         await avatar.talk(text);
         return true;
       } catch (err) {
@@ -387,10 +402,11 @@ export function useSimulationVoiceSession(
     [appendTranscript]
   );
 
-  /** (Re)starts the ending's fallback: the call ends this long from now even with no end of speech. */
+  /** Arms the ending's fallback: even with no end of speech, the call ends at the closing line's estimate from its talk(). */
   const armEndingFallback = useCallback((): void => {
     clearEndingTimer();
-    endingTimerRef.current = window.setTimeout(() => completePersonaEndingRef.current(), SPEECH_END_FALLBACK_MS);
+    const remainingMs = Math.max(0, speechSentAtRef.current + speechFallbackMsRef.current - Date.now());
+    endingTimerRef.current = window.setTimeout(() => completePersonaEndingRef.current("fallback"), remainingMs);
   }, [clearEndingTimer]);
 
   /**
@@ -412,7 +428,7 @@ export function useSimulationVoiceSession(
         return;
       }
       if (!isSpeaking) {
-        completePersonaEndingRef.current();
+        completePersonaEndingRef.current("not spoken");
         return;
       }
       armEndingFallback();
@@ -433,7 +449,11 @@ export function useSimulationVoiceSession(
     const timings = CALL_TIMINGS[persona];
     if (dueTimeMark(clockRef.current, at, timings, isProcessingUserRef.current)) {
       void sendCallTurnRef.current("", "timeMark");
-    } else if (dueSilenceTurn(clockRef.current, at, timings, isProcessingUserRef.current)) {
+      return;
+    }
+    const silenceTurn = dueSilenceTurn(clockRef.current, at, timings, isProcessingUserRef.current);
+    if (silenceTurn) {
+      console.info(`[call] silence turn due: ${silenceTurn}`);
       void sendCallTurnRef.current("", "silence");
     }
   }, []);
@@ -488,6 +508,7 @@ export function useSimulationVoiceSession(
       // this turn starts the call (so the start turn sends 0).
       const silenceSeconds = silenceSecondsAt(clockRef.current, sentAt);
       const isAfterCheckIn = via === "silence" && clockRef.current.silenceTurnsSent >= 1;
+      console.info(`[call] turn sent: ${via === "silence" ? (isAfterCheckIn ? "afterCheckIn" : "checkIn") : via}`);
       updateClock((current) => clockAfterTurnSent(current, sentAt, via, timings));
       const turnCallSeconds = callSecondsAt(clockRef.current, sentAt);
       // A new turn: an older reply's end of speech and the student's speech no longer move Silence.
@@ -525,6 +546,9 @@ export function useSimulationVoiceSession(
         if (!data) {
           throw new Error(`Call turn failed (${response.status})`);
         }
+        console.info(
+          `[call] reply received: endCall ${data.endReason !== null}, endReason ${data.endReason ?? "none"}, label ${data.label ?? "none"}`
+        );
 
         // rude and break_character count as strikes for the rest of the call (capped at 9, as the brain reads them).
         const strikeKey = data.label === "rude" ? "rude" : data.label === "break_character" ? "breakCharacter" : null;
@@ -608,22 +632,27 @@ export function useSimulationVoiceSession(
     releaseSilenceHold();
   }, [releaseSilenceHold]);
 
-  /** Anam's end of speech for a persona message (MESSAGE_HISTORY_UPDATED ending on the persona). */
-  const handlePersonaSpeechEnded = useCallback((): void => {
-    talksInFlightRef.current = Math.max(0, talksInFlightRef.current - 1);
-    if (endingReasonRef.current !== null) {
-      // The ending: stop once every talk() has ended; an earlier reply ending first restarts the fallback.
-      if (talksInFlightRef.current === 0) {
-        completePersonaEndingRef.current();
-      } else {
-        armEndingFallback();
+  /** Anam's end of speech for a persona message (`how`: how handleMessageHistoryUpdated saw it, for the log). */
+  const handlePersonaSpeechEnded = useCallback(
+    (how: string): void => {
+      talksInFlightRef.current = Math.max(0, talksInFlightRef.current - 1);
+      console.info(
+        `[call] persona end-of-speech received (${how}): ${Date.now() - speechSentAtRef.current} ms after talk(), ${talksInFlightRef.current} talks still in flight`
+      );
+      if (endingReasonRef.current !== null) {
+        // The ending: stop once every talk() has ended. An earlier reply ending first leaves
+        // the fallback as it is (the closing line's estimate from its talk()).
+        if (talksInFlightRef.current === 0) {
+          completePersonaEndingRef.current("event");
+        }
+        return;
       }
-      return;
-    }
-    if (isAwaitingSpeechEndRef.current) {
-      finishPersonaSpeech();
-    }
-  }, [armEndingFallback, finishPersonaSpeech]);
+      if (isAwaitingSpeechEndRef.current) {
+        finishPersonaSpeech();
+      }
+    },
+    [finishPersonaSpeech]
+  );
 
   const handleUserSentence = useCallback(
     async (text: string): Promise<void> => {
@@ -703,15 +732,31 @@ export function useSimulationVoiceSession(
 
   const handleMessageHistoryUpdated = useCallback(
     (history: Message[]): void => {
+      const previousLength = historyLengthRef.current;
+      historyLengthRef.current = history.length;
       if (!isActiveRef.current || history.length === 0) {
         return;
       }
 
       const last = history[history.length - 1];
-      // Call personas: the persona finished speaking (or was cut off).
-      if (last.role === MessageRole.PERSONA && isCallPersona(configRef.current.persona)) {
-        handlePersonaSpeechEnded();
-        return;
+      // Call personas: the persona finished speaking (or was cut off). Anam's SDK sends this
+      // event on every end of speech with the whole history; it adds a message at the end
+      // only when the message starts and updates a persona message in place. So when the
+      // student's words were added while the persona spoke, its end of speech comes with
+      // their message (already handled) still last and nothing added since the last update.
+      if (isCallPersona(configRef.current.persona)) {
+        if (last.role === MessageRole.PERSONA) {
+          handlePersonaSpeechEnded("last message");
+          return;
+        }
+        if (
+          last.role === MessageRole.USER &&
+          processedUserMessageIdsRef.current.has(last.id) &&
+          history.length === previousLength
+        ) {
+          handlePersonaSpeechEnded("updated in place");
+          return;
+        }
       }
       if (last.role !== MessageRole.USER) {
         return;
@@ -747,7 +792,7 @@ export function useSimulationVoiceSession(
   const handleTalkStreamInterrupted = useCallback((): void => {
     // Call personas: the closing reply was cut off, so the call ends now.
     if (isCallPersona(configRef.current.persona) && endingReasonRef.current !== null) {
-      completePersonaEndingRef.current();
+      completePersonaEndingRef.current("interrupted");
       return;
     }
     playbackEpochRef.current += 1;
@@ -807,7 +852,7 @@ export function useSimulationVoiceSession(
       if (clockRef.current.startedAt === null || clockRef.current.endedAt !== null) {
         return;
       }
-      if (isAwaitingSpeechEndRef.current && at - speechSentAtRef.current >= SPEECH_END_FALLBACK_MS) {
+      if (isAwaitingSpeechEndRef.current && at - speechSentAtRef.current >= speechFallbackMsRef.current) {
         finishPersonaSpeechRef.current();
       }
       const speechStartedAt = studentSpeechStartedAtRef.current;
@@ -848,6 +893,7 @@ export function useSimulationVoiceSession(
         messagesRef.current = [];
         transcriptLinesRef.current = [];
         processedUserMessageIdsRef.current.clear();
+        historyLengthRef.current = 0;
         setUserTranscripts("");
         setPersonaTranscripts("");
         pendingUtteranceRef.current = "";
@@ -934,12 +980,13 @@ export function useSimulationVoiceSession(
     void getExtendedAvatar(avatarRef.current)?.endSession();
   }, [stopListening, updateClock, clearEndingTimer]);
 
-  /** The persona's closing reply has been spoken: stop the avatar, then end the call with its reason. */
-  const completePersonaEnding = useCallback((): void => {
+  /** The persona's closing reply has been spoken (`how`, for the log): stop the avatar, then end the call with its reason. */
+  const completePersonaEnding = useCallback((how: EndingFinish): void => {
     const endReason = endingReasonRef.current;
     if (endReason === null) {
       return;
     }
+    console.info(`[call] ending finished: by ${how} (${endReason})`);
     endCall();
     configRef.current.onCallEnd?.(endReason);
   }, [endCall]);

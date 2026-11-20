@@ -19,14 +19,30 @@ export type TimeMark = (typeof TIME_MARKS)[number];
 
 /** How often the readouts refresh. */
 export const CLOCK_TICK_MS = 250;
-/** No end of speech from Anam this long after talk(): count the reply as finished (or stop after the goodbye) anyway. */
-export const SPEECH_END_FALLBACK_MS = 30_000;
+/** The end-of-speech fallback (speechFallbackMs): a fixed allowance, plus this much per word, within the bounds below. */
+export const SPEECH_FALLBACK_BASE_MS = 2_000;
+export const SPEECH_FALLBACK_PER_WORD_MS = 400;
+export const SPEECH_FALLBACK_MIN_MS = 3_000;
+export const SPEECH_FALLBACK_MAX_MS = 30_000;
 /**
  * Anam's guidance (its JavaScript SDK events reference): a USER_SPEECH_STARTED with no
  * USER_SPEECH_ENDED this long after it is a dropped detection, so a missed end can't
  * hold the Silence readout forever.
  */
 export const USER_SPEECH_DROPPED_MS = 10_000;
+
+/**
+ * How long after talk(text) to wait for Anam's end of speech before counting the reply as
+ * spoken anyway (Silence then counts from there; after the closing line, the call ends):
+ * an estimate of how long the reply takes to say, 2 s plus 0.4 s per word (words are
+ * separated by whitespace), at least 3 s and at most 30 s. A real end of speech still
+ * finishes the reply earlier.
+ */
+export function speechFallbackMs(text: string): number {
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  const estimate = SPEECH_FALLBACK_BASE_MS + SPEECH_FALLBACK_PER_WORD_MS * words;
+  return Math.min(SPEECH_FALLBACK_MAX_MS, Math.max(SPEECH_FALLBACK_MIN_MS, estimate));
+}
 
 // ── Turn sources ───
 
