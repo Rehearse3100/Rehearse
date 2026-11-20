@@ -49,8 +49,10 @@
  * Self-contained on purpose: only React, Next.js and @anam-ai/js-sdk are imported. The
  * avatar part is a small copy of what the real call does (hooks/useSimulationVoiceSession.ts
  * and components/Avatar.tsx), not an import of it:
- * - POST /api/student/anam-session { attemptId, stage } for a session token (the only
- *   use of the attempt id; text mode works without it);
+ * - POST /tester/ai-call/api/session { stage } (api/session/route.ts here: no sign-in, no
+ *   attempt id) for a session token;
+ * - the mic: getUserMedia audio with echoCancellation, noiseSuppression and
+ *   autoGainControl, so the avatar's own voice from the speakers isn't heard as the student;
  * - createClient(token), then streamToVideoElement(videoId, micStream) to start;
  * - MESSAGE_HISTORY_UPDATED whose last message is the user's = the spoken turn is final
  *   (each Anam message id is handled once);
@@ -73,6 +75,8 @@ import TIMINGS_FILE from "./timings.json";
 
 /** The tester brain (api/chat/route.ts in this folder). */
 const CHAT_ENDPOINT = "/tester/ai-call/api/chat";
+/** The tester's own Anam session token route (api/session/route.ts in this folder). */
+const SESSION_ENDPOINT = "/tester/ai-call/api/session";
 
 /** The two personas the tester brain has, and each one's Anam stage. */
 const PERSONAS = [
@@ -148,8 +152,6 @@ type NewTranscriptLine =
 type AvatarPhase = "off" | "token" | "mic" | "connecting" | "live";
 
 type AiCallTesterProps = {
-  /** From ?attempt= (may be ""). */
-  initialAttemptId: string;
   /** From ?simulationId= and ?classId= (may be ""): used only for the "open the simulation" link. */
   simulationId: string;
   classId: string;
@@ -330,8 +332,7 @@ const TURN_LABELS: Record<StudentTurnSource, string> = {
  * The tester page body: inputs, call timer and test controls, transcript, text box and
  * the avatar switch.
  */
-export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCallTesterProps): React.ReactElement {
-  const [attemptId, setAttemptId] = useState(initialAttemptId);
+export function AiCallTester({ simulationId, classId }: AiCallTesterProps): React.ReactElement {
   const [persona, setPersona] = useState<PersonaKey>("tempo_discovery");
   const [model, setModel] = useState<ModelKey>("gpt-6-luna");
   const [lines, setLines] = useState<TranscriptLine[]>([]);
@@ -346,7 +347,6 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
   const [isMicMuted, setIsMicMuted] = useState(true);
 
   // Refs: the Anam callbacks, the timer tick and async turns read the latest values without re-subscribing.
-  const attemptIdRef = useRef(attemptId);
   const personaRef = useRef<PersonaKey>(persona);
   const modelRef = useRef<ModelKey>(model);
   const historyRef = useRef<ChatTurn[]>([]);
@@ -386,7 +386,6 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
   /** This call's rude and break_character labels so far, sent with every turn. */
   const strikesRef = useRef({ rude: 0, breakCharacter: 0 });
 
-  attemptIdRef.current = attemptId;
   personaRef.current = persona;
   modelRef.current = model;
 
@@ -745,12 +744,6 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
    */
   const startAvatar = useCallback(async (): Promise<void> => {
     const stage = anamStageFor(personaRef.current);
-    const attempt = attemptIdRef.current.trim();
-    if (!attempt) {
-      addLine({ kind: "note", text: "Enter an attempt id before turning the avatar on (the Anam session needs it)." });
-      return;
-    }
-
     avatarRunRef.current += 1;
     const run = avatarRunRef.current;
     const isCurrentRun = (): boolean => run === avatarRunRef.current;
@@ -759,10 +752,10 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
     setAvatarPhase("token");
 
     try {
-      const response = await fetch("/api/student/anam-session", {
+      const response = await fetch(SESSION_ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ attemptId: attempt, stage }),
+        body: JSON.stringify({ stage }),
       });
       const bodyText = await response.text();
       if (!isCurrentRun()) {
@@ -782,8 +775,11 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
       }
 
       setAvatarPhase("mic");
-      // Audio only, as the real call passes Anam an audio-only stream.
-      const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Audio only, as the real call passes Anam an audio-only stream. Echo cancellation keeps
+      // the avatar's voice from the speakers out of the mic; the other two clean up the student's voice.
+      const mic = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
       if (!isCurrentRun()) {
         stopTracks(mic);
         return;
@@ -995,6 +991,14 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
         <p className="text-gray-600">
           Tester-only page. Turns go to the tester call brain (POST {CHAT_ENDPOINT}); the avatar switch adds Anam voice
           and video. Nothing here is saved.
+          {simulationHref ? (
+            <>
+              {" "}
+              <Link className="text-blue-700 underline" href={simulationHref} target="_blank" rel="noreferrer">
+                Open the simulation
+              </Link>
+            </>
+          ) : null}
         </p>
       </header>
 
@@ -1030,31 +1034,6 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
             ))}
           </select>
           <span className="text-xs text-gray-600">Applies from the next turn.</span>
-        </label>
-
-        <label className="flex flex-col gap-1">
-          <span className="font-semibold">Attempt id (avatar only)</span>
-          <input
-            className="rounded border border-gray-300 px-2 py-1 font-mono disabled:bg-gray-100"
-            value={attemptId}
-            onChange={(event) => setAttemptId(event.target.value)}
-            disabled={isAvatarOn}
-            spellCheck={false}
-            aria-describedby="attempt-hint"
-          />
-          <span id="attempt-hint" className="text-xs text-gray-600">
-            Needed only for the avatar. In the simulation page&apos;s address, the value after attempt= (there once you
-            continue an in-progress run from its start screen, or move to the next stage); the signed-in student&apos;s
-            attempt.
-            {simulationHref ? (
-              <>
-                {" "}
-                <Link className="text-blue-700 underline" href={simulationHref} target="_blank" rel="noreferrer">
-                  Open the simulation
-                </Link>
-              </>
-            ) : null}
-          </span>
         </label>
 
         <div className="flex flex-wrap items-center gap-3 sm:col-span-3">
