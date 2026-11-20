@@ -177,8 +177,8 @@ None. No `.rpc("...")` calls in app/lib/hooks/components/scripts.
 ### a. Persona prompts at runtime
 
 - **Discovery / Objection live calls** read prompts from **code**, not the DB:
-  - `lib/constants.ts` → `DANA_REYES_SYSTEM_PROMPT`, `DR_KIM_SYSTEM_PROMPT`
-  - Wired in `components/tempo/stages/DiscoveryCallSession.tsx` and `ObjectionHandlingCallSession.tsx`
+  - Built on the server by the shared call brain: `lib/server/call-prompt.ts` (shared rules) plus the Dana / Dr. Kim cards in `lib/server/tempo-call-cards.ts`, put together by `lib/server/call-brain.ts` for `POST /api/student/call-turn`. The opening line is the brain's start turn; there is no fixed opening line in code.
+  - The browser (`components/tempo/stages/DiscoveryCallSession.tsx` and `ObjectionHandlingCallSession.tsx`, through `hooks/useTempoCallSession.ts`) sends only the persona key and the attempt id.
 - `simulations.persona_system_prompt` / `product_context` are still **NOT NULL** and are shown in teacher/student listing UIs. Seed values come from prior `FULL-SETUP.sql` / `tempo-simulation-seed.sql` history (Summit Dental / Tempo copy). They are placeholders for the row, not the live Anam brain.
 
 ### b. Anam avatar / voice IDs

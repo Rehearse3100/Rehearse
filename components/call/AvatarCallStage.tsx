@@ -15,11 +15,12 @@ import { EndCallModal } from "@/components/call/EndCallModal";
 import { StageScoreReveal } from "@/components/StageScoreReveal";
 import { resumePlaybackContext } from "@/lib/audio-playback";
 import { completeStage, fetchStageScore } from "@/lib/attempt-actions";
+import { waitForAvatarReady } from "@/lib/call-media";
 import { CALL_SCORE_DELAY_MS } from "@/lib/constants";
 import { getStageCallLabel } from "@/lib/stages";
 import { useSimulationVoiceSession } from "@/hooks/useSimulationVoiceSession";
 import { useVideoCall } from "@/hooks/useVideoCall";
-import type { AvatarRef, Simulation, SimulationStage } from "@/types";
+import type { Simulation, SimulationStage } from "@/types";
 
 type CallPhase = "lobby" | "connecting" | "active" | "scoring" | "scored";
 
@@ -37,27 +38,6 @@ type AvatarCallStageProps = {
   /** Optional banner above the call UI (e.g. objections instructions). */
   topBanner?: React.ReactNode;
 };
-
-/**
- * Waits until Avatar imperative handle and media elements are ready.
- */
-async function waitForAvatarReady(
-  getRef: () => AvatarRef | null,
-  maxMs = 8000
-): Promise<AvatarRef | null> {
-  const start = Date.now();
-  while (Date.now() - start < maxMs) {
-    const avatar = getRef();
-    if (avatar) {
-      const domReady = await avatar.waitForMediaElements(2000);
-      if (domReady) {
-        return avatar;
-      }
-    }
-    await new Promise<void>((r) => setTimeout(r, 100));
-  }
-  return getRef();
-}
 
 /**
  * Shared video-call flow for Anam-powered Discovery and Objections stages.

@@ -8,7 +8,8 @@
  * via callSlot so the mic session only mounts after Join Call. Below lg the docked
  * transcript is hidden: during the call a Transcript button above the call opens
  * it as a slide-over; after the call it stacks under the post-call content. A call the
- * brain ended for a crisis shows CallCrisisNotice at the top of the post-call screen.
+ * brain ended for a crisis shows CallCrisisNotice at the top of the post-call screen
+ * until the student dismisses it (lib/tempo-post-call.ts, in DiscoveryStage).
  */
 
 import { CallCrisisNotice } from "@/components/tempo/CallCrisisNotice";
@@ -16,19 +17,20 @@ import { CallTranscriptPanel, CallTranscriptSlideOver } from "@/components/tempo
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import { PostCallCompletePanel } from "@/components/tempo/PostCallCompletePanel";
 import { TempoStageForwardNav } from "@/components/tempo/TempoStageForwardNav";
+import { formatClock } from "@/lib/call-clock";
 import {
   DISCOVERY_TIPS,
-  formatDiscoveryTime,
   type DiscoveryPhase,
   type DiscoveryTranscriptEntry,
 } from "@/lib/tempo-discovery";
-import type { CallSessionEndReason } from "@/lib/call-config";
 
 type DiscoveryStageLayoutProps = {
   phase: DiscoveryPhase;
   callSeconds: number;
-  /** Why the call ended (null before it has); "crisis" shows the crisis note after the call. */
-  callEndReason?: CallSessionEndReason | null;
+  /** The 988 notice after a crisis ending (shown after the call only, until dismissed). */
+  isCrisisNoticeOpen?: boolean;
+  /** The notice's Dismiss button. */
+  onDismissCrisisNotice?: () => void;
   transcript: DiscoveryTranscriptEntry[];
   lobbySlot: React.ReactNode;
   callSlot: React.ReactNode;
@@ -84,7 +86,8 @@ function DiscoveryForwardBar({
 export function DiscoveryStageLayout({
   phase,
   callSeconds,
-  callEndReason = null,
+  isCrisisNoticeOpen = false,
+  onDismissCrisisNotice = () => undefined,
   transcript,
   lobbySlot,
   callSlot,
@@ -97,7 +100,7 @@ export function DiscoveryStageLayout({
 }: DiscoveryStageLayoutProps): React.ReactElement {
   const isCallPhase = phase === "connecting" || phase === "active";
   const panelEntries = mapDiscoveryTranscript(transcript);
-  const durationLabel = formatDiscoveryTime(callSeconds);
+  const durationLabel = formatClock(callSeconds);
 
   return (
     <div
@@ -179,7 +182,7 @@ export function DiscoveryStageLayout({
                 Call Duration
               </h3>
               <span className="font-code-lg text-code-lg text-white">
-                {formatDiscoveryTime(callSeconds)}
+                {formatClock(callSeconds)}
               </span>
               <p className="text-white/40 text-xs mt-1">Target: 15 minutes</p>
             </section>
@@ -222,7 +225,7 @@ export function DiscoveryStageLayout({
                 onForward={onContinueAfterCall}
               />
             </DiscoveryForwardBar>
-            {callEndReason === "crisis" && <CallCrisisNotice />}
+            {isCrisisNoticeOpen && <CallCrisisNotice onDismiss={onDismissCrisisNotice} />}
             {/* Below lg: post-call content, then the stacked transcript, scrolling together. */}
             <div className="flex flex-col lg:flex-row flex-1 min-w-0 min-h-0 overflow-y-auto lg:overflow-visible">
               <PostCallCompletePanel

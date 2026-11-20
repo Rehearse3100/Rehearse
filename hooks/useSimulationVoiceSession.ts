@@ -23,7 +23,8 @@
  * Anam's events reference advises) Silence holds, so a long answer never gets the check-in.
  * endCall from the route: the mic is muted (the Avatar API), the reply is spoken in full,
  * the avatar stops, and onCallEnd(endReason) ends the call the way the end-call button
- * does. The hook exposes callSeconds from the clock.
+ * does. The hook exposes callSeconds from the clock. pauseMic / resumeMic are Anam's own
+ * input mute (the Avatar's setInputMuted) on the stream startCall was given.
  *
  * ── Every other persona (legacy "simulation" calls): unchanged ───
  * GPT via POST /api/chat; the opening is openingGreeting (or the default greeting);
@@ -62,11 +63,11 @@ import {
 import type { ChatPersona, LegacyChatStage } from "@/lib/chat-personas";
 import { SIMULATION_POST_SPEAK_COOLDOWN_MS } from "@/lib/constants";
 import { buildDefaultOpeningGreeting } from "@/lib/persona";
+import type { AnamSessionStage } from "@/lib/tempo-anam-config";
 import {
   getAvatarInitError,
   setAvatarSessionConfig,
   setAvatarVoiceCallbacks,
-  type AnamSessionStage,
   type ExtendedAvatarRef,
 } from "@/components/Avatar";
 import type { AvatarRef, ChatMessage } from "@/types";
@@ -79,8 +80,10 @@ export type SimulationVoiceConfig = {
   /** Legacy personas only: the fixed opening line (call personas ask the brain for theirs). */
   openingGreeting?: string;
   isMutedRef?: React.MutableRefObject<boolean>;
-  attemptId?: string;
-  anamStage?: AnamSessionStage;
+  /** The student's attempt (the Anam session, /api/chat and the call brain are checked against it). */
+  attemptId: string;
+  /** Which Anam avatar and voice the session uses. */
+  anamStage: AnamSessionStage;
   /**
    * Call personas only: the brain ended the call (endCall). Called once the reply has been
    * spoken and the avatar has stopped; end the call as the end-call button does.
@@ -90,7 +93,6 @@ export type SimulationVoiceConfig = {
 
 export type SimulationVoiceReturn = {
   avatarRef: React.RefObject<AvatarRef>;
-  isActive: boolean;
   statusText: string;
   userTranscripts: string;
   personaTranscripts: string;
@@ -99,14 +101,13 @@ export type SimulationVoiceReturn = {
   getFullTranscript: () => string;
   /** Starts Anam streaming using an audio-only MediaStream (not the PiP video stream). */
   startCall: (audioStream: MediaStream) => Promise<void>;
-  stopListening: () => void;
   endCall: () => void;
-  /** Swap mic input after unmute. */
+  /** Legacy calls: swaps Anam's mic input (useVideoCall's new stream after unmute). */
   replaceAudioStream: (audioStream: MediaStream) => void;
-  /** Mutes Anam mic input without ending the call. */
+  /** Mutes Anam's mic input (Anam's own input mute) without ending the call. */
   pauseMic: () => void;
-  /** Resumes Anam mic input on a (usually fresh) mic stream. */
-  resumeMic: (audioStream: MediaStream) => void;
+  /** Unmutes Anam's mic input: the same stream (the lobby's) carries on. */
+  resumeMic: () => void;
 };
 
 /** The shared call brain's route (call personas only). */
@@ -114,35 +115,6 @@ const CALL_TURN_ENDPOINT = "/api/student/call-turn";
 
 /** The rude and break_character labels this call has had (sent with every call turn). */
 type CallStrikes = { rude: number; breakCharacter: number };
-
-function resolveAttemptId(configAttemptId?: string): string {
-  if (configAttemptId?.trim()) {
-    return configAttemptId.trim();
-  }
-  if (typeof window !== "undefined") {
-    const param = new URLSearchParams(window.location.search).get("attempt");
-    if (param?.trim()) {
-      return param.trim();
-    }
-  }
-  return "";
-}
-
-function resolveAnamStage(
-  persona: ChatPersona,
-  configStage?: AnamSessionStage
-): AnamSessionStage | null {
-  if (configStage) {
-    return configStage;
-  }
-  if (persona === "tempo_discovery") {
-    return "discovery";
-  }
-  if (persona === "tempo_objections") {
-    return "objections";
-  }
-  return null;
-}
 
 function getExtendedAvatar(ref: AvatarRef | null): ExtendedAvatarRef | null {
   return ref as ExtendedAvatarRef | null;
@@ -170,11 +142,11 @@ function readCallTurnResponse(
 export function useSimulationVoiceSession(
   config: SimulationVoiceConfig
 ): SimulationVoiceReturn {
-  // Synchronous — must be set before any connect effect calls startSession.
-  const initialAttemptId = resolveAttemptId(config.attemptId);
-  const initialStage = resolveAnamStage(config.persona, config.anamStage);
-  if (initialAttemptId && initialStage) {
-    setAvatarSessionConfig({ attemptId: initialAttemptId, stage: initialStage });
+  // The Anam session config (attempt and stage), set here only: synchronous on every
+  // render, so it is in place before any connect effect calls startSession.
+  const sessionAttemptId = config.attemptId.trim();
+  if (sessionAttemptId) {
+    setAvatarSessionConfig({ attemptId: sessionAttemptId, stage: config.anamStage });
   }
 
   const [isActive, setIsActive] = useState(false);
@@ -235,20 +207,6 @@ export function useSimulationVoiceSession(
   useEffect(() => {
     isActiveRef.current = isActive;
   }, [isActive]);
-
-  // ── Anam session config (attemptId from prop or ?attempt= URL param) ───────
-
-  useEffect(() => {
-    const attemptId = resolveAttemptId(config.attemptId);
-    const stage = resolveAnamStage(config.persona, config.anamStage);
-    if (!attemptId || !stage) {
-      return;
-    }
-
-    setAvatarSessionConfig({ attemptId, stage });
-    const avatar = getExtendedAvatar(avatarRef.current);
-    avatar?.configureSession({ attemptId, stage });
-  }, [config.attemptId, config.anamStage, config.persona]);
 
   const appendTranscript = useCallback((speaker: string, text: string): void => {
     transcriptLinesRef.current.push(`${speaker}: ${text}`);
@@ -542,7 +500,7 @@ export function useSimulationVoiceSession(
       }
 
       const body: CallTurnRequest = {
-        attemptId: resolveAttemptId(configRef.current.attemptId),
+        attemptId: configRef.current.attemptId.trim(),
         persona,
         messages: prior,
         ...(isStudentText ? { newMessage: trimmed } : {}),
@@ -699,7 +657,7 @@ export function useSimulationVoiceSession(
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            attemptId: resolveAttemptId(configRef.current.attemptId),
+            attemptId: configRef.current.attemptId.trim(),
             persona: configRef.current.persona,
             stage: configRef.current.chatStage,
             messages: prior,
@@ -877,20 +835,13 @@ export function useSimulationVoiceSession(
         throw new Error("No microphone audio track available.");
       }
 
-      const attemptId = resolveAttemptId(configRef.current.attemptId);
-      const stage = resolveAnamStage(
-        configRef.current.persona,
-        configRef.current.anamStage
-      );
-      if (!attemptId || !stage) {
+      // The session config itself was set at render (the top of this hook).
+      if (!configRef.current.attemptId.trim()) {
         throw new Error("Missing attempt ID or stage for Anam session.");
       }
 
       try {
         const avatar = getExtendedAvatar(avatarRef.current);
-        avatar?.configureSession({ attemptId, stage });
-        setAvatarSessionConfig({ attemptId, stage });
-
         avatar?.resumeAudioContext();
         setIsActive(true);
         setMessages([]);
@@ -1009,27 +960,22 @@ export function useSimulationVoiceSession(
     getExtendedAvatar(avatarRef.current)?.setInputMuted(true);
   }, []);
 
-  const resumeMic = useCallback(
-    (audioStream: MediaStream): void => {
-      if (configRef.current.isMutedRef) {
-        configRef.current.isMutedRef.current = false;
-      }
-      getExtendedAvatar(avatarRef.current)?.setInputMuted(false);
-      replaceAudioStream(audioStream);
-    },
-    [replaceAudioStream]
-  );
+  // Anam's input mute on the current stream: no new stream, so the lobby's echo-cancelled mic carries on.
+  const resumeMic = useCallback((): void => {
+    if (configRef.current.isMutedRef) {
+      configRef.current.isMutedRef.current = false;
+    }
+    getExtendedAvatar(avatarRef.current)?.setInputMuted(false);
+  }, []);
 
   return {
     avatarRef,
-    isActive,
     statusText,
     userTranscripts,
     personaTranscripts,
     callSeconds,
     getFullTranscript: () => transcriptLinesRef.current.join("\n"),
     startCall,
-    stopListening,
     endCall,
     replaceAudioStream,
     pauseMic,

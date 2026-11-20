@@ -5,15 +5,8 @@
 
 import type { SimulationStage } from "@/types";
 
-// ── Audio / PCM ───────────────────────────────────────────────────────────────
-
-export const PCM_CHUNK_SIZE = 8192;
-export const SAMPLE_RATE_HZ = 16000;
-export const FLOAT_SAMPLES_PER_WORKER_CHUNK = PCM_CHUNK_SIZE / 2;
-
 // ── Deepgram ──────────────────────────────────────────────────────────────────
 
-export const UTTERANCE_DEDUPE_MS = 900;
 export const ENDPOINTING_MS = 350;
 export const UTTERANCE_END_MS = 1000;
 
@@ -26,11 +19,7 @@ export const VOICE_UTTERANCE_END_MS = 1800;
 /** Cooldown after persona TTS before accepting the next student utterance. */
 export const POST_SPEAK_COOLDOWN_MS = 400;
 
-/** Tempo Anam call stages — tuned for responsive turn-taking without clipping. */
-export const SIMULATION_VOICE_ENDPOINTING_MS = 550;
-export const SIMULATION_VOICE_UTTERANCE_END_MS = 1200;
-export const SIMULATION_VOICE_DEBOUNCE_MS = 700;
-export const SIMULATION_VOICE_RECORDER_TIMESLICE_MS = 250;
+/** Anam calls (useSimulationVoiceSession): after the persona speaks, the student's speech counts from this long on. */
 export const SIMULATION_POST_SPEAK_COOLDOWN_MS = 200;
 
 export const DEEPGRAM_MODEL = "nova-2";
@@ -58,14 +47,8 @@ export const DEBOUNCE_MS = 1200;
 /** Max wait for Anam WebRTC session + stream before showing a connection error. */
 export const ANAM_CONNECT_TIMEOUT_MS = 15_000;
 
-export const POST_CONNECT_ACK_WAIT_MS = 300;
-
 /** Brief pause after end call before revealing the stage score UI. */
 export const CALL_SCORE_DELAY_MS = 1500;
-
-/** Student picture-in-picture dimensions during video calls. */
-export const PIP_WIDTH_PX = 200;
-export const PIP_HEIGHT_PX = 150;
 
 // ── ElevenLabs ────────────────────────────────────────────────────────────────
 
@@ -108,12 +91,6 @@ export const PRESENTATION_MIN_WORDS = 100;
 
 export const OBJECTIONS_COUNT = 3;
 
-/** Stages that use Anam video (camera + avatar). */
-export const AVATAR_VIDEO_STAGES = ["discovery", "objections"] as const;
-
-/** Stages that use voice-only phone UI (no avatar video, no camera). */
-export const VOICE_ONLY_STAGES = ["prospecting", "close"] as const;
-
 // ── Routes ──────────────────────────────────────────────────────────────────────
 
 export const PUBLIC_ROUTES = [
@@ -138,8 +115,6 @@ export const USERNAME_REGEX = /^[a-zA-Z0-9_]+$/;
 export const PASSWORD_MIN_LENGTH = 6;
 export const JOIN_CODE_LENGTH = 6;
 export const STUDENT_SESSION_DAYS = 7;
-/** Username is globally unique — not per class. */
-export const USERNAME_SCOPE = "global" as const;
 
 // ── Default system class ───────────────────────────────────────────────────
 
@@ -183,9 +158,7 @@ export type AttemptStatusValue = (typeof ATTEMPT_STATUS)[keyof typeof ATTEMPT_ST
 // ── Stitch UI layout ──────────────────────────────────────────────────────────
 
 export const CALL_OVERLAY_INSET_PX = 16;
-export const CALL_CONTAINER_PADDING_PX = 16;
 export const SIMULATION_ENTRY_LOADER_MS = 500;
-export const STAGE_TRANSITION_MS = 200;
 export const CALL_CONTROL_BAR_BOTTOM_PX = 80;
 export const CALL_TRANSCRIPT_MAX_HEIGHT_PX = 128;
 /** Taller transcript strip during avatar video calls. */
@@ -197,14 +170,14 @@ export const PHONE_WAVEFORM_MIN_HEIGHT_PX = 8;
 export const PIPELINE_CELL_MIN_HEIGHT_PX = 80;
 export const PIPELINE_GRID_MIN_WIDTH_PX = 720;
 export const PIPELINE_LABEL_INSET_LEFT_PX = 56;
-export const PIP_BORDER_RADIUS_PX = 12;
 export const AUTH_BRAND_PANEL_PERCENT = 42;
-export const APP_NAVBAR_HEIGHT_PX = 64;
-export const PIPELINE_SECTION_HEIGHT_PX = 140;
 export const TOAST_AUTO_DISMISS_MS = 3000;
 export const LEADERBOARD_TOP_N = 10;
 export const LEADERBOARD_QUERY_LIMIT = 50;
 
-/** Appended to persona system prompts on voice stages — reduces interruptions. */
+/**
+ * Appended to a legacy simulation's persona prompt for its voice calls (/api/chat persona
+ * "simulation", buildVoiceSystemPrompt in lib/persona-voice.ts) — reduces interruptions.
+ */
 export const PERSONA_LISTENING_RULES =
   "CRITICAL RULE: Let the student finish speaking completely before you respond. Never interrupt mid-sentence. Wait for a clear pause. Keep replies to 2-3 short sentences.";

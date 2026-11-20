@@ -173,22 +173,11 @@ export interface AvatarRef {
   startSession: () => Promise<boolean>;
   /** Resolves when Dana video + audio elements are mounted in the DOM. */
   waitForMediaElements: (maxMs?: number) => Promise<boolean>;
-  speakAudio: (data: SpeakAudioPayload) => Promise<void>;
   resumeAudioContext: () => void;
   stopSpeaking: () => void;
   isReady: () => boolean;
   waitUntilReady: (maxMs?: number) => Promise<boolean>;
 }
-
-export type SpeakAudioPayload = {
-  audio: ArrayBuffer | Blob;
-  words?: string[];
-  wtimes?: number[];
-  wdurations?: number[];
-  chars?: string[];
-  ctimes?: number[];
-  cdurations?: number[];
-};
 
 export type ChatMessage = {
   role: "user" | "assistant";

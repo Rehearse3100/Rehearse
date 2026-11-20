@@ -258,8 +258,8 @@ Modal display (no transformation):
 | Stage / use | Prompt constant | Where assembled | Variables interpolated into system prompt |
 |---|---|---|---|
 | Prospecting research chat | `TEMPO_RESEARCH_SYSTEM_PROMPT` | `hooks/useProspectingWizard.ts` → `/api/chat` | **None** — fixed string |
-| Discovery voice | `DANA_REYES_SYSTEM_PROMPT` (+ stage hint / opening greeting) | `DiscoveryCallSession.tsx` → `useSimulationVoiceSession` | **None** — fixed string |
-| Objection voice | `DR_KIM_SYSTEM_PROMPT` (+ hint / greeting) | `ObjectionHandlingCallSession.tsx` → `useSimulationVoiceSession` | **None** — fixed string |
+| Discovery voice | Dana's card (`lib/server/tempo-call-cards.ts`) after the shared rules (`lib/server/call-prompt.ts`); the opening is the brain's start turn | Server: `lib/server/call-brain.ts` for `POST /api/student/call-turn` (the browser sends the persona key only: `DiscoveryCallSession.tsx` → `useTempoCallSession` → `useSimulationVoiceSession`) | **None** from earlier stages — fixed card |
+| Objection voice | Dr. Kim's card (same files); the opening is the brain's start turn | Server: `lib/server/call-brain.ts` for `POST /api/student/call-turn` (`ObjectionHandlingCallSession.tsx` → `useTempoCallSession` → `useSimulationVoiceSession`) | **None** from earlier stages — fixed card |
 | Negotiation Scenario A | `SCENARIO_A_SYSTEM_PROMPT` | `useNegotiationStage.ts` → `/api/chat` | **None** — fixed string |
 | Negotiation Scenario B | `SCENARIO_B_SYSTEM_PROMPT` | `useNegotiationStage.ts` → `/api/chat` | **None** — fixed string |
 
@@ -276,26 +276,16 @@ Prospecting research:
         }),
 ```
 
-Discovery:
+Discovery and Objection Handling (updated after the call-brain port: the browser no longer holds a prompt, a stage hint or an opening line; it sends the persona key, and the opening is the brain's start turn):
 
-```84:88:components/tempo/stages/DiscoveryCallSession.tsx
-  const voice = useSimulationVoiceSession({
-    systemPrompt: DANA_REYES_SYSTEM_PROMPT,
-    stageHint: TEMPO_DISCOVERY_STAGE_HINT,
-    openingGreeting: TEMPO_DISCOVERY_OPENING_GREETING,
-    isMutedRef,
-  });
-```
-
-Objection Handling:
-
-```99:103:components/tempo/stages/ObjectionHandlingCallSession.tsx
-  const voice = useSimulationVoiceSession({
-    systemPrompt: DR_KIM_SYSTEM_PROMPT,
-    stageHint: TEMPO_OBJECTIONS_STAGE_HINT,
-    openingGreeting: TEMPO_OBJECTIONS_OPENING_GREETING,
-    isMutedRef,
-  });
+```tsx
+// components/tempo/stages/DiscoveryCallSession.tsx (ObjectionHandlingCallSession.tsx: "tempo_objections", "objections", "drKim")
+const call = useTempoCallSession({
+  persona: "tempo_discovery",
+  anamStage: "discovery",
+  personaRole: "dana",
+  // …the lobby's streams and the session's callbacks
+});
 ```
 
 Negotiation turns:

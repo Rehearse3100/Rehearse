@@ -4,8 +4,9 @@
  * lobby centres safely (scrolls from the top, manager note first); the post-call
  * transcript stacks under the post-call content; during the call a Transcript
  * button opens the live transcript as a slide-over. At lg and up the docked
- * panels keep their exact classes. A call ended for a crisis shows the 988 note
- * after the call. Rendered to static HTML; no network.
+ * panels keep their exact classes. After a crisis ending the 988 note shows after the
+ * call, with a Dismiss button, until dismissed (the order with the handoff pop-up is
+ * tests/tempo-post-call.test.ts). Rendered to static HTML; no network.
  */
 
 import * as React from "react";
@@ -19,7 +20,6 @@ import {
 import { DiscoveryStageLayout } from "@/components/tempo/stages/DiscoveryStageLayout";
 import { ObjectionHandlingStageLayout } from "@/components/tempo/stages/ObjectionHandlingStageLayout";
 import { TempoCallLobby } from "@/components/tempo/stages/TempoCallLobby";
-import type { CallSessionEndReason } from "@/lib/call-config";
 import type { DiscoveryPhase } from "@/lib/tempo-discovery";
 import { EMPTY_TRACKER, type ObjectionHandlingPhase } from "@/lib/tempo-objections";
 
@@ -120,12 +120,13 @@ describe("transcript panel", () => {
 });
 
 describe("stage layouts", () => {
-  const discovery = (phase: DiscoveryPhase, callEndReason: CallSessionEndReason | null = null): string =>
+  const discovery = (phase: DiscoveryPhase, isCrisisNoticeOpen = false): string =>
     render(
       React.createElement(DiscoveryStageLayout, {
         phase,
         callSeconds: 312,
-        callEndReason,
+        isCrisisNoticeOpen,
+        onDismissCrisisNotice: vi.fn(),
         transcript: [{ role: "dana", content: "Thanks for calling.", timestamp: "00:05" }],
         lobbySlot: null,
         callSlot: React.createElement("div", { id: "call-slot" }, "CALL"),
@@ -137,12 +138,13 @@ describe("stage layouts", () => {
       })
     );
 
-  const objections = (phase: ObjectionHandlingPhase, callEndReason: CallSessionEndReason | null = null): string =>
+  const objections = (phase: ObjectionHandlingPhase, isCrisisNoticeOpen = false): string =>
     render(
       React.createElement(ObjectionHandlingStageLayout, {
         phase,
         callSeconds: 312,
-        callEndReason,
+        isCrisisNoticeOpen,
+        onDismissCrisisNotice: vi.fn(),
         transcript: [{ role: "drKim", content: "What does this cost?", timestamp: "00:05" }],
         objectionTracker: EMPTY_TRACKER,
         lobbySlot: null,
@@ -171,20 +173,22 @@ describe("stage layouts", () => {
     }
   });
 
-  it("a call the brain ended for a crisis: the 988 note at the top of the post-call screen; any other ending: none", () => {
-    for (const html of [discovery("summary", "crisis"), objections("summary", "crisis")]) {
+  it("the crisis notice open: the 988 note with a Dismiss button at the top of the post-call screen; closed: none", () => {
+    for (const html of [discovery("summary", true), objections("summary", true)]) {
       expect(html).toContain("988 Suicide and Crisis Lifeline");
       expect(html).toContain('href="tel:988"');
       expect(html).toContain('href="sms:988"');
+      expect(html).toMatch(/<button type="button"[^>]*>Dismiss<\/button>/);
       // Under the Submit bar, above the post-call card.
       expect(html.indexOf("Call complete")).toBeLessThan(html.indexOf("988 Suicide and Crisis Lifeline"));
       expect(html.indexOf("988 Suicide and Crisis Lifeline")).toBeLessThan(html.indexOf("Call completed"));
     }
-    for (const reason of [null, "student", "goodbye", "time_up", "rude", "break_character", "silence", "backstop"] as const) {
-      expect(discovery("summary", reason), String(reason)).not.toContain("988");
-      expect(objections("summary", reason), String(reason)).not.toContain("988");
+    for (const html of [discovery("summary"), objections("summary")]) {
+      expect(html).not.toContain("988");
+      expect(html).not.toContain("Dismiss");
     }
     // Only after the call.
-    expect(discovery("active", "crisis")).not.toContain("988");
+    expect(discovery("active", true)).not.toContain("988");
+    expect(objections("active", true)).not.toContain("988");
   });
 });

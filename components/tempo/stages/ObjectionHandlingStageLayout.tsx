@@ -8,7 +8,8 @@
  * above the call opens it (with the strategy hint) as a slide-over; after the call
  * it stacks under the post-call content.
  * Objection tracker stays visible as live in-call feedback (not a post-call form).
- * A call the brain ended for a crisis shows CallCrisisNotice at the top of the post-call screen.
+ * A call the brain ended for a crisis shows CallCrisisNotice at the top of the post-call
+ * screen until the student dismisses it (lib/tempo-post-call.ts, in ObjectionHandlingStage).
  */
 
 import { CallCrisisNotice } from "@/components/tempo/CallCrisisNotice";
@@ -16,20 +17,21 @@ import { CallTranscriptPanel, CallTranscriptSlideOver } from "@/components/tempo
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 import { PostCallCompletePanel } from "@/components/tempo/PostCallCompletePanel";
 import { TempoStageForwardNav } from "@/components/tempo/TempoStageForwardNav";
+import { formatClock } from "@/lib/call-clock";
 import {
   OBJECTION_TIPS,
-  formatObjectionTime,
   type ObjectionHandlingPhase,
   type ObjectionTracker,
   type ObjectionTranscriptEntry,
 } from "@/lib/tempo-objections";
-import type { CallSessionEndReason } from "@/lib/call-config";
 
 type ObjectionHandlingStageLayoutProps = {
   phase: ObjectionHandlingPhase;
   callSeconds: number;
-  /** Why the call ended (null before it has); "crisis" shows the crisis note after the call. */
-  callEndReason?: CallSessionEndReason | null;
+  /** The 988 notice after a crisis ending (shown after the call only, until dismissed). */
+  isCrisisNoticeOpen?: boolean;
+  /** The notice's Dismiss button. */
+  onDismissCrisisNotice?: () => void;
   transcript: ObjectionTranscriptEntry[];
   objectionTracker: ObjectionTracker;
   lobbySlot: React.ReactNode;
@@ -77,7 +79,8 @@ function strategyHintText(objectionTracker: ObjectionTracker): string {
 export function ObjectionHandlingStageLayout({
   phase,
   callSeconds,
-  callEndReason = null,
+  isCrisisNoticeOpen = false,
+  onDismissCrisisNotice = () => undefined,
   transcript,
   objectionTracker,
   lobbySlot,
@@ -89,7 +92,7 @@ export function ObjectionHandlingStageLayout({
 }: ObjectionHandlingStageLayoutProps): React.ReactElement {
   const isCallPhase = phase === "connecting" || phase === "active";
   const panelEntries = mapObjectionTranscript(transcript);
-  const durationLabel = formatObjectionTime(callSeconds);
+  const durationLabel = formatClock(callSeconds);
 
   const strategyFooter =
     phase === "active" ? (
@@ -137,7 +140,7 @@ export function ObjectionHandlingStageLayout({
                   {phase === "summary" ? (
                     <>
                       <span className="w-2 h-2 rounded-full bg-gray-400" />
-                      Call ended · {formatObjectionTime(callSeconds)}
+                      Call ended · {formatClock(callSeconds)}
                     </>
                   ) : phase === "active" || phase === "connecting" ? (
                     <>
@@ -207,7 +210,7 @@ export function ObjectionHandlingStageLayout({
                 Call Duration
               </h3>
               <span className="font-code-lg text-code-lg text-white">
-                {formatObjectionTime(callSeconds)}
+                {formatClock(callSeconds)}
               </span>
               <p className="text-white/40 text-xs mt-1">Target: ~15 minutes</p>
             </section>
@@ -243,7 +246,7 @@ export function ObjectionHandlingStageLayout({
                 onForward={onContinueAfterCall}
               />
             </div>
-            {callEndReason === "crisis" && <CallCrisisNotice />}
+            {isCrisisNoticeOpen && <CallCrisisNotice onDismiss={onDismissCrisisNotice} />}
             {/* Below lg: post-call content, then the stacked transcript, scrolling together. */}
             <div className="flex flex-col lg:flex-row flex-1 min-w-0 min-h-0 overflow-y-auto lg:overflow-visible">
               <PostCallCompletePanel

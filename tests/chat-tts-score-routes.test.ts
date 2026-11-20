@@ -209,6 +209,19 @@ describe("POST /api/chat", () => {
     state.create.mockResolvedValueOnce({ choices: [{ message: { content: "  " } }] });
     expect(await (await chat({})).json()).toEqual({ reply: "I don't have time for this." });
   });
+
+  it("an unexpected error: a generic 500 with none of its text; the real error is logged on the server", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const failure = new Error("secret internal detail");
+    state.create.mockRejectedValueOnce(failure);
+    const res = await chat({});
+    expect(res.status).toBe(500);
+    const text = await res.text();
+    expect(JSON.parse(text)).toEqual({ error: "Failed to generate response" });
+    expect(text).not.toContain("secret");
+    expect(logged).toHaveBeenCalledWith("Chat route error:", failure);
+    logged.mockRestore();
+  });
 });
 
 describe("POST /api/tts", () => {

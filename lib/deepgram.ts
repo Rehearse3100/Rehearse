@@ -3,7 +3,7 @@
  * Custom WebSocket client for Deepgram streaming STT.
  * Avoids the @deepgram/sdk npm package which has Node.js
  * dependencies that break in the browser.
- * Used by useVoiceSession.ts.
+ * Used by hooks/useProspectingVoice.ts.
  */
 
 import {

@@ -5,7 +5,8 @@
  * Server-only ANAM_API_KEY; client receives sessionToken + avatarId only.
  * A Tempo attempt's discovery and objections sessions (the live Dana and Dr. Kim calls)
  * also send that persona's voiceDetectionOptions from CALL_TIMINGS in lib/call-config.ts;
- * every other session's personaConfig is unchanged.
+ * every other session's personaConfig is unchanged. Errors from Supabase or Anam are
+ * logged on the server; the browser gets only a generic message, never their text.
  */
 
 import { NextResponse } from "next/server";
@@ -96,18 +97,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       .maybeSingle();
 
     if (simulationError) {
+      // The details (missing Anam columns included) stay in the server log.
       console.error("[anam-session] simulation lookup failed:", simulationError);
-      const message = simulationError.message ?? "Simulation lookup failed.";
-      const needsMigration =
-        message.includes("anam_avatar_ids") || message.includes("anam_voice_ids");
-      return NextResponse.json(
-        {
-          error: needsMigration
-            ? "Anam columns missing on simulations table. Run supabase/FULL-SETUP.sql in Supabase SQL Editor."
-            : `Simulation lookup failed: ${message}`,
-        },
-        { status: needsMigration ? 500 : 500 }
-      );
+      return NextResponse.json({ error: "Could not load the simulation." }, { status: 500 });
     }
 
     if (!simulation) {
@@ -181,10 +173,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         responseText.slice(0, 500) ??
         `Anam API error (${anamResponse.status})`;
       console.error("[anam-session] Anam token failure:", anamResponse.status, detail);
-      return NextResponse.json(
-        { error: `Could not create Anam session token: ${detail}` },
-        { status: 502 }
-      );
+      return NextResponse.json({ error: "Could not create Anam session." }, { status: 502 });
     }
 
     const sessionToken = responseJson.sessionToken?.trim();

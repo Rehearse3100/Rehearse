@@ -1,8 +1,8 @@
 /**
  * TempoCallSessionShell.tsx
  * Shared in-call layout for Tempo Discovery and Objection Handling — video frame,
- * student PiP, speaking rings, and bottom control bar. Stage-specific overlays
- * (e.g. objection chips) slot in via topOverlay.
+ * student PiP, speaking rings, and bottom control bar. DiscoveryCallSession and
+ * ObjectionHandlingCallSession render it with the state from hooks/useTempoCallSession.ts.
  */
 
 "use client";
@@ -10,8 +10,6 @@
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 
 export type TempoCallSessionShellProps = {
-  /** Optional stage-specific header (e.g. objection tracker chips). */
-  topOverlay?: React.ReactNode;
   connected: boolean;
   isPersonaSpeaking: boolean;
   isStudentSpeaking: boolean;
@@ -34,7 +32,6 @@ export type TempoCallSessionShellProps = {
  * Renders the unified Tempo video-call shell used by Discovery and Objections.
  */
 export function TempoCallSessionShell({
-  topOverlay,
   connected,
   isPersonaSpeaking,
   isStudentSpeaking,
@@ -54,14 +51,13 @@ export function TempoCallSessionShell({
 }: TempoCallSessionShellProps): React.ReactElement {
   return (
     <section className="flex-1 bg-[#0a0a0a] relative flex flex-col min-w-0 overflow-hidden">
-      {topOverlay}
-
       <div className="flex-1 flex flex-col items-center justify-center px-4 pt-16 pb-4 min-h-0 [container-type:size]">
         <div
           className={`relative w-[min(100cqw,72rem,calc(100cqh*1.5))] aspect-[3/2] rounded-3xl overflow-hidden transition-all duration-700 ${
             connected && isPersonaSpeaking ? "speaking-ring-gold" : "border border-white/10"
           }`}
         >
+          {/* Single Avatar mount for the whole call — do not remount when connected flips. */}
           <div className="absolute inset-0">{avatar}</div>
 
           {!connected && (

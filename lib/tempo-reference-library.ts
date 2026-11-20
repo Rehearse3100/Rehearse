@@ -14,8 +14,9 @@
  */
 
 import { parseIcpGradeRecord } from "@/lib/icp-grading";
-import { DISCOVERY_PERSONA, parseDiscoveryTranscript } from "@/lib/tempo-discovery";
-import { OBJECTION_PERSONA, parseObjectionTranscript } from "@/lib/tempo-objections";
+import { parseCallTranscript } from "@/lib/tempo-call-transcript";
+import { DISCOVERY_PERSONA } from "@/lib/tempo-discovery";
+import { OBJECTION_PERSONA } from "@/lib/tempo-objections";
 import { normalizePresentationForm, type PresentationForm } from "@/lib/tempo-presentation";
 import {
   normalizeProspectingWizardState,
@@ -173,11 +174,10 @@ export function parseReferenceCall(
   const payload = parseJsonObject(transcript);
   const rawSeconds = payload?.callDurationSeconds;
   const seconds = typeof rawSeconds === "number" && Number.isFinite(rawSeconds) && rawSeconds >= 0 ? rawSeconds : null;
-  const parseText = stage === "discovery" ? parseDiscoveryTranscript : parseObjectionTranscript;
   const rawEntries: unknown[] = Array.isArray(payload?.transcriptEntries)
     ? payload.transcriptEntries
     : typeof payload?.transcript === "string"
-      ? parseText(payload.transcript, seconds ?? 0)
+      ? parseCallTranscript(payload.transcript, seconds ?? 0, stage === "discovery" ? "dana" : "drKim")
       : [];
   return {
     stage,

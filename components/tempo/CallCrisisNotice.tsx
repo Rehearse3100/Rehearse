@@ -4,15 +4,22 @@
  * only when the call brain ended the call because the student's words sounded like a
  * crisis (endReason "crisis", hooks/useSimulationVoiceSession.ts). Points to the 988
  * Suicide and Crisis Lifeline (call or text 988). Rendered by DiscoveryStageLayout and
- * ObjectionHandlingStageLayout.
+ * ObjectionHandlingStageLayout. It comes before the next stage's handoff pop-up: the
+ * pop-up opens only once the student dismisses this note or presses Submit
+ * (lib/tempo-post-call.ts).
  */
 
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
 
+type CallCrisisNoticeProps = {
+  /** The Dismiss button: closes the note (the handoff pop-up may open next). */
+  onDismiss: () => void;
+};
+
 /**
  * The crisis note: the call stopped, support is there, and how to reach 988.
  */
-export function CallCrisisNotice(): React.ReactElement {
+export function CallCrisisNotice({ onDismiss }: CallCrisisNoticeProps): React.ReactElement {
   return (
     <div
       role="note"
@@ -33,6 +40,13 @@ export function CallCrisisNotice(): React.ReactElement {
           </a>{" "}
           988 to reach the 988 Suicide and Crisis Lifeline. It&apos;s free, confidential and open 24/7.
         </p>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="text-label-md font-semibold text-on-surface underline hover:text-primary transition-colors"
+        >
+          Dismiss
+        </button>
       </div>
     </div>
   );

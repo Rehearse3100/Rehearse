@@ -3,12 +3,14 @@
  * Stage 4 of the Tempo simulation — live Anam video call with Dr. Saul Kim.
  * Flow: pre-call lobby → active video call → auto-submit (no post-call form).
  * Objection tracker is live in-call feedback derived from the transcript.
+ * After the call, the Negotiation handoff pop-up opens once the stage is saved; after a
+ * crisis ending the 988 notice comes first (lib/tempo-post-call.ts).
  * Only used in the Tempo/Default simulation.
  */
 
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useReducer, useRef, useState } from "react";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { HandoffModal } from "@/components/tempo/HandoffModal";
 import { ReferenceLibraryDrawer } from "@/components/tempo/ReferenceLibraryDrawer";
@@ -32,6 +34,7 @@ import {
   type ObjectionTracker,
   type ObjectionTranscriptEntry,
 } from "@/lib/tempo-objections";
+import { INITIAL_POST_CALL_STATE, reducePostCall } from "@/lib/tempo-post-call";
 import {
   TEMPO_HANDOFF_STAGE_META,
 } from "@/lib/tempo-prospecting";
@@ -68,14 +71,14 @@ export function ObjectionHandlingStage({
   const [phase, setPhase] = useState<ObjectionHandlingPhase>("lobby");
   const [connectError, setConnectError] = useState("");
   const [callSeconds, setCallSeconds] = useState(0);
-  const [callEndReason, setCallEndReason] = useState<CallSessionEndReason | null>(null);
   const [transcript, setTranscript] = useState<ObjectionTranscriptEntry[]>([]);
   const [objectionTracker, setObjectionTracker] = useState<ObjectionTracker>(EMPTY_TRACKER);
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
   const [videoStream, setVideoStream] = useState<MediaStream | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showHandoff, setShowHandoff] = useState(false);
-  const [showNegotiationHandoff, setShowNegotiationHandoff] = useState(false);
+  /** After the call: the crisis notice and the Negotiation handoff pop-up. */
+  const [postCall, dispatchPostCall] = useReducer(reducePostCall, INITIAL_POST_CALL_STATE);
   const [referenceLibraryOpen, setReferenceLibraryOpen] = useState(false);
 
   const submittingRef = useRef(false);
@@ -86,7 +89,6 @@ export function ObjectionHandlingStage({
   const handleJoinCall = useCallback((streams: ObjectionJoinStreams): void => {
     setConnectError("");
     setCallSeconds(0);
-    setCallEndReason(null);
     setTranscript([]);
     setObjectionTracker(EMPTY_TRACKER);
     setAudioStream(streams.audioStream);
@@ -126,7 +128,7 @@ export function ObjectionHandlingStage({
       submittingRef.current = true;
 
       setCallSeconds(seconds);
-      setCallEndReason(endReason);
+      dispatchPostCall({ type: "callEnded", endReason });
       setTranscript(entries);
       setObjectionTracker(tracker);
       setAudioStream(null);
@@ -144,7 +146,8 @@ export function ObjectionHandlingStage({
         });
 
         await completeStage(attemptId, "objections", 0, "Submitted — scoring coming soon", payload);
-        setShowNegotiationHandoff(true);
+        // Opens the handoff pop-up, unless the crisis notice is showing (it comes first).
+        dispatchPostCall({ type: "saved" });
       } finally {
         setIsSubmitting(false);
         submittingRef.current = false;
@@ -180,7 +183,8 @@ export function ObjectionHandlingStage({
         <ObjectionHandlingStageLayout
           phase={phase}
           callSeconds={callSeconds}
-          callEndReason={callEndReason}
+          isCrisisNoticeOpen={postCall.isCrisisNoticeOpen}
+          onDismissCrisisNotice={() => dispatchPostCall({ type: "crisisNoticeDismissed" })}
           transcript={transcript}
           objectionTracker={objectionTracker}
           testBypass={testBypass}
@@ -211,11 +215,11 @@ export function ObjectionHandlingStage({
           }
           isSubmitting={isSubmitting}
           nextStageName={negotiationMeta.stageName}
-          onContinueAfterCall={() => setShowNegotiationHandoff(true)}
+          onContinueAfterCall={() => dispatchPostCall({ type: "submitted" })}
         />
       </ErrorBoundary>
 
-      {showNegotiationHandoff && (
+      {postCall.isHandoffOpen && (
         <HandoffModal
           stageNumber={negotiationMeta.stageNumber}
           stageName={negotiationMeta.stageName}
@@ -223,12 +227,12 @@ export function ObjectionHandlingStage({
           message={nextHandoffMessage}
           hasAIRestriction={negotiationMeta.hasAIRestriction}
           onBegin={handleNegotiationBegin}
-          onDismiss={() => setShowNegotiationHandoff(false)}
+          onDismiss={() => dispatchPostCall({ type: "handoffDismissed" })}
           testBypass={testBypass}
         />
       )}
 
-      {showHandoff && !showNegotiationHandoff && (
+      {showHandoff && !postCall.isHandoffOpen && (
         <HandoffModal
           stageNumber={objectionsMeta.stageNumber}
           stageName={objectionsMeta.stageName}

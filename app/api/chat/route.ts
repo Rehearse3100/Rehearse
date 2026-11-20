@@ -9,7 +9,8 @@
  * transcript. A systemPrompt in the body is ignored. The live call personas (Dana and
  * Dr. Kim: CALL_PERSONAS in lib/call-config.ts) get 400: their turns go to
  * /api/student/call-turn. History keeps only user and assistant turns, the latest 60;
- * every message and the new one are at most 2,000 characters.
+ * every message and the new one are at most 2,000 characters. An unexpected error is
+ * logged on the server; the browser gets only a generic message.
  */
 
 import { NextResponse } from "next/server";
@@ -131,8 +132,8 @@ export async function POST(req: Request): Promise<NextResponse> {
 
     return NextResponse.json({ reply });
   } catch (error) {
+    // The real error stays in the server log; none of its text goes to the browser.
     console.error("Chat route error:", error);
-    const message = error instanceof Error ? error.message : "Failed to generate response";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: "Failed to generate response" }, { status: 500 });
   }
 }

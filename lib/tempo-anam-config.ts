@@ -2,6 +2,7 @@
  * tempo-anam-config.ts
  * Per-stage Anam avatar/voice ID resolution from simulations row only (no env fallback).
  * Used by the server-side anam-session route; client receives only session tokens.
+ * AnamSessionStage is the one stage type; Avatar.tsx and the voice hooks import it as a type.
  */
 
 /** Disables Anam's built-in LLM; client supplies GPT responses via talk stream. */

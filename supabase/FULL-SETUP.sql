@@ -561,8 +561,8 @@ INSERT INTO public.classes (
 ON CONFLICT (id) DO NOTHING;
 
 -- ── Seed: Tempo simulation (EXACT ID required by lib/constants.ts) ───────────
--- Live Discovery / Objection prompts are read from lib/constants.ts at runtime
--- (DANA_REYES_SYSTEM_PROMPT / DR_KIM_SYSTEM_PROMPT), not from this row.
+-- Live Discovery / Objection prompts are built on the server by the shared call brain
+-- (lib/server/call-prompt.ts + lib/server/tempo-call-cards.ts), not from this row.
 -- persona_system_prompt / product_context must still be non-empty (NOT NULL).
 -- persona_system_prompt intentionally holds NO scenario details (security).
 INSERT INTO public.simulations (

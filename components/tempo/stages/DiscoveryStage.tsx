@@ -3,13 +3,15 @@
  * Stage 2 of the Tempo simulation — Discovery audio call with Dana Reyes.
  * Flow: pre-call OPC prep → lobby (DiscoveryLobby) → active audio call → auto-submit.
  * The microphone is enabled by the student in the lobby and handed to the call
- * session, so no device indicator turns on automatically.
+ * session, so no device indicator turns on automatically. After the call, the
+ * Presentation handoff pop-up opens once the stage is saved; after a crisis ending the
+ * 988 notice comes first (lib/tempo-post-call.ts).
  * Only used in the Tempo/Default simulation (Rehearse Essentials class).
  */
 
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { HandoffModal } from "@/components/tempo/HandoffModal";
 import { ReferenceLibraryDrawer } from "@/components/tempo/ReferenceLibraryDrawer";
@@ -32,6 +34,7 @@ import {
   type DiscoveryPreCallPrep as DiscoveryPreCallPrepForm,
   type DiscoveryTranscriptEntry,
 } from "@/lib/tempo-discovery";
+import { INITIAL_POST_CALL_STATE, reducePostCall } from "@/lib/tempo-post-call";
 import {
   TEMPO_HANDOFF_STAGE_META,
 } from "@/lib/tempo-prospecting";
@@ -84,14 +87,14 @@ export function DiscoveryStage({
   const [prepReady, setPrepReady] = useState(false);
   const [connectError, setConnectError] = useState("");
   const [callSeconds, setCallSeconds] = useState(0);
-  const [callEndReason, setCallEndReason] = useState<CallSessionEndReason | null>(null);
   const [referenceLibraryOpen, setReferenceLibraryOpen] = useState(false);
   const [transcript, setTranscript] = useState<DiscoveryTranscriptEntry[]>([]);
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
   const [videoStream, setVideoStream] = useState<MediaStream | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showHandoff, setShowHandoff] = useState(initialShowHandoff);
-  const [showPresentationHandoff, setShowPresentationHandoff] = useState(false);
+  /** After the call: the crisis notice and the Presentation handoff pop-up. */
+  const [postCall, dispatchPostCall] = useReducer(reducePostCall, INITIAL_POST_CALL_STATE);
 
   const submittingRef = useRef(false);
   const prepFormRef = useRef(prepForm);
@@ -153,7 +156,6 @@ export function DiscoveryStage({
   const handleJoinCall = useCallback((streams: DiscoveryJoinStreams): void => {
     setConnectError("");
     setCallSeconds(0);
-    setCallEndReason(null);
     setTranscript([]);
     setAudioStream(streams.audioStream);
     setVideoStream(streams.videoStream);
@@ -185,7 +187,7 @@ export function DiscoveryStage({
       submittingRef.current = true;
 
       setCallSeconds(seconds);
-      setCallEndReason(endReason);
+      dispatchPostCall({ type: "callEnded", endReason });
       setTranscript(entries);
       setAudioStream(null);
       setVideoStream(null);
@@ -207,7 +209,8 @@ export function DiscoveryStage({
         });
 
         await completeStage(attemptId, "discovery", 0, "Submitted — scoring coming soon", payload);
-        setShowPresentationHandoff(true);
+        // Opens the handoff pop-up, unless the crisis notice is showing (it comes first).
+        dispatchPostCall({ type: "saved" });
       } finally {
         setIsSubmitting(false);
         submittingRef.current = false;
@@ -248,7 +251,8 @@ export function DiscoveryStage({
           <DiscoveryStageLayout
             phase={phase}
             callSeconds={callSeconds}
-            callEndReason={callEndReason}
+            isCrisisNoticeOpen={postCall.isCrisisNoticeOpen}
+            onDismissCrisisNotice={() => dispatchPostCall({ type: "crisisNoticeDismissed" })}
             transcript={transcript}
             testBypass={testBypass}
             lobbySlot={
@@ -288,12 +292,12 @@ export function DiscoveryStage({
             onPrepNext={handlePrepBegin}
             isSubmitting={isSubmitting}
             nextStageName={presentationMeta.stageName}
-            onContinueAfterCall={() => setShowPresentationHandoff(true)}
+            onContinueAfterCall={() => dispatchPostCall({ type: "submitted" })}
           />
         </ErrorBoundary>
       )}
 
-      {showPresentationHandoff && (
+      {postCall.isHandoffOpen && (
         <HandoffModal
           stageNumber={presentationMeta.stageNumber}
           stageName={presentationMeta.stageName}
@@ -301,12 +305,12 @@ export function DiscoveryStage({
           message={nextHandoffMessage}
           hasAIRestriction={presentationMeta.hasAIRestriction}
           onBegin={handlePresentationBegin}
-          onDismiss={() => setShowPresentationHandoff(false)}
+          onDismiss={() => dispatchPostCall({ type: "handoffDismissed" })}
           testBypass={testBypass}
         />
       )}
 
-      {showHandoff && !showPresentationHandoff && (
+      {showHandoff && !postCall.isHandoffOpen && (
         <HandoffModal
           stageNumber={discoveryMeta.stageNumber}
           stageName={discoveryMeta.stageName}

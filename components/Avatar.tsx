@@ -23,14 +23,13 @@ import {
   CALL_PERSONA_VIDEO_GRADIENT_CLASS,
 } from "@/components/call/CallLayout";
 import { ANAM_CONNECT_TIMEOUT_MS } from "@/lib/constants";
-import type { AvatarRef, SpeakAudioPayload } from "@/types";
+import type { AnamSessionStage } from "@/lib/tempo-anam-config";
+import type { AvatarRef } from "@/types";
 
 export type { AvatarRef } from "@/types";
 
 /** Fixed DOM id — streamToVideoElement targets this element across remounts. */
 export const ANAM_PERSONA_VIDEO_ELEMENT_ID = "anam-persona-video";
-
-export type AnamSessionStage = "discovery" | "objections";
 
 export type AvatarSessionConfig = {
   attemptId: string;
@@ -49,7 +48,6 @@ export type AvatarVoiceCallbacks = {
 
 /** Extended imperative API used by useSimulationVoiceSession (not on AvatarRef). */
 export type ExtendedAvatarRef = AvatarRef & {
-  configureSession: (config: AvatarSessionConfig) => void;
   beginStreaming: (audioStream?: MediaStream) => Promise<void>;
   updateInputStream: (audioStream: MediaStream) => Promise<void>;
   waitForSessionReady: (maxMs?: number) => Promise<void>;
@@ -113,7 +111,7 @@ export function getAvatarInitError(): string | null {
 }
 
 /**
- * Sets attempt/stage before startSession (called from voice hook).
+ * Sets attempt/stage before startSession (called from voice hook, at render).
  */
 export function setAvatarSessionConfig(config: AvatarSessionConfig): void {
   sessionConfigRef = config;
@@ -425,12 +423,6 @@ export const Avatar = forwardRef<AvatarRef>(function Avatar(_props, ref) {
       },
       stopSpeaking: (): void => {
         sharedClient?.interruptPersona();
-      },
-      speakAudio: async (_payload: SpeakAudioPayload): Promise<void> => {
-        /* Deprecated — Anam handles TTS via talk(). */
-      },
-      configureSession: (config: AvatarSessionConfig): void => {
-        setAvatarSessionConfig(config);
       },
       beginStreaming: async (audioStream?: MediaStream): Promise<void> => {
         if (!sharedClient) {

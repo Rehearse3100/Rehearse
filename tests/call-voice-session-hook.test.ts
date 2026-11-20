@@ -4,8 +4,9 @@
  * brain, POST /api/student/call-turn) and on the legacy "simulation" path (POST /api/chat,
  * unchanged): the opening start turn and its gate, the spoken turns with strikes, Anam's
  * end of speech, the silence turns and time marks from the clock, the hold while the
- * student is speaking (and the dropped-detection rule), and endCall (mic muted, reply
- * spoken in full, then the avatar stops and onCallEnd gets the reason).
+ * student is speaking (and the dropped-detection rule), endCall (mic muted, reply
+ * spoken in full, then the avatar stops and onCallEnd gets the reason), mute (Anam's own
+ * input mute on the same stream) and the Anam session config (set at render only).
  * React's hooks are replaced by a small synchronous stand-in (state, refs and effects
  * kept by call order, like one mounted component); the Avatar module, the Anam SDK's
  * MessageRole and fetch are mocked; timers and Date are fake. Nothing leaves the machine.
@@ -63,11 +64,13 @@ vi.mock("react", async (importOriginal) => {
 
 // ── Avatar, SDK and fetch mocks ───
 
-const avatarModule = vi.hoisted(() => ({ callbacks: {} as AvatarVoiceCallbacks }));
+const avatarModule = vi.hoisted(() => ({ callbacks: {} as AvatarVoiceCallbacks, sessionConfigs: [] as unknown[] }));
 
 vi.mock("@/components/Avatar", () => ({
   getAvatarInitError: (): null => null,
-  setAvatarSessionConfig: (): void => undefined,
+  setAvatarSessionConfig: (sessionConfig: unknown): void => {
+    avatarModule.sessionConfigs.push(sessionConfig);
+  },
   setAvatarVoiceCallbacks: (callbacks: AvatarVoiceCallbacks): void => {
     avatarModule.callbacks = callbacks;
   },
@@ -91,7 +94,6 @@ const lastSent = (): Sent | undefined => sent()[sent().length - 1];
 
 function fakeAvatar(): Record<string, ReturnType<typeof vi.fn>> {
   return {
-    configureSession: vi.fn(),
     resumeAudioContext: vi.fn(),
     waitUntilReady: vi.fn(async () => true),
     isReady: vi.fn(() => true),
@@ -165,6 +167,7 @@ beforeEach(() => {
   hooks.values = [];
   hooks.cleanups = [];
   avatarModule.callbacks = {};
+  avatarModule.sessionConfigs = [];
   messageCount = 0;
 });
 
@@ -348,6 +351,41 @@ describe("Dana / Dr. Kim: the shared call brain", () => {
     await personaFinished("Take care.");
     await vi.advanceTimersByTimeAsync(60_000);
     expect(onCallEnd).not.toHaveBeenCalled();
+  });
+
+  it("mute and unmute are Anam's own input mute on the same stream: no new stream, no restart", async () => {
+    const { avatar } = await startDanaCall();
+    await openingSpoken();
+    avatar.setInputMuted.mockClear();
+    const voice = render();
+
+    voice.pauseMic();
+    expect(config.isMutedRef?.current).toBe(true);
+    expect(avatar.setInputMuted.mock.calls).toEqual([[true]]);
+
+    voice.resumeMic();
+    expect(config.isMutedRef?.current).toBe(false);
+    expect(avatar.setInputMuted.mock.calls).toEqual([[true], [false]]);
+    // The stream startCall was given stays the input.
+    expect(avatar.updateInputStream).not.toHaveBeenCalled();
+    expect(avatar.beginStreaming.mock.calls).toEqual([[STREAM]]);
+  });
+
+  it("the Anam session config is set at render (trimmed attempt id, the stage), and nowhere else", async () => {
+    config = { persona: "tempo_objections", attemptId: " attempt-7 ", anamStage: "objections", isMutedRef: { current: false } };
+    const voice = render();
+    expect(avatarModule.sessionConfigs).toEqual([{ attemptId: "attempt-7", stage: "objections" }]);
+    (voice.avatarRef as { current: unknown }).current = fakeAvatar();
+    replies.push({ reply: "Dr. Kim here." });
+    await voice.startCall(STREAM);
+    // startCall sets nothing itself; the next render sets the same config again.
+    expect(avatarModule.sessionConfigs).toHaveLength(1);
+    expect(lastSent()?.body).toMatchObject({ attemptId: "attempt-7", start: true });
+    render();
+    expect(avatarModule.sessionConfigs).toEqual([
+      { attemptId: "attempt-7", stage: "objections" },
+      { attemptId: "attempt-7", stage: "objections" },
+    ]);
   });
 
   it("a start turn that fails: the call doesn't start and the avatar session is closed", async () => {
