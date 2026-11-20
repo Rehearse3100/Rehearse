@@ -15,8 +15,8 @@
  * rudeEnd, breakEnd, silentEnd), whatever the reply says; [END_CALL] in the reply is only
  * removed from the text. From the backstop on there is no model call: { reply: "",
  * endCall: true }. A failed, timed-out (15 s) or empty reply call is retried once, then the
- * reply is FALLBACK_REPLY (endCall still follows the note); an error's text never reaches
- * the page.
+ * reply is FALLBACK_REPLY, or ENDING_FALLBACK_REPLY on a turn whose note ends the call (the
+ * call still ends); an error's text never reaches the page.
  *
  * A turn with a newMessage also gets a label call (gpt-6-luna, no retries, 5 s timeout)
  * that classifies the student's message, in parallel with the usual reply call. A label
@@ -31,6 +31,7 @@ import OpenAI from "openai";
 import {
   buildLabelMessages,
   buildTesterMessages,
+  ENDING_FALLBACK_REPLY,
   FALLBACK_REPLY,
   finishReply,
   isEndingNote,
@@ -133,9 +134,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     // A label whose note doesn't win this turn would resend the same messages: keep the reply.
     const isNoteChanged = note !== pickSituationNote(turn, settings.timings);
     const content = isNoteChanged ? await askModel(openai, replySettings, buildTesterMessages(turn, settings.timings, label)) : normalContent;
-    const reply = content === null ? FALLBACK_REPLY : finishReply(content);
     // The code decides every ending: the note, never [END_CALL] in the reply.
     const isEndCall = isEndingNote(note);
+    const reply = content === null ? (isEndCall ? ENDING_FALLBACK_REPLY : FALLBACK_REPLY) : finishReply(content);
     return NextResponse.json({ reply, ...(isEndCall ? { endCall: true } : {}), ...(isLabelled ? { label } : {}), ms: elapsedMs() });
   } catch (error) {
     console.error("[tester-chat] unexpected:", error);

@@ -37,8 +37,11 @@
  * The response is { reply, endCall?, label?, ms }. label (turns with the student's text
  * only): how the brain's label call classified the message; the transcript shows it, and
  * rude / break_character add one to that strike count. endCall: true → the persona ended the call:
- * the timer stops, sending is disabled and "Call ended by the persona" shows; the avatar
- * says the goodbye, then stops. "Reset chat" re-enables it all.
+ * the timer stops, sending is disabled and "Call ended by the persona" shows, after the
+ * goodbye is in the transcript. With the avatar on, the mic is muted and the avatar says
+ * the whole goodbye (after anything it is still saying), then stops: it stops at the end
+ * of speech of the last talk() sent, or SPEECH_END_FALLBACK_MS after the last talk() or
+ * end of speech if Anam reports none. "Reset chat" re-enables it all.
  * A reply "finishes" when it arrives, or, when the avatar speaks it, when Anam reports the
  * persona's message done (MESSAGE_HISTORY_UPDATED ending on the persona). From a turn
  * until then, Silence stays at 00:00: it's the persona's turn.
@@ -54,7 +57,8 @@
  * - talk(reply) makes the avatar speak, once SESSION_READY has fired;
  * - stopStreaming() plus stopping the mic tracks to stop.
  * The mic starts muted each time the avatar starts (the SDK's muteInputAudio() right after
- * createClient(); the stream picks the state up), and the Mute / Unmute mic button calls
+ * createClient(); the stream picks the state up) and is muted again when the persona ends
+ * the call, so the student can't talk over the goodbye. The Mute / Unmute mic button calls
  * muteInputAudio() / unmuteInputAudio(). Muted, the avatar still speaks and typed turns work.
  */
 
@@ -368,6 +372,14 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
   /** The persona ended the call and the avatar is saying the goodbye: stop it at the end of speech. */
   const stopAvatarAfterSpeechRef = useRef(false);
   const goodbyeTimerRef = useRef<number | null>(null);
+  /**
+   * talk() commands sent this avatar session whose end of speech hasn't come yet. The SDK
+   * emits MESSAGE_HISTORY_UPDATED on each end of speech; one per talk(), said in full or
+   * cut off, is assumed (Anam's server side, not confirmed). The goodbye stop waits for 0,
+   * so an earlier reply still being spoken can't stop it; if an end never comes, the
+   * goodbye's fallback stops the avatar.
+   */
+  const talksInFlightRef = useRef(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const sendTurnRef = useRef<(text: string, via: TurnSource) => Promise<void>>(async () => undefined);
@@ -433,11 +445,13 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
       // Set before talk(): the end of speech may arrive before talk() resolves.
       isAwaitingSpeechEndRef.current = true;
       speechSentAtRef.current = Date.now();
+      talksInFlightRef.current += 1;
       try {
         await client.talk(reply);
         return true;
       } catch (error) {
         isAwaitingSpeechEndRef.current = false;
+        talksInFlightRef.current = Math.max(0, talksInFlightRef.current - 1);
         addLine({ kind: "note", text: `Avatar couldn't speak this reply: ${errorText(error)}` });
         return false;
       }
@@ -462,6 +476,7 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
     processedMessageIdsRef.current.clear();
     pendingSpokenRef.current = [];
     isSessionReadyRef.current = false;
+    talksInFlightRef.current = 0;
     clearGoodbyeStop();
     setStartPending(false);
     // A reply cut off by the stop counts as finished now.
@@ -474,20 +489,31 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
     setIsMicMuted(true);
   }, [clearGoodbyeStop, markReplyFinished, setStartPending]);
 
+  /** (Re)starts the goodbye's fallback: the avatar stops this long from now even if Anam reports no end of speech. */
+  const armGoodbyeFallback = useCallback((): void => {
+    if (goodbyeTimerRef.current !== null) {
+      window.clearTimeout(goodbyeTimerRef.current);
+    }
+    goodbyeTimerRef.current = window.setTimeout(() => stopAvatar(), SPEECH_END_FALLBACK_MS);
+  }, [stopAvatar]);
+
   /**
-   * endCall: true from the brain: freeze the timer and stop sending now. With the avatar
-   * on, it says the goodbye first and stops at the end of speech (or after the fallback);
-   * otherwise it stops straight away.
+   * endCall: true from the brain (the goodbye is already in the transcript): freeze the
+   * timer and stop sending now. With the avatar on, it mutes the mic, says the goodbye and
+   * stops once every talk() has ended (or after the fallback); otherwise it stops straight away.
    */
   const endCall = useCallback(
     async (goodbye: string | null): Promise<void> => {
       updateClock((current) => endCallClock(current, Date.now()));
       setNow(Date.now());
       pendingSpokenRef.current = [];
-      if (!goodbye || !clientRef.current) {
+      const client = clientRef.current;
+      if (!goodbye || !client) {
         stopAvatar();
         return;
       }
+      // The student's speech could interrupt the goodbye: the call is over, so the mic goes off.
+      setIsMicMuted(client.muteInputAudio().isMuted);
       stopAvatarAfterSpeechRef.current = true;
       const isSpeaking = await speakReply(goodbye);
       // Reset chat during the goodbye cancels the stop (the avatar stays on).
@@ -498,9 +524,9 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
         stopAvatar();
         return;
       }
-      goodbyeTimerRef.current = window.setTimeout(() => stopAvatar(), SPEECH_END_FALLBACK_MS);
+      armGoodbyeFallback();
     },
-    [updateClock, stopAvatar, speakReply]
+    [updateClock, stopAvatar, speakReply, armGoodbyeFallback]
   );
 
   // ── Turns ───
@@ -777,6 +803,7 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
           return;
         }
         if (last.role === MessageRole.PERSONA) {
+          talksInFlightRef.current = Math.max(0, talksInFlightRef.current - 1);
           // The avatar finished speaking the reply: Silence counts from here, and a time mark
           // or check-in that came due while it spoke goes now.
           if (isAwaitingSpeechEndRef.current) {
@@ -784,9 +811,14 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
             markReplyFinished();
             runClockChecks();
           }
-          // The goodbye is said: now the avatar stops.
+          // After an endCall: the avatar stops once the goodbye is said, i.e. once no talk() is
+          // left. An earlier reply still being spoken ends first; the goodbye's fallback then restarts.
           if (stopAvatarAfterSpeechRef.current) {
-            stopAvatar();
+            if (talksInFlightRef.current === 0) {
+              stopAvatar();
+            } else {
+              armGoodbyeFallback();
+            }
           }
           return;
         }
@@ -843,7 +875,7 @@ export function AiCallTester({ initialAttemptId, simulationId, classId }: AiCall
       addLine({ kind: "error", text: `Avatar failed to start: ${errorText(error)}`, ms: null });
       stopAvatar();
     }
-  }, [addLine, markReplyFinished, runClockChecks, setStartPending, stopAvatar]);
+  }, [addLine, markReplyFinished, runClockChecks, setStartPending, stopAvatar, armGoodbyeFallback]);
 
   // Stop cleanly when the page closes or the component unmounts.
   useEffect(() => {
