@@ -5,8 +5,9 @@
  * unchanged): the opening start turn and its gate, the spoken turns with strikes, Anam's
  * end of speech (also when the persona's message is updated in place with the student's
  * words still last) and, with none, the reply's estimate (speechFallbackMs), the silence
- * turns and time marks from the clock, the hold while the student is speaking (and the
- * dropped-detection rule), endCall (mic muted, reply spoken in full, then the avatar stops
+ * turns and time marks from the clock, the speech pause (a speech start with no words
+ * pauses Silence and never resets it: noise blips, the dropped-detection rule, no stacking,
+ * muting ending it; only the student's words reset Silence), endCall (mic muted, reply spoken in full, then the avatar stops
  * and onCallEnd gets the reason), the "[call]" diagnostics (no reply or student text),
  * mute (Anam's own input mute on the same stream) and the Anam session config (set at
  * render only). The review fixes: the pending ending's reason, an interruption that keeps
@@ -322,31 +323,130 @@ describe("Dana / Dr. Kim: the shared call brain", () => {
     expect(sent().filter((request) => request.body.silent === true)).toHaveLength(2);
   });
 
-  it("while the student is speaking Silence holds (no check-in mid-answer); it counts again when they stop", async () => {
+  it("while the student is speaking Silence pauses (no check-in mid-answer); with no words it carries on from its paused value", async () => {
     const { avatar } = await startDanaCall();
     await personaFinished();
     await vi.advanceTimersByTimeAsync(15_000);
     avatarModule.callbacks.onUserSpeechStarted?.("speech-1");
     await vi.advanceTimersByTimeAsync(8_000);
     expect(sent()).toHaveLength(1);
+    // Ended at 23 s with no words: Silence carries on from 15 s, so the check-in is 5 s later, at 28 s.
     avatarModule.callbacks.onUserSpeechEnded?.("speech-1");
-    await vi.advanceTimersByTimeAsync(19_900);
+    await vi.advanceTimersByTimeAsync(4_900);
     expect(sent()).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(200);
-    expect(lastSent()?.body).toMatchObject({ silent: true, silenceSeconds: 20 });
+    expect(lastSent()?.body).toMatchObject({ silent: true, silenceSeconds: 20, callSeconds: 28 });
     expect(avatar.talk).toHaveBeenCalledTimes(2);
+    expect(callLines()).toEqual(
+      expect.arrayContaining(["[call] speech started: silence paused at 15 s", "[call] speech ended: silence resumed at 15 s"])
+    );
   });
 
-  it("a start with no end within 10 s is a dropped detection: Silence counts again from then", async () => {
+  it("a start with no end within 10 s is a dropped detection: Silence carries on from its paused value then; a late end changes nothing", async () => {
     await startDanaCall();
     await personaFinished();
     await vi.advanceTimersByTimeAsync(5_000);
     avatarModule.callbacks.onUserSpeechStarted?.("speech-1");
-    // Released at 15 s (10 s after the start), so the check-in comes due at 35 s.
-    await vi.advanceTimersByTimeAsync(29_900);
+    // Dropped at 15 s (10 s after the start): Silence carries on from 5 s, so the check-in is due at 30 s.
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(callLines()).toEqual(
+      expect.arrayContaining(["[call] speech started: silence paused at 5 s", "[call] speech dropped: silence resumed at 5 s"])
+    );
+    // The end arriving late (20 s): no pause is open, so nothing moves.
+    avatarModule.callbacks.onUserSpeechEnded?.("speech-1");
+    await vi.advanceTimersByTimeAsync(9_900);
     expect(sent()).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(200);
-    expect(lastSent()?.body).toMatchObject({ silent: true, silenceSeconds: 20, callSeconds: 35 });
+    expect(lastSent()?.body).toMatchObject({ silent: true, silenceSeconds: 20, callSeconds: 30 });
+    expect(callLines().filter((line) => line.includes("silence resumed"))).toHaveLength(1);
+  });
+
+  it("noise blips (start then end, no words) at 5 s and 12 s: the check-in at 20 s of real silence plus the paused time, not 20 s after the last blip", async () => {
+    await startDanaCall();
+    await personaFinished();
+    // A cough at 5 s (1 s long), a click at 12 s (1.5 s long): 2.5 s paused in all.
+    await vi.advanceTimersByTimeAsync(5_000);
+    avatarModule.callbacks.onUserSpeechStarted?.("cough");
+    await vi.advanceTimersByTimeAsync(1_000);
+    avatarModule.callbacks.onUserSpeechEnded?.("cough");
+    await vi.advanceTimersByTimeAsync(6_000);
+    avatarModule.callbacks.onUserSpeechStarted?.("click");
+    await vi.advanceTimersByTimeAsync(1_500);
+    avatarModule.callbacks.onUserSpeechEnded?.("click");
+    // 20 s of real silence at 22.5 s (not at 33.5 s, 20 s after the last blip).
+    await vi.advanceTimersByTimeAsync(8_900);
+    expect(sent()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(sent()).toHaveLength(2);
+    expect(lastSent()?.body).toMatchObject({ silent: true, silenceSeconds: 20, callSeconds: 22 });
+    expect(callLines()).toEqual(
+      expect.arrayContaining([
+        "[call] speech started: silence paused at 5 s",
+        "[call] speech ended: silence resumed at 5 s",
+        "[call] speech started: silence paused at 11 s",
+        "[call] speech ended: silence resumed at 11 s",
+      ])
+    );
+  });
+
+  it("a second speech start while paused keeps the original paused value (pauses don't stack)", async () => {
+    await startDanaCall();
+    await personaFinished();
+    await vi.advanceTimersByTimeAsync(5_000);
+    avatarModule.callbacks.onUserSpeechStarted?.("speech-1");
+    await vi.advanceTimersByTimeAsync(3_000);
+    avatarModule.callbacks.onUserSpeechStarted?.("speech-2");
+    await vi.advanceTimersByTimeAsync(2_000);
+    // Ended at 10 s: Silence carries on from 5 s (not 8 s), so the check-in is due at 25 s.
+    avatarModule.callbacks.onUserSpeechEnded?.("speech-2");
+    expect(callLines()).toContain("[call] speech ended: silence resumed at 5 s");
+    await vi.advanceTimersByTimeAsync(14_900);
+    expect(sent()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(lastSent()?.body).toMatchObject({ silent: true, silenceSeconds: 20, callSeconds: 25 });
+  });
+
+  it("the student's words still reset Silence: the check-in comes 20 s after their turn's reply", async () => {
+    await startDanaCall();
+    await personaFinished();
+    await vi.advanceTimersByTimeAsync(15_000);
+    avatarModule.callbacks.onUserSpeechStarted?.("speech-1");
+    await vi.advanceTimersByTimeAsync(1_000);
+    avatarModule.callbacks.onUserSpeechEnded?.("speech-1");
+    // The words come through (16 s): a turn, and its reply is spoken at once.
+    await studentSaid("We have eight offices.");
+    expect(sent()).toHaveLength(2);
+    expect(lastSent()?.body).toMatchObject({ newMessage: "We have eight offices.", silenceSeconds: 15 });
+    await personaFinished();
+    // Silence from 0 at 16 s: the check-in at 36 s, not 5 s after the speech ended.
+    await vi.advanceTimersByTimeAsync(19_900);
+    expect(sent()).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(sent()).toHaveLength(3);
+    expect(lastSent()?.body).toMatchObject({ silent: true, silenceSeconds: 20, callSeconds: 36 });
+    expect(callLines()).toContain("[call] student words received: silence reset");
+    expect(callLines().join("\n")).not.toContain("eight offices");
+  });
+
+  it("muting during an open speech start ends the pause at once: the mute reminder 10 s after the mute", async () => {
+    await startDanaCall();
+    await personaFinished();
+    const voice = render();
+    await vi.advanceTimersByTimeAsync(3_000);
+    avatarModule.callbacks.onUserSpeechStarted?.("speech-1");
+    await vi.advanceTimersByTimeAsync(2_000);
+    // Muted at 5 s with the start still open: Silence carries on from 3 s.
+    voice.pauseMic();
+    expect(callLines()).toContain("[call] mic muted: silence resumed at 3 s");
+    // The start's end (or its dropped rule) afterwards changes nothing.
+    await vi.advanceTimersByTimeAsync(3_000);
+    avatarModule.callbacks.onUserSpeechEnded?.("speech-1");
+    await vi.advanceTimersByTimeAsync(6_900);
+    expect(sent()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(sent()).toHaveLength(2);
+    expect(lastSent()?.body).toMatchObject({ muted: true, silenceSeconds: 13, callSeconds: 15 });
+    expect(callLines().filter((line) => line.includes("silence resumed"))).toHaveLength(1);
   });
 
   it("endCall: the mic is muted, the reply is spoken in full, then the avatar stops and onCallEnd gets the reason", async () => {
@@ -410,6 +510,7 @@ describe("Dana / Dr. Kim: the shared call brain", () => {
       "[call] reply received: endCall false, endReason none, label none",
       "[call] talk() sent: fallback 3600 ms, 1 talks in flight",
       "[call] turn sent: spoken",
+      "[call] student words received: silence reset",
       "[call] reply received: endCall true, endReason goodbye, label goodbye",
       "[call] talk() sent: fallback 3200 ms, 2 talks in flight",
       "[call] ending finished: by fallback (goodbye)",

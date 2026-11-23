@@ -36,8 +36,8 @@
  * callSeconds: the call time shown on the page at send time, in whole seconds, every
  * "+30 sec" offset included (Start call or the first turn starts the call, so it sends 0
  * plus offsets). silenceSeconds: the Silence readout at send time: whole seconds since the
- * persona's last reply finished (or since the call started, before any reply), plus 30 for
- * each "+30 sec" pressed while it was counting.
+ * persona's last reply finished (or since the call started, before any reply), less any
+ * time paused by the student's speech, plus 30 for each "+30 sec" pressed while it was counting.
  * strikes: { rude, breakCharacter }, sent on every turn: how many times this call the
  * brain labelled the student's message rude or break_character (0 to 9); Start call and
  * "Reset chat" set both to 0.
@@ -68,6 +68,11 @@
  * - createClient(token), then streamToVideoElement(videoId, micStream) to start;
  * - MESSAGE_HISTORY_UPDATED whose last message is the user's = the spoken turn is final
  *   (each Anam message id is handled once);
+ * - USER_SPEECH_STARTED with no words yet pauses Silence at its value (and with it the time
+ *   marks, check-ins and mute reminder): a cough or click never resets it, only the
+ *   student's words (a turn) do. USER_SPEECH_ENDED, USER_SPEECH_DROPPED_MS with no end, a
+ *   mute or the avatar stopping resumes it from there. No pause while muted; pauses don't
+ *   stack. Each step adds a note to the transcript;
  * - talk(reply) makes the avatar speak, once SESSION_READY has fired;
  * - stopStreaming() plus stopping the mic tracks to stop.
  * The mic starts muted each time the avatar starts (the SDK's muteInputAudio() right after
@@ -85,11 +90,14 @@ import { CALL_TIMINGS } from "@/lib/call-config";
 import {
   CLOCK_TICK_MS,
   TIME_MARKS,
+  USER_SPEECH_DROPPED_MS,
   callSecondsAt,
   clockAfterMicMuted,
   clockAfterMicUnmuted,
   clockAfterMutedTurnFailed,
   clockAfterReplyFinished,
+  clockAfterSilencePaused,
+  clockAfterSilenceResumed,
   clockAfterSilentTurnFailed,
   clockAfterTurnSent,
   dueMutedReminder,
@@ -98,6 +106,7 @@ import {
   emptyCallClock,
   endCallClock,
   formatClock,
+  isStudentsTurn,
   localTimeAt,
   mutedSecondsAt,
   silenceSecondsAt,
@@ -267,6 +276,11 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
   const sendTurnRef = useRef<(text: string, via: TurnSource) => Promise<void>>(async () => undefined);
   /** This call's rude and break_character labels so far, sent with every turn. */
   const strikesRef = useRef({ rude: 0, breakCharacter: 0 });
+  /**
+   * When Anam last said the student started speaking (avatar on; null once they stopped,
+   * the dropped rule passed, or they muted). The speech pause itself is in the clock.
+   */
+  const speechStartedAtRef = useRef<number | null>(null);
 
   personaRef.current = persona;
 
@@ -282,9 +296,55 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
     setClock(clockRef.current);
   }, []);
 
+  /**
+   * A speech start with no words yet (avatar on, mic on), on the student's turn: Silence
+   * pauses at its value, as in the live call (an open pause keeps its original value).
+   */
+  const pauseSilenceForSpeech = useCallback((): void => {
+    if (!isStudentsTurn(clockRef.current, isBusyRef.current) || clockRef.current.mutedSince !== null) {
+      return;
+    }
+    const at = Date.now();
+    const wasPaused = clockRef.current.silencePausedAt !== null;
+    updateClock((current) => clockAfterSilencePaused(current, at));
+    const seconds = silenceSecondsAt(clockRef.current, at);
+    addLine({
+      kind: "note",
+      text: wasPaused ? `Speech started again: Silence stays paused at ${seconds} s.` : `Speech started: Silence paused at ${seconds} s.`,
+    });
+  }, [addLine, updateClock]);
+
+  /**
+   * The speech pause ends with no words (`how`): Silence carries on from its paused value
+   * (the paused time doesn't count). Only the student's words (a turn) reset it.
+   */
+  const resumeSilenceAfterSpeech = useCallback(
+    (how: "ended" | "dropped" | "avatar off"): void => {
+      speechStartedAtRef.current = null;
+      if (clockRef.current.silencePausedAt === null) {
+        return;
+      }
+      const at = Date.now();
+      updateClock((current) => clockAfterSilenceResumed(current, at));
+      const seconds = silenceSecondsAt(clockRef.current, at);
+      const why =
+        how === "ended"
+          ? "Speech ended"
+          : how === "dropped"
+            ? `No end of speech within ${USER_SPEECH_DROPPED_MS / 1000} s of its start (dropped)`
+            : "Avatar off";
+      addLine({ kind: "note", text: `${why}: Silence resumed at ${seconds} s.` });
+    },
+    [addLine, updateClock]
+  );
+
+  /** The reply finished: Silence counts from 0; if the student is still speaking, it pauses there until they stop. */
   const markReplyFinished = useCallback((): void => {
     updateClock((current) => clockAfterReplyFinished(current, Date.now()));
-  }, [updateClock]);
+    if (speechStartedAtRef.current !== null) {
+      pauseSilenceForSpeech();
+    }
+  }, [updateClock, pauseSilenceForSpeech]);
 
   const setStartPending = useCallback((isPending: boolean): void => {
     pendingStartRef.current = isPending;
@@ -360,6 +420,8 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
     talksInFlightRef.current = 0;
     clearGoodbyeStop();
     setStartPending(false);
+    // No speech end can come now: an open speech pause ends here.
+    resumeSilenceAfterSpeech("avatar off");
     // A reply cut off by the stop counts as finished now.
     if (isAwaitingSpeechEndRef.current) {
       isAwaitingSpeechEndRef.current = false;
@@ -368,7 +430,7 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
     setAvatarPhase("off");
     setIsSessionReady(false);
     setIsMicMuted(true);
-  }, [clearGoodbyeStop, markReplyFinished, setStartPending]);
+  }, [clearGoodbyeStop, markReplyFinished, setStartPending, resumeSilenceAfterSpeech]);
 
   /** Arms the goodbye's fallback: even if Anam reports no end of speech, the avatar stops at the goodbye's estimate from its talk(). */
   const armGoodbyeFallback = useCallback((): void => {
@@ -419,14 +481,22 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
    * Sends what the call clock says is due, at most one turn: a time mark first, else the
    * mute reminder, else the silence check-in. Runs on every tick, right after "+30 sec", and
    * when a reply finishes. First it tells the clock whether the student is muted: only with
-   * the avatar on (a client exists), so text-only mode ignores mute.
+   * the avatar on (a client exists), so text-only mode ignores mute. Muting ends an open
+   * speech pause at once (clockAfterMicMuted), so the mute reminder counts from the mute.
    */
   const runClockChecks = useCallback((): void => {
     const at = Date.now();
     const timings = CALL_TIMINGS[personaRef.current];
     const isMuted = clientRef.current !== null && isMicMutedRef.current;
     if (isMuted !== (clockRef.current.mutedSince !== null)) {
+      const wasPaused = clockRef.current.silencePausedAt !== null;
+      if (isMuted) {
+        speechStartedAtRef.current = null;
+      }
       updateClock((current) => (isMuted ? clockAfterMicMuted(current, at) : clockAfterMicUnmuted(current)));
+      if (isMuted && wasPaused) {
+        addLine({ kind: "note", text: `Mic muted: Silence resumed at ${silenceSecondsAt(clockRef.current, at)} s.` });
+      }
     }
     if (dueTimeMark(clockRef.current, at, timings, isBusyRef.current)) {
       void sendTurnRef.current("", "timeMark");
@@ -435,7 +505,7 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
     } else if (dueSilenceTurn(clockRef.current, at, timings, isBusyRef.current)) {
       void sendTurnRef.current("", "silence");
     }
-  }, [updateClock]);
+  }, [addLine, updateClock]);
 
   /** Sends the queued spoken turns as one, once nothing is in flight. */
   const flushPendingSpoken = useCallback((): void => {
@@ -641,12 +711,17 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
         });
         markReplyFinished();
       }
+      // A speech start with no end this long after it is a dropped detection (Anam's guidance, as in the live call).
+      const speechStartedAt = speechStartedAtRef.current;
+      if (speechStartedAt !== null && at - speechStartedAt >= USER_SPEECH_DROPPED_MS) {
+        resumeSilenceAfterSpeech("dropped");
+      }
       runClockChecks();
     };
     tick();
     const timer = window.setInterval(tick, CLOCK_TICK_MS);
     return () => window.clearInterval(timer);
-  }, [isClockRunning, addLine, markReplyFinished, runClockChecks, endCall]);
+  }, [isClockRunning, addLine, markReplyFinished, runClockChecks, endCall, resumeSilenceAfterSpeech]);
 
   // ── Avatar: start ───
 
@@ -746,6 +821,21 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
         processedMessageIdsRef.current.add(last.id);
         void sendTurnRef.current(last.content, "spoken");
       });
+      // The student's speech before any words: Silence pauses (a cough or click never resets
+      // it; only their words do), as in the live call. Muted, Anam can't hear them: no pause.
+      client.addListener(AnamEvent.USER_SPEECH_STARTED, (): void => {
+        if (clientRef.current !== client || isMicMutedRef.current) {
+          return;
+        }
+        speechStartedAtRef.current = Date.now();
+        pauseSilenceForSpeech();
+      });
+      client.addListener(AnamEvent.USER_SPEECH_ENDED, (): void => {
+        if (clientRef.current !== client) {
+          return;
+        }
+        resumeSilenceAfterSpeech("ended");
+      });
       client.addListener(AnamEvent.SESSION_READY, (): void => {
         if (clientRef.current !== client) {
           return;
@@ -793,7 +883,7 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
       addLine({ kind: "error", text: `Avatar failed to start: ${errorText(error)}`, ms: null });
       stopAvatar();
     }
-  }, [addLine, markReplyFinished, runClockChecks, setStartPending, stopAvatar]);
+  }, [addLine, markReplyFinished, runClockChecks, setStartPending, stopAvatar, pauseSilenceForSpeech, resumeSilenceAfterSpeech]);
 
   // Stop cleanly when the page closes or the component unmounts.
   useEffect(() => {
@@ -820,6 +910,7 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
     isBusyRef.current = false;
     setIsBusy(false);
     isAwaitingSpeechEndRef.current = false;
+    speechStartedAtRef.current = null;
     clearGoodbyeStop();
     setStartPending(false);
     updateClock(() => emptyCallClock());
@@ -860,7 +951,11 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
   const toggleMicMute = (): void => {
     const client = clientRef.current;
     if (client) {
-      setIsMicMuted((isMicMuted ? client.unmuteInputAudio() : client.muteInputAudio()).isMuted);
+      const isNowMuted = (isMicMuted ? client.unmuteInputAudio() : client.muteInputAudio()).isMuted;
+      setIsMicMuted(isNowMuted);
+      // The clock hears about it now, not on the next tick: muting ends an open speech pause at once.
+      isMicMutedRef.current = isNowMuted;
+      runClockChecks();
     }
   };
 

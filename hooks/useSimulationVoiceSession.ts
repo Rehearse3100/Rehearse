@@ -24,9 +24,12 @@
  * talk() calls are counted against those events, and an event finishes the reply only once
  * none is left in flight. If none comes, the reply counts as spoken
  * speechFallbackMs(reply) after talk() (lib/call-clock.ts: an estimate of how long it takes
- * to say). Silence counts from there. While the student is speaking (Anam's
- * USER_SPEECH_STARTED until USER_SPEECH_ENDED, or USER_SPEECH_DROPPED_MS with no end, as
- * Anam's events reference advises) Silence holds, so a long answer never gets the check-in.
+ * to say). Silence counts from there. Only the student's words (a transcript that becomes a
+ * turn) reset it. A speech start with no words (Anam's USER_SPEECH_STARTED until
+ * USER_SPEECH_ENDED, or USER_SPEECH_DROPPED_MS with no end, as Anam's events reference
+ * advises) only pauses it: Silence then carries on from its paused value, so a long answer
+ * never gets the check-in and a cough or click never restarts the count. Pauses don't
+ * stack, none opens while muted, and muting ends an open one at once.
  * TALK_STREAM_INTERRUPTED (the student cut the persona off) only stops playback: a turn in
  * flight carries on. Queued words go on the next clock tick (and on unmute). A silent turn
  * or mute reminder whose request fails doesn't count.
@@ -47,8 +50,9 @@
  * as silence (the mute reminder comes first), and unmuting alone resets nothing.
  * Diagnostics: one console.info line, prefixed "[call]", per turn sent, reply received,
  * talk() sent, persona end of speech, ending finished, silence turn or mute reminder due,
- * safety stop and lost connection (types, labels and timings only: never the reply's or
- * the student's text).
+ * safety stop, lost connection, speech pause (started, ended, dropped, or ended by a mute,
+ * with the Silence value) and student words received (types, labels and timings only:
+ * never the reply's or the student's text).
  *
  * ── Every other persona (legacy "simulation" calls): unchanged ───
  * GPT via POST /api/chat; the opening is openingGreeting (or the default greeting);
@@ -76,7 +80,8 @@ import {
   clockAfterMutedTurnFailed,
   clockAfterReplyFinished,
   clockAfterSilentTurnFailed,
-  clockAfterStudentSpeechStarted,
+  clockAfterSilencePaused,
+  clockAfterSilenceResumed,
   clockAfterTurnSent,
   dueMutedReminder,
   dueSilenceTurn,
@@ -154,6 +159,9 @@ type CallStrikes = { rude: number; breakCharacter: number };
  * couldn't be spoken, a local safety stop, or the connection lost.
  */
 type EndingFinish = "event" | "fallback" | "interrupted" | "not spoken" | "safety stop" | "connection lost";
+
+/** How a speech pause ended with no words: Anam's USER_SPEECH_ENDED, or the dropped rule (USER_SPEECH_DROPPED_MS). */
+type SpeechPauseEnd = "ended" | "dropped";
 
 /** False only when the browser says it is offline (navigator.onLine). */
 function isBrowserOnline(): boolean {
@@ -234,15 +242,17 @@ export function useSimulationVoiceSession(
   /** The brain ended the call and the reply is being spoken: why (null otherwise). */
   const endingReasonRef = useRef<CallEndReason | null>(null);
   const endingTimerRef = useRef<number | null>(null);
-  /** When Anam last said the student started speaking (null once they stopped). */
+  /**
+   * When Anam last said the student started speaking (null once they stopped, the dropped
+   * rule passed, or they muted). The speech pause itself is in the clock (silencePausedAt).
+   */
   const studentSpeechStartedAtRef = useRef<number | null>(null);
-  /** Silence is held because the student started speaking on their turn. */
-  const isSilenceHeldBySpeechRef = useRef(false);
   const sendCallTurnRef = useRef<(text: string, via: TurnSource) => Promise<boolean>>(async () => false);
   const runClockChecksRef = useRef<() => void>(() => undefined);
   const finishPersonaSpeechRef = useRef<(status?: string) => void>(() => undefined);
   const completePersonaEndingRef = useRef<(how: EndingFinish) => void>(() => undefined);
-  const releaseSilenceHoldRef = useRef<() => void>(() => undefined);
+  const releaseSilenceHoldRef = useRef<(how: SpeechPauseEnd) => void>(() => undefined);
+  const pauseSilenceForSpeechRef = useRef<() => void>(() => undefined);
   /** The lost-connection timer (CALL_TIMINGS.connectionLostLimit), or null when the connection is fine. */
   const connectionLostTimerRef = useRef<number | null>(null);
   /** Anam reported its connection closed mid-call: the call can't go on (the SDK doesn't come back after it). */
@@ -382,10 +392,9 @@ export function useSimulationVoiceSession(
       isSpeakingRef.current = false;
       canListenAfterRef.current = Date.now() + SIMULATION_POST_SPEAK_COOLDOWN_MS;
       updateClock((current) => clockAfterReplyFinished(current, Date.now()));
-      // The student started speaking during the reply and hasn't stopped: Silence holds until they do.
-      if (studentSpeechStartedAtRef.current !== null && isStudentsTurn(clockRef.current, false)) {
-        updateClock((current) => clockAfterStudentSpeechStarted(current, false));
-        isSilenceHeldBySpeechRef.current = true;
+      // The student started speaking during the reply and hasn't stopped: Silence pauses (at 0) until they do.
+      if (studentSpeechStartedAtRef.current !== null) {
+        pauseSilenceForSpeechRef.current();
       }
       if (!greetingDeliveredRef.current) {
         // The opening has been spoken: the student's speech counts from here.
@@ -468,7 +477,6 @@ export function useSimulationVoiceSession(
       updateClock((current) => endCallClock(current, Date.now()));
       pendingUtteranceRef.current = "";
       studentSpeechStartedAtRef.current = null;
-      isSilenceHeldBySpeechRef.current = false;
       getExtendedAvatar(avatarRef.current)?.setInputMuted(true);
       if (!reply) {
         completePersonaEndingRef.current("not spoken");
@@ -578,11 +586,15 @@ export function useSimulationVoiceSession(
       const silenceSeconds = silenceSecondsAt(clockRef.current, sentAt);
       const isAfterCheckIn = via === "silence" && clockRef.current.silenceTurnsSent >= 1;
       console.info(`[call] turn sent: ${via === "silence" ? (isAfterCheckIn ? "afterCheckIn" : "checkIn") : via}`);
+      if (isStudentText) {
+        // Only the student's words reset Silence (it counts from 0 once this turn's reply finishes).
+        console.info("[call] student words received: silence reset");
+      }
+      // Also ends any speech pause: the turn holds Silence until its reply finishes.
       updateClock((current) => clockAfterTurnSent(current, sentAt, via, timings));
       const turnCallSeconds = callSecondsAt(clockRef.current, sentAt);
-      // A new turn: an older reply's end of speech and the student's speech no longer move Silence.
+      // A new turn: an older reply's end of speech no longer moves Silence.
       isAwaitingSpeechEndRef.current = false;
-      isSilenceHeldBySpeechRef.current = false;
       if (isStudentText) {
         setUserTranscripts(trimmed);
         appendTranscript("Student", trimmed);
@@ -691,20 +703,40 @@ export function useSimulationVoiceSession(
   sendCallTurnRef.current = sendCallTurn;
 
   /**
-   * The student stopped speaking (Anam's USER_SPEECH_ENDED), or their start had no end
-   * within USER_SPEECH_DROPPED_MS (a dropped detection): on their turn, Silence counts
-   * from now (a held one too). A late end after a dropped start still restarts it.
+   * A speech start with no words yet, on the student's turn: Silence pauses at its current
+   * value (lib/call-clock.ts clockAfterSilencePaused; no pause while muted, and an open
+   * pause keeps its original value), so a long answer never gets the check-in.
    */
-  const releaseSilenceHold = useCallback((): void => {
-    studentSpeechStartedAtRef.current = null;
-    const wasHeld = isSilenceHeldBySpeechRef.current;
-    isSilenceHeldBySpeechRef.current = false;
-    if (!wasHeld && !isStudentsTurn(clockRef.current, isProcessingUserRef.current)) {
+  const pauseSilenceForSpeech = useCallback((): void => {
+    if (!isStudentsTurn(clockRef.current, isProcessingUserRef.current) || clockRef.current.mutedSince !== null) {
       return;
     }
-    updateClock((current) => clockAfterReplyFinished(current, Date.now()));
-    runClockChecks();
-  }, [updateClock, runClockChecks]);
+    const at = Date.now();
+    updateClock((current) => clockAfterSilencePaused(current, at));
+    console.info(`[call] speech started: silence paused at ${silenceSecondsAt(clockRef.current, at)} s`);
+  }, [updateClock]);
+
+  pauseSilenceForSpeechRef.current = pauseSilenceForSpeech;
+
+  /**
+   * The student stopped speaking (Anam's USER_SPEECH_ENDED: "ended"), or their start had no
+   * end within USER_SPEECH_DROPPED_MS ("dropped"): with no words, an open speech pause ends
+   * and Silence carries on from its paused value (the paused time doesn't count). It never
+   * restarts Silence: only the student's words do (a turn). No pause open: nothing changes.
+   */
+  const releaseSilenceHold = useCallback(
+    (how: SpeechPauseEnd): void => {
+      studentSpeechStartedAtRef.current = null;
+      if (clockRef.current.silencePausedAt === null) {
+        return;
+      }
+      const at = Date.now();
+      updateClock((current) => clockAfterSilenceResumed(current, at));
+      console.info(`[call] speech ${how}: silence resumed at ${silenceSecondsAt(clockRef.current, at)} s`);
+      runClockChecks();
+    },
+    [updateClock, runClockChecks]
+  );
 
   releaseSilenceHoldRef.current = releaseSilenceHold;
 
@@ -712,19 +744,20 @@ export function useSimulationVoiceSession(
     if (!isCallPersona(configRef.current.persona) || !isActiveRef.current || endingReasonRef.current !== null) {
       return;
     }
+    // Muted: Anam can't hear the student, so nothing pauses (a pause would hold the mute reminder).
+    if (isMicMuted()) {
+      return;
+    }
     studentSpeechStartedAtRef.current = Date.now();
     // Only on the student's turn: during the persona's turn Silence is already at 00:00.
-    if (isStudentsTurn(clockRef.current, isProcessingUserRef.current)) {
-      updateClock((current) => clockAfterStudentSpeechStarted(current, isProcessingUserRef.current));
-      isSilenceHeldBySpeechRef.current = true;
-    }
-  }, [updateClock]);
+    pauseSilenceForSpeech();
+  }, [pauseSilenceForSpeech]);
 
   const handleUserSpeechEnded = useCallback((): void => {
     if (!isCallPersona(configRef.current.persona)) {
       return;
     }
-    releaseSilenceHold();
+    releaseSilenceHold("ended");
   }, [releaseSilenceHold]);
 
   /** Anam's end of speech for a persona message (`how`: how handleMessageHistoryUpdated saw it, for the log). */
@@ -1042,7 +1075,7 @@ export function useSimulationVoiceSession(
       }
       const speechStartedAt = studentSpeechStartedAtRef.current;
       if (speechStartedAt !== null && at - speechStartedAt >= USER_SPEECH_DROPPED_MS) {
-        releaseSilenceHoldRef.current();
+        releaseSilenceHoldRef.current("dropped");
       }
       flushPendingUtterance();
       runClockChecksRef.current();
@@ -1130,7 +1163,6 @@ export function useSimulationVoiceSession(
           clearConnectionLostTimer();
           isAnamClosedRef.current = false;
           studentSpeechStartedAtRef.current = null;
-          isSilenceHeldBySpeechRef.current = false;
           isActiveRef.current = true;
           setStatusText("Persona is greeting you…");
           const isOpened = await sendCallTurn("", "start");
@@ -1184,7 +1216,6 @@ export function useSimulationVoiceSession(
       isAnamClosedRef.current = false;
       isAwaitingSpeechEndRef.current = false;
       studentSpeechStartedAtRef.current = null;
-      isSilenceHeldBySpeechRef.current = false;
     }
     playbackEpochRef.current += 1;
     llmEpochRef.current += 1;
@@ -1241,13 +1272,20 @@ export function useSimulationVoiceSession(
   }, []);
 
   // Call personas: a muted stretch begins (muted time counts as silence; the mute reminder comes first).
+  // An open speech pause ends at once, so the reminder counts from the mute.
   const pauseMic = useCallback((): void => {
     if (configRef.current.isMutedRef) {
       configRef.current.isMutedRef.current = true;
     }
     getExtendedAvatar(avatarRef.current)?.setInputMuted(true);
     if (isCallPersona(configRef.current.persona)) {
-      updateClock((current) => clockAfterMicMuted(current, Date.now()));
+      const at = Date.now();
+      const wasPaused = clockRef.current.silencePausedAt !== null;
+      studentSpeechStartedAtRef.current = null;
+      updateClock((current) => clockAfterMicMuted(current, at));
+      if (wasPaused) {
+        console.info(`[call] mic muted: silence resumed at ${silenceSecondsAt(clockRef.current, at)} s`);
+      }
     }
   }, [updateClock]);
 

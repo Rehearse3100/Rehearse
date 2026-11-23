@@ -4,7 +4,8 @@
  * calls (hooks/useSimulationVoiceSession.ts) and the /tester/ai-call page: the call time
  * and the Silence readout, the time marks (wrap-up start, final stretch, time up), the
  * two silent turns (the check-in, then afterCheckIn), the start request's localTime, the
- * mm:ss readout, the hold while the student is speaking, a failed silent turn not counting,
+ * mm:ss readout, the speech pause (a speech start with no words pauses Silence and never
+ * resets it; pauses don't stack; muting ends one), a failed silent turn not counting,
  * the mute reminder (muted time counts as silence; the reminder once per muted stretch;
  * unmuting resets nothing else), and the end-of-speech fallback's estimate
  * (speechFallbackMs). Pure functions: every rule
@@ -27,8 +28,9 @@ import {
   clockAfterMicUnmuted,
   clockAfterMutedTurnFailed,
   clockAfterReplyFinished,
+  clockAfterSilencePaused,
+  clockAfterSilenceResumed,
   clockAfterSilentTurnFailed,
-  clockAfterStudentSpeechStarted,
   clockAfterTurnSent,
   dueMutedReminder,
   dueSilenceTurn,
@@ -97,6 +99,7 @@ describe("call time and Silence", () => {
       endedAt: null,
       offsetSeconds: 0,
       silenceSince: null,
+      silencePausedAt: null,
       silenceTurnsSent: 0,
       timeMarksDone: 0,
       mutedSince: null,
@@ -236,29 +239,72 @@ describe("what is due on the student's turn", () => {
   });
 });
 
-describe("the student's speech holds Silence", () => {
-  it("on the student's turn Silence holds at 00:00 (and nothing comes due) until it restarts", () => {
-    const clock = openedClock(2);
-    const held = clockAfterStudentSpeechStarted(clock, false);
-    expect(held.silenceSince).toBeNull();
-    expect(silenceSecondsAt(held, at(200))).toBe(0);
-    expect(dueSilenceTurn(held, at(200), TIMINGS, false)).toBeNull();
-    expect(dueTimeMark(held, at(TIMINGS.wrapUpStart), TIMINGS, false)).toBeNull();
-    // They stop at 40 s: Silence counts from there.
-    const released = clockAfterReplyFinished(held, at(40));
-    expect(silenceSecondsAt(released, at(55))).toBe(15);
-    expect(dueSilenceTurn(released, at(40 + TIMINGS.silence), TIMINGS, false)).toBe("checkIn");
+describe("a speech start with no words only pauses Silence; only the student's words reset it", () => {
+  it("paused: Silence stays at its value and nothing comes due; resumed, it carries on from there (the paused time doesn't count)", () => {
+    const paused = clockAfterSilencePaused(openedClock(2), at(10));
+    expect(paused.silencePausedAt).toBe(at(10));
+    expect(silenceSecondsAt(paused, at(200))).toBe(8);
+    expect(isStudentsTurn(paused, false)).toBe(true);
+    expect(dueSilenceTurn(paused, at(200), TIMINGS, false)).toBeNull();
+    expect(dueTimeMark(paused, at(TIMINGS.wrapUpStart), TIMINGS, false)).toBeNull();
+    // They stop at 40 s with no words: Silence carries on from 8 s, so the check-in is 12 s later.
+    const resumed = clockAfterSilenceResumed(paused, at(40));
+    expect(resumed.silencePausedAt).toBeNull();
+    expect(silenceSecondsAt(resumed, at(40))).toBe(8);
+    expect(silenceSecondsAt(resumed, at(47))).toBe(15);
+    expect(dueSilenceTurn(resumed, at(40 + TIMINGS.silence - 8 - 1), TIMINGS, false)).toBeNull();
+    expect(dueSilenceTurn(resumed, at(40 + TIMINGS.silence - 8), TIMINGS, false)).toBe("checkIn");
   });
 
-  it("no change when it isn't the student's turn", () => {
+  it("noise blips at 5 s and 12 s: the check-in at 20 s of real silence plus the paused time, not 20 s after the last blip", () => {
+    let clock = openedClock(0);
+    // A cough at 5 s (1 s), a click at 12 s (1.5 s): 2.5 s paused in all.
+    clock = clockAfterSilenceResumed(clockAfterSilencePaused(clock, at(5)), at(6));
+    clock = clockAfterSilenceResumed(clockAfterSilencePaused(clock, at(12)), T0 + 13_500);
+    expect(silenceSecondsAt(clock, T0 + 13_500)).toBe(11);
+    expect(dueSilenceTurn(clock, T0 + 22_400, TIMINGS, false)).toBeNull();
+    expect(dueSilenceTurn(clock, T0 + 22_500, TIMINGS, false)).toBe("checkIn");
+  });
+
+  it("pauses don't stack: a second start while paused keeps the original paused value", () => {
+    const paused = clockAfterSilencePaused(openedClock(0), at(5));
+    expect(clockAfterSilencePaused(paused, at(9))).toBe(paused);
+    const resumed = clockAfterSilenceResumed(clockAfterSilencePaused(paused, at(9)), at(12));
+    expect(silenceSecondsAt(resumed, at(12))).toBe(5);
+  });
+
+  it("no pause off the student's turn, before the start, after the end, or while muted; nothing to resume when not paused", () => {
     const sent = clockAfterTurnSent(openedClock(2), at(10), "spoken", TIMINGS);
-    expect(clockAfterStudentSpeechStarted(sent, false)).toBe(sent);
-    const opened = openedClock(2);
-    expect(clockAfterStudentSpeechStarted(opened, true)).toBe(opened);
-    const ended = endCallClock(opened, at(5));
-    expect(clockAfterStudentSpeechStarted(ended, false)).toBe(ended);
+    expect(clockAfterSilencePaused(sent, at(11))).toBe(sent);
     const empty = emptyCallClock();
-    expect(clockAfterStudentSpeechStarted(empty, false)).toBe(empty);
+    expect(clockAfterSilencePaused(empty, at(1))).toBe(empty);
+    const ended = endCallClock(openedClock(2), at(5));
+    expect(clockAfterSilencePaused(ended, at(6))).toBe(ended);
+    const muted = clockAfterMicMuted(openedClock(2), at(5));
+    expect(clockAfterSilencePaused(muted, at(6))).toBe(muted);
+    const opened = openedClock(2);
+    expect(clockAfterSilenceResumed(opened, at(9))).toBe(opened);
+  });
+
+  it("muting ends an open pause at once: the mute reminder counts from the mute, never held by the pause", () => {
+    const paused = clockAfterSilencePaused(openedClock(0), at(3));
+    const muted = clockAfterMicMuted(paused, at(8));
+    expect(muted).toMatchObject({ silencePausedAt: null, mutedSince: at(8) });
+    // Silence carries on from 3 s (the 5 s paused don't count); muted time counts as silence.
+    expect(silenceSecondsAt(muted, at(8))).toBe(3);
+    expect(silenceSecondsAt(muted, at(18))).toBe(13);
+    expect(dueMutedReminder(muted, T0 + 17_900, TIMINGS, false)).toBe(false);
+    expect(dueMutedReminder(muted, at(8 + TIMINGS.mutedReminder), TIMINGS, false)).toBe(true);
+  });
+
+  it("the student's words (a turn) end a pause and reset Silence once the turn's reply finishes", () => {
+    const paused = clockAfterSilencePaused(openedClock(0), at(15));
+    const sent = clockAfterTurnSent(paused, at(17), "spoken", TIMINGS);
+    expect(sent).toMatchObject({ silencePausedAt: null, silenceSince: null });
+    const replied = clockAfterReplyFinished(sent, at(20));
+    expect(silenceSecondsAt(replied, at(25))).toBe(5);
+    // The reply finishing also counts Silence from 0, unpaused.
+    expect(clockAfterReplyFinished(paused, at(30))).toMatchObject({ silencePausedAt: null, silenceSince: at(30) });
   });
 });
 

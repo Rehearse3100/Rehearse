@@ -2,9 +2,10 @@
  * call-clock.ts
  * The live call's clock: pure rules (every one takes the time as a number, so they need
  * no browser) for the call time, the Silence readout, the time marks (wrap-up start, final
- * stretch, time up), the two silent turns (the check-in, then afterCheckIn) and the mute
- * reminder (muted time counts as silence; the reminder comes first), from CALL_TIMINGS in
- * lib/call-config.ts. Client-safe. Used by the live Dana and Dr. Kim calls
+ * stretch, time up), the two silent turns (the check-in, then afterCheckIn), the mute
+ * reminder (muted time counts as silence; the reminder comes first) and the speech pause
+ * (a speech start with no words only pauses Silence; only the student's words reset it),
+ * from CALL_TIMINGS in lib/call-config.ts. Client-safe. Used by the live Dana and Dr. Kim calls
  * (hooks/useSimulationVoiceSession.ts) and the /tester/ai-call page, which keeps its own
  * test controls (+30 sec) and reads these rules from here.
  */
@@ -63,8 +64,17 @@ export type CallClock = {
   endedAt: number | null;
   /** The "+30 sec" presses, in seconds. */
   offsetSeconds: number;
-  /** What the Silence readout counts from; null = the persona's turn (shown as 00:00). */
+  /**
+   * What the Silence readout counts from; null = the persona's turn (shown as 00:00). A
+   * resumed speech pause moves it on by the paused time, so the paused time doesn't count.
+   */
   silenceSince: number | null;
+  /**
+   * When the current speech pause began (Anam's USER_SPEECH_STARTED, no words yet), or null
+   * when Silence isn't paused. While paused, Silence stays at its value from then, and the
+   * time marks, silent turns and mute reminder wait.
+   */
+  silencePausedAt: number | null;
   /**
    * Silent turns sent since the student's last turn (or Start call): 0 = the check-in may
    * fire, 1 = the afterCheckIn turn may fire, 2 = neither until the student speaks.
@@ -85,6 +95,7 @@ export function emptyCallClock(): CallClock {
     endedAt: null,
     offsetSeconds: 0,
     silenceSince: null,
+    silencePausedAt: null,
     silenceTurnsSent: 0,
     timeMarksDone: 0,
     mutedSince: null,
@@ -103,12 +114,16 @@ export function callSecondsAt(clock: CallClock, now: number): number {
   return Math.max(0, Math.floor(elapsedMs / 1000)) + clock.offsetSeconds;
 }
 
-/** The Silence readout at `now`, in whole seconds (0 before the call and during the persona's turn). */
+/**
+ * The Silence readout at `now`, in whole seconds (0 before the call and during the persona's
+ * turn). While a speech pause is open it stays at its value from when the pause began.
+ */
 export function silenceSecondsAt(clock: CallClock, now: number): number {
   if (clock.startedAt === null || clock.silenceSince === null) {
     return 0;
   }
-  return Math.max(0, Math.floor(((clock.endedAt ?? now) - clock.silenceSince) / 1000));
+  const countedUntil = clock.silencePausedAt ?? clock.endedAt ?? now;
+  return Math.max(0, Math.floor((countedUntil - clock.silenceSince) / 1000));
 }
 
 /** How many of TIME_MARKS the call time `seconds` has reached (0 to 3). */
@@ -133,6 +148,7 @@ export function clockAfterTurnSent(clock: CallClock, now: number, via: TurnSourc
   return {
     ...started,
     silenceSince: null,
+    silencePausedAt: null,
     silenceTurnsSent: via === "silence" ? Math.min(2, started.silenceTurnsSent + 1) : isSilenceKept ? started.silenceTurnsSent : 0,
     timeMarksDone: isMarkDelivered
       ? Math.max(started.timeMarksDone, timeMarksReached(callSecondsAt(started, now), timings))
@@ -156,10 +172,15 @@ export function clockAfterMutedTurnFailed(clock: CallClock): CallClock {
 
 /**
  * The student muted their mic at `now`: a muted stretch begins (its reminder not yet
- * sent). Silence keeps counting: muted time is silence. No change while already muted.
+ * sent). Silence keeps counting: muted time is silence. An open speech pause ends at once
+ * (clockAfterSilenceResumed), so the reminder counts from the mute and is never held by
+ * it. No change while already muted.
  */
 export function clockAfterMicMuted(clock: CallClock, now: number): CallClock {
-  return clock.mutedSince === null ? { ...clock, mutedSince: now, isMutedReminderSent: false } : clock;
+  if (clock.mutedSince !== null) {
+    return clock;
+  }
+  return { ...clockAfterSilenceResumed(clock, now), mutedSince: now, isMutedReminderSent: false };
 }
 
 /**
@@ -170,9 +191,42 @@ export function clockAfterMicUnmuted(clock: CallClock): CallClock {
   return clock.mutedSince === null && !clock.isMutedReminderSent ? clock : { ...clock, mutedSince: null, isMutedReminderSent: false };
 }
 
-/** The persona's reply finished at `now` (or the turn failed): Silence counts from here. No change once ended. */
+/** The persona's reply finished at `now` (or the turn failed): Silence counts from here, unpaused. No change once ended. */
 export function clockAfterReplyFinished(clock: CallClock, now: number): CallClock {
-  return clock.startedAt === null || clock.endedAt !== null ? clock : { ...clock, silenceSince: now };
+  return clock.startedAt === null || clock.endedAt !== null ? clock : { ...clock, silenceSince: now, silencePausedAt: null };
+}
+
+/**
+ * A speech start with no words yet (Anam's USER_SPEECH_STARTED) at `now`: Silence pauses at
+ * its current value, and with it the time marks, silent turns and mute reminder. Only on
+ * the student's turn while the call runs and the mic is on. Pauses don't stack: already
+ * paused, the original paused value is kept.
+ */
+export function clockAfterSilencePaused(clock: CallClock, now: number): CallClock {
+  const isPausable =
+    clock.startedAt !== null &&
+    clock.endedAt === null &&
+    clock.silenceSince !== null &&
+    clock.silencePausedAt === null &&
+    clock.mutedSince === null;
+  return isPausable ? { ...clock, silencePausedAt: now } : clock;
+}
+
+/**
+ * The speech pause ends at `now` (USER_SPEECH_ENDED, the dropped rule, or a mute) with no
+ * words: Silence carries on from the value it had when the pause began (silenceSince moves
+ * on by the paused time, which doesn't count). No change when not paused.
+ */
+export function clockAfterSilenceResumed(clock: CallClock, now: number): CallClock {
+  if (clock.silencePausedAt === null) {
+    return clock;
+  }
+  const pausedMs = Math.max(0, now - clock.silencePausedAt);
+  return {
+    ...clock,
+    silencePausedAt: null,
+    silenceSince: clock.silenceSince === null ? null : clock.silenceSince + pausedMs,
+  };
 }
 
 /** endCall: freezes both readouts at `now`. */
@@ -180,27 +234,34 @@ export function endCallClock(clock: CallClock, now: number): CallClock {
   return clock.endedAt === null ? { ...clock, endedAt: now } : clock;
 }
 
-/** True while the call runs and it's the student's turn: no reply coming or being spoken. */
+/** True while the call runs and it's the student's turn: no reply coming or being spoken (a speech pause may be open). */
 export function isStudentsTurn(clock: CallClock, isBusy: boolean): boolean {
   return clock.startedAt !== null && clock.endedAt === null && !isBusy && clock.silenceSince !== null;
 }
 
-/**
- * The time mark to send now, or null: the latest mark the call time has reached that
- * isn't done yet (so a jump over several sends only the last), on the student's turn.
- */
-export function dueTimeMark(clock: CallClock, now: number, timings: CallTimings, isBusy: boolean): TimeMark | null {
-  const reached = timeMarksReached(callSecondsAt(clock, now), timings);
-  return isStudentsTurn(clock, isBusy) && reached > clock.timeMarksDone ? TIME_MARKS[reached - 1] ?? null : null;
+/** The student's turn with Silence counting (no speech pause open): when the clock's turns can come due. */
+function isSilenceCounting(clock: CallClock, isBusy: boolean): boolean {
+  return isStudentsTurn(clock, isBusy) && clock.silencePausedAt === null;
 }
 
 /**
- * The silent turn to send now, or null, on the student's turn: the check-in when Silence
- * reaches the silence timing, or, once the check-in went, the afterCheckIn turn when
- * Silence (counting again from the check-in's reply) reaches silenceAfterCheckIn.
+ * The time mark to send now, or null: the latest mark the call time has reached that
+ * isn't done yet (so a jump over several sends only the last), on the student's turn
+ * while Silence counts (a speech pause holds it).
+ */
+export function dueTimeMark(clock: CallClock, now: number, timings: CallTimings, isBusy: boolean): TimeMark | null {
+  const reached = timeMarksReached(callSecondsAt(clock, now), timings);
+  return isSilenceCounting(clock, isBusy) && reached > clock.timeMarksDone ? TIME_MARKS[reached - 1] ?? null : null;
+}
+
+/**
+ * The silent turn to send now, or null, on the student's turn while Silence counts: the
+ * check-in when Silence reaches the silence timing, or, once the check-in went, the
+ * afterCheckIn turn when Silence (counting again from the check-in's reply) reaches
+ * silenceAfterCheckIn.
  */
 export function dueSilenceTurn(clock: CallClock, now: number, timings: CallTimings, isBusy: boolean): "checkIn" | "afterCheckIn" | null {
-  if (!isStudentsTurn(clock, isBusy)) {
+  if (!isSilenceCounting(clock, isBusy)) {
     return null;
   }
   const silenceSeconds = silenceSecondsAt(clock, now);
@@ -213,6 +274,8 @@ export function dueSilenceTurn(clock: CallClock, now: number, timings: CallTimin
 /**
  * Whole seconds the student has been muted on their turn at `now`: counted from the later
  * of the mute and the persona's last reply finishing (0 when not muted or not their turn).
+ * No speech pause opens while muted, and one resumed before the mute moved silenceSince
+ * only up to the resume, so a pause never delays this count.
  */
 export function mutedSecondsAt(clock: CallClock, now: number): number {
   if (clock.mutedSince === null || clock.silenceSince === null || clock.startedAt === null || clock.endedAt !== null) {
@@ -227,7 +290,7 @@ export function mutedSecondsAt(clock: CallClock, now: number): number {
  * silent turn, so a muted student hears it before the check-in or the silence ending.
  */
 export function dueMutedReminder(clock: CallClock, now: number, timings: CallTimings, isBusy: boolean): boolean {
-  return isStudentsTurn(clock, isBusy) && !clock.isMutedReminderSent && clock.mutedSince !== null && mutedSecondsAt(clock, now) >= timings.mutedReminder;
+  return isSilenceCounting(clock, isBusy) && !clock.isMutedReminderSent && clock.mutedSince !== null && mutedSecondsAt(clock, now) >= timings.mutedReminder;
 }
 
 export const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
@@ -245,16 +308,4 @@ export function localTimeAt(date: Date): { weekday: string; partOfDay: "morning"
 export function formatClock(seconds: number): string {
   const whole = Math.max(0, Math.floor(seconds));
   return `${String(Math.floor(whole / 60)).padStart(2, "0")}:${String(whole % 60).padStart(2, "0")}`;
-}
-
-// ── The student's speech (live call) ───
-
-/**
- * The student started speaking (Anam's USER_SPEECH_STARTED) on their turn: Silence holds at
- * 00:00, and with it the time marks and check-ins, until clockAfterReplyFinished restarts
- * it (when they stop, after USER_SPEECH_DROPPED_MS with no end, or once their turn's reply
- * finishes). No change when it isn't the student's turn.
- */
-export function clockAfterStudentSpeechStarted(clock: CallClock, isBusy: boolean): CallClock {
-  return isStudentsTurn(clock, isBusy) ? { ...clock, silenceSince: null } : clock;
 }
