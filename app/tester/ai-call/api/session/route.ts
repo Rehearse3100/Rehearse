@@ -9,7 +9,8 @@
  *    Authorization: Bearer headers);
  * 2. mint the token at Anam's POST /v1/auth/session-token with the custom-client LLM id
  *    (Anam's own LLM off: the call brain's replies go to the avatar with talk()), plus
- *    the persona's voiceDetectionOptions from CALL_TIMINGS in lib/call-config.ts.
+ *    the persona's voiceDetectionOptions from CALL_TIMINGS in lib/call-config.ts and
+ *    maxSessionLengthSeconds (anamMaxSessionLengthSeconds: the backstop plus 60 s).
  *
  * 404 unless tester mode is on (the same check as page.tsx). Tester mode is local only
  * (docs/tempo-test-bypass.md). Reads one row, writes nothing.
@@ -19,7 +20,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { CALL_TIMINGS } from "@/lib/call-config";
+import { CALL_TIMINGS, anamMaxSessionLengthSeconds } from "@/lib/call-config";
 
 export const dynamic = "force-dynamic";
 
@@ -111,6 +112,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     const label = `tester:${stage}`;
+    const timings = CALL_TIMINGS[STAGE_PERSONAS[stage]];
     const anamResponse = await fetch(ANAM_SESSION_TOKEN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${anamKey}` },
@@ -121,7 +123,8 @@ export async function POST(request: Request): Promise<NextResponse> {
           avatarId: ids.avatarId,
           voiceId: ids.voiceId,
           llmId: ANAM_CUSTOM_CLIENT_LLM_ID,
-          voiceDetectionOptions: CALL_TIMINGS[STAGE_PERSONAS[stage]].voiceDetectionOptions,
+          voiceDetectionOptions: timings.voiceDetectionOptions,
+          maxSessionLengthSeconds: anamMaxSessionLengthSeconds(timings),
         },
       }),
       cache: "no-store",

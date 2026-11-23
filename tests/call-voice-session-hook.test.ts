@@ -11,13 +11,18 @@
  * mute (Anam's own input mute on the same stream) and the Anam session config (set at
  * render only). The review fixes: the pending ending's reason, an interruption that keeps
  * the turn in flight (and, during an ending, ends the call only when the closing line is
- * the last talk in flight), mute pausing Silence, queued words flushed on unmute and by the
- * tick, a failed silent turn not counting, an earlier reply's end of speech not finishing
- * the current one, the ending fallback armed before talk() settles, and the local safety
- * stops (the backstop and Anam's connection closing).
+ * the last talk in flight), queued words flushed on unmute and by the tick, a failed silent
+ * turn not counting, an earlier reply's end of speech not finishing the current one, the
+ * ending fallback armed before talk() settles, and the local safety stop (the backstop).
+ * The mute reminder: muted time counts as silence, the muted turn (muted: true) after 10 s
+ * muted, then the check-in and the silence ending as usual; unmuting alone resets nothing.
+ * The lost connection: Anam's connection closing (online: the call ends at once; offline:
+ * once back online), the browser offline for 5 minutes ("connection_lost"), and back online
+ * in time (the call carries on).
  * React's hooks are replaced by a small synchronous stand-in (state, refs and effects
  * kept by call order, like one mounted component); the Avatar module, the Anam SDK's
- * MessageRole and fetch are mocked; timers and Date are fake. Nothing leaves the machine.
+ * MessageRole, fetch, navigator.onLine and the window's event listeners are mocked; timers
+ * and Date are fake. Nothing leaves the machine.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -118,6 +123,22 @@ function fakeAvatar(): Record<string, ReturnType<typeof vi.fn>> {
 
 const STREAM = { getAudioTracks: () => [{}] } as unknown as MediaStream;
 
+// ── The browser's offline and online events ───
+
+/** The listeners the hook adds to window (here globalThis), by event type. */
+const windowListeners = new Map<string, Set<() => void>>();
+/** navigator, as the hook reads it (navigator.onLine). */
+const network = { onLine: true };
+
+/** The browser going offline or back online: navigator.onLine changes, then the event fires. */
+function setBrowserOnline(isOnline: boolean): void {
+  network.onLine = isOnline;
+  windowListeners.get(isOnline ? "online" : "offline")?.forEach((listener) => listener());
+}
+
+/** The "[call]" diagnostics logged so far. */
+const callLines = (): string[] => vi.mocked(console.info).mock.calls.map((args) => args.join(" "));
+
 let config: SimulationVoiceConfig;
 let messageCount = 0;
 
@@ -169,6 +190,15 @@ beforeEach(() => {
   vi.setSystemTime(new Date(2026, 10, 19, 10, 0, 0));
   vi.stubGlobal("window", globalThis);
   vi.stubGlobal("fetch", fetchMock);
+  windowListeners.clear();
+  network.onLine = true;
+  vi.stubGlobal("navigator", network);
+  vi.stubGlobal("addEventListener", (type: string, listener: () => void): void => {
+    windowListeners.set(type, (windowListeners.get(type) ?? new Set()).add(listener));
+  });
+  vi.stubGlobal("removeEventListener", (type: string, listener: () => void): void => {
+    windowListeners.get(type)?.delete(listener);
+  });
   vi.spyOn(console, "error").mockImplementation(() => undefined);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
   // The hook's "[call]" diagnostics: silenced, and read by the tests that check them.
@@ -271,6 +301,8 @@ describe("Dana / Dr. Kim: the shared call brain", () => {
     expect(lastSent()?.body).toMatchObject({ silent: true, silenceSeconds: 20, callSeconds: 20 });
     expect(lastSent()?.body).not.toHaveProperty("afterCheckIn");
     expect(lastSent()?.body).not.toHaveProperty("newMessage");
+    // Not muted: no mute reminder.
+    expect(sent().some((request) => request.body.muted === true)).toBe(false);
 
     // The check-in's reply has been spoken: Silence counts again from here.
     await personaFinished();
@@ -557,35 +589,114 @@ describe("Dana / Dr. Kim: the shared call brain", () => {
     expect(onCallEnd).toHaveBeenCalledWith("goodbye");
   });
 
-  it("mute pauses Silence: no check-in while muted; unmuted, Silence starts again from zero", async () => {
-    const { avatar } = await startDanaCall();
+  it("muted, the mute reminder at 10 s (muted: true), the check-in 20 s after its reply, the silence ending 10 s after that", async () => {
+    const { avatar, onCallEnd } = await startDanaCall();
+    replies.push(
+      { reply: "You seem to be on mute." },
+      { reply: "Hello? Are you still there?" },
+      { reply: "I'll let you go for now.", endCall: true, endReason: "silence", label: "normal" }
+    );
     await personaFinished();
     const voice = render();
-    await vi.advanceTimersByTimeAsync(10_000);
     voice.pauseMic();
-    await vi.advanceTimersByTimeAsync(50_000);
-    expect(sent()).toHaveLength(1);
 
-    // Unmuted at 60 s: the check-in comes 20 s later, at 80 s.
-    voice.resumeMic();
-    expect(avatar.setInputMuted).toHaveBeenLastCalledWith(false);
-    await vi.advanceTimersByTimeAsync(19_900);
+    // 10 s muted on the student's turn: the muted turn (no newMessage, not a silent turn).
+    await vi.advanceTimersByTimeAsync(9_900);
     expect(sent()).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(200);
-    expect(lastSent()?.body).toMatchObject({ silent: true, silenceSeconds: 20, callSeconds: 80 });
-    expect(lastSent()?.body).not.toHaveProperty("afterCheckIn");
+    expect(sent()).toHaveLength(2);
+    expect(lastSent()?.body).toMatchObject({ muted: true, silenceSeconds: 10, callSeconds: 10 });
+    for (const key of ["newMessage", "silent", "afterCheckIn", "timeMark"]) {
+      expect(lastSent()?.body, key).not.toHaveProperty(key);
+    }
+    expect(avatar.talk).toHaveBeenLastCalledWith("You seem to be on mute.");
 
-    // The check-in has been spoken; muted again: no afterCheckIn (and so no silence ending) while muted.
+    // Its reply has been spoken (10.1 s): still muted, so Silence counts to the check-in, at the 30.25 s tick.
+    await personaFinished("You seem to be on mute.");
+    await vi.advanceTimersByTimeAsync(20_100);
+    expect(sent()).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(sent()).toHaveLength(3);
+    expect(lastSent()?.body).toMatchObject({ silent: true, silenceSeconds: 20, callSeconds: 30 });
+    expect(lastSent()?.body).not.toHaveProperty("afterCheckIn");
+    expect(lastSent()?.body).not.toHaveProperty("muted");
+
+    // The check-in has been spoken (30.3 s): afterCheckIn 10 s later, at the 40.5 s tick; its reply ends the call.
+    await personaFinished("Hello? Are you still there?");
+    await vi.advanceTimersByTimeAsync(10_100);
+    expect(sent()).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(sent()).toHaveLength(4);
+    expect(lastSent()?.body).toMatchObject({ silent: true, afterCheckIn: true, silenceSeconds: 10, callSeconds: 40 });
+    expect(onCallEnd).not.toHaveBeenCalled();
+    await personaFinished("I'll let you go for now.");
+    expect(onCallEnd).toHaveBeenCalledTimes(1);
+    expect(onCallEnd).toHaveBeenCalledWith("silence");
+    expect(avatar.endSession).toHaveBeenCalledTimes(1);
+    // One mute reminder for the muted stretch.
+    expect(sent().filter((request) => request.body.muted === true)).toHaveLength(1);
+    expect(callLines()).toEqual(expect.arrayContaining(["[call] mute reminder due", "[call] turn sent: muted"]));
+  });
+
+  it("unmuting alone resets nothing; the student speaking resets Silence and the silent turns as usual", async () => {
+    const { avatar } = await startDanaCall();
+    replies.push({ reply: "You seem to be on mute." }, { reply: "Hello? Are you still there?" });
     await personaFinished();
+    const voice = render();
     voice.pauseMic();
-    await vi.advanceTimersByTimeAsync(120_000);
-    expect(sent()).toHaveLength(2);
-    // Unmuted at 200.1 s: afterCheckIn is due 10 s later, seen at the 210.25 s tick.
+    await vi.advanceTimersByTimeAsync(10_100);
+    expect(lastSent()?.body).toMatchObject({ muted: true });
+    await personaFinished("You seem to be on mute.");
+
+    // Unmuted at 15.1 s: the check-in still comes 20 s after the reminder's reply (the 30.25 s tick).
+    await vi.advanceTimersByTimeAsync(5_000);
     voice.resumeMic();
-    await vi.advanceTimersByTimeAsync(9_800);
+    expect(avatar.setInputMuted).toHaveBeenLastCalledWith(false);
+    await vi.advanceTimersByTimeAsync(15_100);
     expect(sent()).toHaveLength(2);
-    await vi.advanceTimersByTimeAsync(400);
-    expect(lastSent()?.body).toMatchObject({ silent: true, afterCheckIn: true, silenceSeconds: 10 });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(sent()).toHaveLength(3);
+    expect(lastSent()?.body).toMatchObject({ silent: true, silenceSeconds: 20, callSeconds: 30 });
+
+    // The student speaks: Silence and the silent turns start over, so the next one is a check-in, not afterCheckIn.
+    await personaFinished("Hello? Are you still there?");
+    await vi.advanceTimersByTimeAsync(300);
+    await studentSaid("Sorry, I was on mute.");
+    expect(sent()).toHaveLength(4);
+    expect(lastSent()?.body).toMatchObject({ newMessage: "Sorry, I was on mute." });
+    await personaFinished();
+    await vi.advanceTimersByTimeAsync(20_100);
+    expect(sent()).toHaveLength(4);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(sent()).toHaveLength(5);
+    expect(lastSent()?.body).toMatchObject({ silent: true, silenceSeconds: 20 });
+    expect(lastSent()?.body).not.toHaveProperty("afterCheckIn");
+    expect(sent().filter((request) => request.body.muted === true)).toHaveLength(1);
+  });
+
+  it("words queued before muting are still answered after unmuting", async () => {
+    await startDanaCall();
+    await openingSpoken();
+    const voice = render();
+    let release: (reply: Record<string, unknown>) => void = () => undefined;
+    replies.push(new Promise((resolve) => (release = resolve)));
+    await studentSaid("How many offices do you have?");
+    // Heard while that turn is in flight: queued.
+    await studentSaid("And how many people?");
+    expect(sent()).toHaveLength(2);
+
+    voice.pauseMic();
+    release({ reply: "We have eight offices." });
+    await flush();
+    await personaFinished("We have eight offices.");
+    // Muted: the queued words wait.
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(sent()).toHaveLength(2);
+
+    voice.resumeMic();
+    await flush();
+    expect(sent()).toHaveLength(3);
+    expect(lastSent()?.body).toMatchObject({ newMessage: "And how many people?" });
   });
 
   it("words queued while muted go as soon as the mic is unmuted", async () => {
@@ -676,25 +787,115 @@ describe("Dana / Dr. Kim: the shared call brain", () => {
     expect(onCallEnd).toHaveBeenCalledWith("backstop");
     expect(avatar.endSession).toHaveBeenCalledTimes(1);
     const lines = vi.mocked(console.info).mock.calls.map((args) => args.join(" "));
-    expect(lines).toEqual(expect.arrayContaining(["[call] safety stop: clock", "[call] ending finished: by safety stop (backstop)"]));
+    expect(lines).toEqual(expect.arrayContaining(["[call] safety stop: backstop passed", "[call] ending finished: by safety stop (backstop)"]));
     const sentAtEnd = sent().length;
     await vi.advanceTimersByTimeAsync(60_000);
     expect(onCallEnd).toHaveBeenCalledTimes(1);
     expect(sent()).toHaveLength(sentAtEnd);
   });
 
-  it("Anam's connection closing mid-call ends the call with \"backstop\", once", async () => {
+  // ── The lost connection ───
+  // No render() while the lost-connection timer runs (the same stand-in caveat as the ending's fallback).
+
+  it("Anam's connection closing mid-call while online ends the call at once with \"connection_lost\", once", async () => {
     const { avatar, onCallEnd } = await startDanaCall();
     await openingSpoken();
     avatarModule.callbacks.onConnectionClosed?.("connection lost");
     expect(onCallEnd).toHaveBeenCalledTimes(1);
-    expect(onCallEnd).toHaveBeenCalledWith("backstop");
+    expect(onCallEnd).toHaveBeenCalledWith("connection_lost");
     expect(avatar.endSession).toHaveBeenCalledTimes(1);
-    // Our own endSession closing it again: nothing more.
+    expect(callLines()).toContain("[call] call ended: connection lost (Anam's connection closed)");
+    // Our own endSession closing it again, or the network flickering afterwards: nothing more.
     avatarModule.callbacks.onConnectionClosed?.("closed");
+    setBrowserOnline(false);
+    setBrowserOnline(true);
+    await vi.advanceTimersByTimeAsync(400_000);
+    expect(onCallEnd).toHaveBeenCalledTimes(1);
+    expect(avatar.endSession).toHaveBeenCalledTimes(1);
+    expect(sent()).toHaveLength(1);
+  });
+
+  it("offline for 5 minutes: the call ends with \"connection_lost\" at 300 s, once, and the Anam session is stopped", async () => {
+    const { avatar, onCallEnd } = await startDanaCall();
+    await openingSpoken();
+    setBrowserOnline(false);
+    expect(callLines()).toContain("[call] connection lost (browser offline): the call ends in 300 s unless it comes back");
+    // Offline at 0.3 s: the limit runs out at 300.3 s.
+    await vi.advanceTimersByTimeAsync(299_900);
+    expect(onCallEnd).not.toHaveBeenCalled();
+    expect(avatar.endSession).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(onCallEnd).toHaveBeenCalledTimes(1);
+    expect(onCallEnd).toHaveBeenCalledWith("connection_lost");
+    expect(avatar.endSession).toHaveBeenCalledTimes(1);
+    expect(callLines()).toContain("[call] call ended: connection lost (limit reached)");
+
+    // Back online afterwards, and Anam's own close: nothing more, and the clock has stopped.
+    setBrowserOnline(true);
+    avatarModule.callbacks.onConnectionClosed?.("closed");
+    const sentAtEnd = sent().length;
     await vi.advanceTimersByTimeAsync(60_000);
     expect(onCallEnd).toHaveBeenCalledTimes(1);
-    expect(sent()).toHaveLength(1);
+    expect(avatar.endSession).toHaveBeenCalledTimes(1);
+    expect(sent()).toHaveLength(sentAtEnd);
+  });
+
+  it("back online before 5 minutes, with Anam still connected: the call carries on", async () => {
+    const { avatar, onCallEnd } = await startDanaCall();
+    await openingSpoken();
+    setBrowserOnline(false);
+    await vi.advanceTimersByTimeAsync(240_000);
+    setBrowserOnline(true);
+    expect(callLines()).toContain("[call] connection back: the call carries on");
+    // Well past where the 5 minutes would have run out.
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(onCallEnd).not.toHaveBeenCalled();
+    expect(avatar.endSession).not.toHaveBeenCalled();
+    // The student's words still go to the brain.
+    await studentSaid("Sorry, my connection dropped.");
+    expect(lastSent()?.body).toMatchObject({ newMessage: "Sorry, my connection dropped." });
+
+    // A second drop starts a new 5 minutes.
+    await personaFinished();
+    setBrowserOnline(false);
+    await vi.advanceTimersByTimeAsync(299_900);
+    expect(onCallEnd).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(onCallEnd).toHaveBeenCalledTimes(1);
+    expect(onCallEnd).toHaveBeenCalledWith("connection_lost");
+  });
+
+  it("Anam's connection closing while offline: the call ends as soon as the browser is back online", async () => {
+    const { avatar, onCallEnd } = await startDanaCall();
+    await openingSpoken();
+    setBrowserOnline(false);
+    await vi.advanceTimersByTimeAsync(30_000);
+    avatarModule.callbacks.onConnectionClosed?.("connection lost");
+    // Offline: no save could get through yet, so the call waits.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(onCallEnd).not.toHaveBeenCalled();
+    setBrowserOnline(true);
+    expect(onCallEnd).toHaveBeenCalledTimes(1);
+    expect(onCallEnd).toHaveBeenCalledWith("connection_lost");
+    expect(avatar.endSession).toHaveBeenCalledTimes(1);
+    expect(callLines()).toContain("[call] call ended: connection lost (back online)");
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(onCallEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it("Anam's connection closing while offline, and the browser stays offline: the call ends at the 5-minute limit", async () => {
+    const { onCallEnd } = await startDanaCall();
+    await openingSpoken();
+    network.onLine = false;
+    // Anam's close comes first (no offline event yet): the 5 minutes start from it.
+    avatarModule.callbacks.onConnectionClosed?.("connection lost");
+    expect(callLines()).toContain("[call] connection lost (Anam's connection closed while offline): the call ends in 300 s unless it comes back");
+    setBrowserOnline(false);
+    await vi.advanceTimersByTimeAsync(299_900);
+    expect(onCallEnd).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(onCallEnd).toHaveBeenCalledTimes(1);
+    expect(onCallEnd).toHaveBeenCalledWith("connection_lost");
   });
 
   it("the connection closing during the persona's ending ends it with the ending's own reason", async () => {

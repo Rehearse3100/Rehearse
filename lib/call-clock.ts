@@ -2,8 +2,9 @@
  * call-clock.ts
  * The live call's clock: pure rules (every one takes the time as a number, so they need
  * no browser) for the call time, the Silence readout, the time marks (wrap-up start, final
- * stretch, time up) and the two silent turns (the check-in, then afterCheckIn), from
- * CALL_TIMINGS in lib/call-config.ts. Client-safe. Used by the live Dana and Dr. Kim calls
+ * stretch, time up), the two silent turns (the check-in, then afterCheckIn) and the mute
+ * reminder (muted time counts as silence; the reminder comes first), from CALL_TIMINGS in
+ * lib/call-config.ts. Client-safe. Used by the live Dana and Dr. Kim calls
  * (hooks/useSimulationVoiceSession.ts) and the /tester/ai-call page, which keeps its own
  * test controls (+30 sec) and reads these rules from here.
  */
@@ -49,7 +50,8 @@ export function speechFallbackMs(text: string): number {
 /** The turns that carry the student's text. */
 export type StudentTurnSource = "typed" | "spoken";
 
-export type TurnSource = StudentTurnSource | "silence" | "start" | "timeMark";
+/** "muted": the mute reminder (muted: true), sent by dueMutedReminder. */
+export type TurnSource = StudentTurnSource | "silence" | "muted" | "start" | "timeMark";
 
 // ── Call clock (pure: every rule takes the time as a number, so it needs no browser) ───
 
@@ -70,11 +72,24 @@ export type CallClock = {
   silenceTurnsSent: number;
   /** How many of TIME_MARKS are done this call (0 to 3); a mark jumped over counts as done. */
   timeMarksDone: number;
+  /** When the student's current muted stretch began; null while the mic is on. */
+  mutedSince: number | null;
+  /** The mute reminder has gone this muted stretch (once per stretch). */
+  isMutedReminderSent: boolean;
 };
 
 /** A stopped clock at 00:00 (the page's start, and "Reset chat"). */
 export function emptyCallClock(): CallClock {
-  return { startedAt: null, endedAt: null, offsetSeconds: 0, silenceSince: null, silenceTurnsSent: 0, timeMarksDone: 0 };
+  return {
+    startedAt: null,
+    endedAt: null,
+    offsetSeconds: 0,
+    silenceSince: null,
+    silenceTurnsSent: 0,
+    timeMarksDone: 0,
+    mutedSince: null,
+    isMutedReminderSent: false,
+  };
 }
 
 /** Starts the call at `now` (Silence counts from the start); no change once started. */
@@ -104,21 +119,25 @@ export function timeMarksReached(seconds: number, timings: CallTimings): number 
 /**
  * A turn was sent at `now`: starts the call if needed, and holds Silence at 00:00 until the
  * reply finishes. The student's turn (or Start call) re-arms both silent turns; each silent
- * turn moves on to the next (check-in, then afterCheckIn, then none); a time mark leaves
- * them as they were. A time-mark or student turn marks every time mark reached so far as
- * done: the brain adds the note for the call time to every turn, so a student turn sent
- * after a crossing has already carried it.
+ * turn moves on to the next (check-in, then afterCheckIn, then none); a time mark or the
+ * mute reminder leaves them as they were (so after the reminder's reply, Silence counts to
+ * the check-in as usual). The mute reminder is then done for this muted stretch. A
+ * time-mark or student turn marks every time mark reached so far as done: the brain adds
+ * the note for the call time to every turn, so a student turn sent after a crossing has
+ * already carried it.
  */
 export function clockAfterTurnSent(clock: CallClock, now: number, via: TurnSource, timings: CallTimings): CallClock {
   const started = startCallClock(clock, now);
   const isMarkDelivered = via === "timeMark" || via === "typed" || via === "spoken";
+  const isSilenceKept = via === "timeMark" || via === "muted";
   return {
     ...started,
     silenceSince: null,
-    silenceTurnsSent: via === "silence" ? Math.min(2, started.silenceTurnsSent + 1) : via === "timeMark" ? started.silenceTurnsSent : 0,
+    silenceTurnsSent: via === "silence" ? Math.min(2, started.silenceTurnsSent + 1) : isSilenceKept ? started.silenceTurnsSent : 0,
     timeMarksDone: isMarkDelivered
       ? Math.max(started.timeMarksDone, timeMarksReached(callSecondsAt(started, now), timings))
       : started.timeMarksDone,
+    isMutedReminderSent: via === "muted" ? true : started.isMutedReminderSent,
   };
 }
 
@@ -130,13 +149,25 @@ export function clockAfterSilentTurnFailed(clock: CallClock): CallClock {
   return { ...clock, silenceTurnsSent: Math.max(0, clock.silenceTurnsSent - 1) };
 }
 
+/** A mute reminder whose request failed doesn't count either: it can come due again this muted stretch. */
+export function clockAfterMutedTurnFailed(clock: CallClock): CallClock {
+  return { ...clock, isMutedReminderSent: false };
+}
+
 /**
- * The student unmuted their mic. While muted, Silence is paused (the live call sends no
- * check-in or silence ending); on the student's turn it starts again from zero at `now`.
- * No change during the persona's turn (the reply's end starts it) or once ended.
+ * The student muted their mic at `now`: a muted stretch begins (its reminder not yet
+ * sent). Silence keeps counting: muted time is silence. No change while already muted.
  */
-export function clockAfterMicUnmuted(clock: CallClock, now: number, isBusy: boolean): CallClock {
-  return isStudentsTurn(clock, isBusy) ? { ...clock, silenceSince: now } : clock;
+export function clockAfterMicMuted(clock: CallClock, now: number): CallClock {
+  return clock.mutedSince === null ? { ...clock, mutedSince: now, isMutedReminderSent: false } : clock;
+}
+
+/**
+ * The student unmuted their mic: the muted stretch ends. Nothing else is reset (Silence and
+ * the silent turns carry on; the student's next turn re-arms them as usual).
+ */
+export function clockAfterMicUnmuted(clock: CallClock): CallClock {
+  return clock.mutedSince === null && !clock.isMutedReminderSent ? clock : { ...clock, mutedSince: null, isMutedReminderSent: false };
 }
 
 /** The persona's reply finished at `now` (or the turn failed): Silence counts from here. No change once ended. */
@@ -177,6 +208,26 @@ export function dueSilenceTurn(clock: CallClock, now: number, timings: CallTimin
     return "checkIn";
   }
   return clock.silenceTurnsSent === 1 && silenceSeconds >= timings.silenceAfterCheckIn ? "afterCheckIn" : null;
+}
+
+/**
+ * Whole seconds the student has been muted on their turn at `now`: counted from the later
+ * of the mute and the persona's last reply finishing (0 when not muted or not their turn).
+ */
+export function mutedSecondsAt(clock: CallClock, now: number): number {
+  if (clock.mutedSince === null || clock.silenceSince === null || clock.startedAt === null || clock.endedAt !== null) {
+    return 0;
+  }
+  return Math.max(0, Math.floor((now - Math.max(clock.mutedSince, clock.silenceSince)) / 1000));
+}
+
+/**
+ * True when the mute reminder is due, on the student's turn: muted for mutedReminder
+ * seconds (mutedSecondsAt) and not yet sent this muted stretch. It goes before a due
+ * silent turn, so a muted student hears it before the check-in or the silence ending.
+ */
+export function dueMutedReminder(clock: CallClock, now: number, timings: CallTimings, isBusy: boolean): boolean {
+  return isStudentsTurn(clock, isBusy) && !clock.isMutedReminderSent && clock.mutedSince !== null && mutedSecondsAt(clock, now) >= timings.mutedReminder;
 }
 
 export const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;

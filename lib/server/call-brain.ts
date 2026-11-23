@@ -15,14 +15,14 @@
  *   parallel with the reply call. A label of normal, a failed or timed-out label call, or
  *   an answer that isn't a label keeps that reply. If the label changes the turn's
  *   situation note, the reply is discarded and one more reply call is made with it;
- * - picks one situation note per turn by code (time, silence, the label and the strikes),
- *   in this order: start, crisis, the endings, the warnings, final stretch, silent,
- *   off topic or unclear, wrap-up start;
+ * - picks one situation note per turn by code (time, silence, mute, the label and the
+ *   strikes), in this order: start, crisis, the endings, the warnings, final stretch,
+ *   silent or the mute reminder, off topic or unclear, wrap-up start;
  * - ends the call exactly when the turn's note is an ending note, with the endReason that
  *   note stands for; [END_CALL] in the reply is only removed from the text, and dashes are
  *   replaced.
  * Message order: the fixed system prompt, the cleaned history, then at most one situation
- * note as a system message, then the student's message (none for a start, silent or
+ * note as a system message, then the student's message (none for a start, silent, muted or
  * time-mark turn), so the fixed prompt stays cached.
  * Model calls: gpt-6-luna with reasoning off. A reply call gives up after 15 s and is
  * retried once (then a fallback line; on the crisis note a fixed line that still points to
@@ -79,6 +79,8 @@ const SITUATION_NOTES = {
   callLength:
     "Time is up. If the student just said something, answer it in one short sentence. Then thank them, say goodbye in one or two sentences, and end your reply with [END_CALL].",
   silent: "The student has been quiet for a while. Check in briefly and naturally, in character.",
+  mutedReminder:
+    "The student's microphone seems to be muted, so you cannot hear them. Let them know briefly and kindly, in character, that they seem to be on mute.",
   silentEnd:
     "The student has stayed silent even after you checked in. Say politely that now does not seem like a good time and that you will end the call here, then end your reply with [END_CALL].",
   crisis:
@@ -150,12 +152,14 @@ type LocalTime = { weekday: (typeof WEEKDAYS)[number]; partOfDay: (typeof PARTS_
 export type CallTurn = {
   persona: CallPersona;
   history: ChatMessage[];
-  /** The student's message; null for a start, silent or time-mark turn (no student text is added). */
+  /** The student's message; null for a start, silent, muted or time-mark turn (no student text is added). */
   newMessage: string | null;
   callSeconds: number;
   silenceSeconds: number;
   isStart: boolean;
   isSilent: boolean;
+  /** The browser's turn when the student's mic has been muted for a while on their turn: the mute reminder. */
+  isMuted: boolean;
   /** The browser's turn at a time mark: the persona speaks first, with the note for callSeconds. */
   isTimeMark: boolean;
   /** A silent turn sent because the student stayed silent after the check-in (only with isSilent). */
@@ -198,10 +202,10 @@ function parseLocalTime(value: unknown): LocalTime | null {
 
 /**
  * Reads { persona, messages, newMessage?, callSeconds, silenceSeconds, silent?,
- * afterCheckIn?, start?, timeMark?, localTime?, strikes? } (CallTurnRequest in
+ * afterCheckIn?, muted?, start?, timeMark?, localTime?, strikes? } (CallTurnRequest in
  * lib/call-config.ts; anything else in the body, such as attemptId, is ignored).
- * persona must be one of CALL_PERSONAS; newMessage is required unless start, timeMark or
- * silent is true (in that order, the first true one wins); afterCheckIn: true counts only
+ * persona must be one of CALL_PERSONAS; newMessage is required unless start, timeMark,
+ * silent or muted is true (in that order, the first true one wins); afterCheckIn: true counts only
  * on a silent turn (otherwise it is ignored); every message is at most
  * CHAT_MAX_MESSAGE_CHARS, as in /api/chat. callSeconds and silenceSeconds that aren't
  * numbers count as 0. localTime is { weekday: "Monday"…"Sunday", partOfDay: "morning" |
@@ -222,8 +226,9 @@ export function parseCallTurn(body: unknown): { turn: CallTurn } | { error: stri
   const isTimeMark = !isStart && raw.timeMark === true;
   const isSilent = !isStart && !isTimeMark && raw.silent === true;
   const isAfterCheckIn = isSilent && raw.afterCheckIn === true;
+  const isMuted = !isStart && !isTimeMark && !isSilent && raw.muted === true;
   let newMessage: string | null = null;
-  if (!isStart && !isTimeMark && !isSilent) {
+  if (!isStart && !isTimeMark && !isSilent && !isMuted) {
     if (typeof raw.newMessage !== "string" || !raw.newMessage) {
       return { error: "newMessage is required." };
     }
@@ -242,6 +247,7 @@ export function parseCallTurn(body: unknown): { turn: CallTurn } | { error: stri
       silenceSeconds: wholeSeconds(raw.silenceSeconds),
       isStart,
       isSilent,
+      isMuted,
       isTimeMark,
       isAfterCheckIn,
       localTime: parseLocalTime(raw.localTime),
@@ -274,7 +280,8 @@ function minutesLeft(seconds: number): string {
  * 3. endings: time up (callLength), goodbye, rudeEnd (rude with a rude strike already),
  *    breakEnd (break_character with a strike already), silentEnd (afterCheckIn turn);
  * 4. warnings: rudeWarn, breakWarn (the first rude or break_character);
- * 5. final stretch; 6. silent (the check-in); 7. offTopic or unclear; 8. wrap-up start.
+ * 5. final stretch; 6. silent (the check-in) or mutedReminder (a muted turn); 7. offTopic
+ *    or unclear; 8. wrap-up start.
  * The wrap-up and final stretch notes start with the minutes left until callLength. A
  * time-mark turn gets the note for its callSeconds, like any other turn.
  */
@@ -313,6 +320,9 @@ function pickSituationNote(turn: CallTurn, timings: CallTimings, label: StudentL
   }
   if (turn.isSilent) {
     return SITUATION_NOTES.silent;
+  }
+  if (turn.isMuted) {
+    return SITUATION_NOTES.mutedReminder;
   }
   if (label === "off_topic") {
     return SITUATION_NOTES.offTopic;

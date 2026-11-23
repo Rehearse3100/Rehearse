@@ -2,7 +2,9 @@
  * anam-session-route.test.ts
  * POST /api/student/anam-session (app/api/student/anam-session/route.ts): when Supabase or
  * Anam fails, the browser gets a generic message and none of their text; the details are
- * logged on the server. A good request still returns { sessionToken, avatarId }. Sign-in,
+ * logged on the server. A good request still returns { sessionToken, avatarId }. A Tempo
+ * session sends maxSessionLengthSeconds (1,140 s) and the voice detection options; a
+ * legacy simulation's session sends neither. Sign-in,
  * the database and Anam's token endpoint (fetch) are mocked; nothing leaves the machine.
  */
 
@@ -47,6 +49,14 @@ function request(body: unknown): Request {
 
 const session = (): Promise<Response> => POST(request({ attemptId: "attempt-1", stage: "discovery" }));
 
+/** The personaConfig the route sent to Anam's token endpoint (the one fetch call). */
+function sentPersonaConfig(): Record<string, unknown> {
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+  const body = JSON.parse(String(init?.body ?? "{}")) as { personaConfig?: Record<string, unknown> };
+  return body.personaConfig ?? {};
+}
+
 beforeEach(() => {
   state.auth.mockReset();
   state.auth.mockResolvedValue({ ok: true, session: { studentId: "student-1" } });
@@ -71,6 +81,32 @@ describe("POST /api/student/anam-session", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ sessionToken: "token-1", avatarId: "avatar-1" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["discovery", "objections"])(
+    "a Tempo %s session: personaConfig sends maxSessionLengthSeconds (the backstop plus 60 s) and the voice detection options",
+    async (stage) => {
+      state.simulation = {
+        id: TEMPO_SIMULATION_ID,
+        anam_avatar_ids: { discovery: "avatar-1", objections: "avatar-2" },
+        anam_voice_ids: { discovery: "voice-1", objections: "voice-2" },
+      };
+      const res = await POST(request({ attemptId: "attempt-1", stage }));
+      expect(res.status).toBe(200);
+      const sentBody = sentPersonaConfig();
+      expect(sentBody.maxSessionLengthSeconds).toBe(1140);
+      expect(sentBody.voiceDetectionOptions).toEqual({ speechEnhancementLevel: 1, silenceBeforeSessionEndSeconds: 180 });
+    }
+  );
+
+  it("a legacy (non-Tempo) simulation's session: personaConfig keeps Anam's defaults", async () => {
+    state.attempt = { id: "attempt-1", simulation_id: "legacy-simulation" };
+    state.simulation = { ...state.simulation, id: "legacy-simulation" };
+    const res = await session();
+    expect(res.status).toBe(200);
+    const sentBody = sentPersonaConfig();
+    expect(sentBody).not.toHaveProperty("maxSessionLengthSeconds");
+    expect(sentBody).not.toHaveProperty("voiceDetectionOptions");
   });
 
   it.each([

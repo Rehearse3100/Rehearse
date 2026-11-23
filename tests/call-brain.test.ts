@@ -5,8 +5,9 @@
  * /tester/ai-call chat route:
  * - the two rendered system prompts and the label prompt are byte for byte the tester's
  *   (SHA-256 taken from the tester's code before the move);
- * - the situation note each turn type and label gets, and its priority; strikes warn then
- *   end; the note alone decides endCall; the backstop; localTime; the minutes wording;
+ * - the situation note each turn type and label gets, and its priority (the muted turn's
+ *   mute reminder ranks with silent); strikes warn then end; the note alone decides
+ *   endCall; the backstop; localTime; the minutes wording;
  *   the dash filter and the [END_CALL] removal;
  * - with a stand-in OpenAI client: the label call runs alongside the reply call, a second
  *   reply call is made only when the label changes the note, a failed label call is retried
@@ -22,7 +23,14 @@ import path from "node:path";
 import type OpenAI from "openai";
 import { APIConnectionTimeoutError } from "openai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CALL_PERSONAS, CALL_TIMINGS, STUDENT_LABELS, type CallTimings, type StudentLabel } from "@/lib/call-config";
+import {
+  CALL_PERSONAS,
+  CALL_TIMINGS,
+  STUDENT_LABELS,
+  anamMaxSessionLengthSeconds,
+  type CallTimings,
+  type StudentLabel,
+} from "@/lib/call-config";
 import { cleanChatHistory } from "@/lib/chat-history";
 import { CHAT_PERSONAS } from "@/lib/chat-personas";
 import { CHAT_MAX_HISTORY_MESSAGES, CHAT_MAX_MESSAGE_CHARS } from "@/lib/constants";
@@ -53,6 +61,8 @@ const NOTES = {
   callLength:
     "Time is up. If the student just said something, answer it in one short sentence. Then thank them, say goodbye in one or two sentences, and end your reply with [END_CALL].",
   silent: "The student has been quiet for a while. Check in briefly and naturally, in character.",
+  mutedReminder:
+    "The student's microphone seems to be muted, so you cannot hear them. Let them know briefly and kindly, in character, that they seem to be on mute.",
   silentEnd:
     "The student has stayed silent even after you checked in. Say politely that now does not seem like a good time and that you will end the call here, then end your reply with [END_CALL].",
   crisis:
@@ -239,6 +249,14 @@ describe("each turn gets one situation note, by priority", () => {
     { name: "silent after the check-in beats the final stretch", body: { silent: true, afterCheckIn: true, callSeconds: 840 }, note: "silentEnd" },
     { name: "time up beats silent after the check-in", body: { silent: true, afterCheckIn: true, callSeconds: 900 }, note: "callLength" },
     { name: "afterCheckIn counts only on a silent turn", body: message(0, { afterCheckIn: true }), label: "normal", note: null },
+    // The muted turn (the mute reminder) ranks with silent.
+    { name: "muted", body: { muted: true }, note: "mutedReminder" },
+    { name: "muted beats wrap-up", body: { muted: true, callSeconds: 720 }, note: "mutedReminder" },
+    { name: "final stretch beats muted", body: { muted: true, callSeconds: 840 }, note: "finalStretch" },
+    { name: "muted at time up", body: { muted: true, callSeconds: 900 }, note: "callLength" },
+    { name: "afterCheckIn doesn't count on a muted turn", body: { muted: true, afterCheckIn: true }, note: "mutedReminder" },
+    { name: "silent wins over muted", body: { silent: true, muted: true }, note: "silent" },
+    { name: "time mark wins over muted", body: { timeMark: true, muted: true, callSeconds: 720 }, note: "wrapUpStart" },
     // Time-mark turns get the note for their second, like any other turn.
     { name: "time mark before wrap-up", body: { timeMark: true, callSeconds: 100 }, note: null },
     { name: "time mark at wrap-up", body: { timeMark: true, callSeconds: 720 }, note: "wrapUpStart" },
@@ -324,7 +342,7 @@ describe("each turn gets one situation note, by priority", () => {
       expect(result.endReason, name).toBe(endReason);
     }
     // A turn that doesn't end the call has no endReason.
-    for (const body of [{ newMessage: "Hi" }, { silent: true }, { timeMark: true, callSeconds: 720 }, { start: true }]) {
+    for (const body of [{ newMessage: "Hi" }, { silent: true }, { muted: true }, { timeMark: true, callSeconds: 720 }, { start: true }]) {
       const result = await runCallTurn(parsedTurn(body), fakeClient().openai);
       expect(result.endCall, JSON.stringify(body)).toBe(false);
       expect("endReason" in result, JSON.stringify(body)).toBe(false);
@@ -363,7 +381,7 @@ describe("backstop, localTime and the minutes wording", () => {
   it("from the backstop on: no model call, an empty reply and endCall", async () => {
     for (const persona of CALL_PERSONAS) {
       const client = fakeClient();
-      for (const body of [{ newMessage: "Hi" }, { silent: true }, { timeMark: true }, { start: true }]) {
+      for (const body of [{ newMessage: "Hi" }, { silent: true }, { muted: true }, { timeMark: true }, { start: true }]) {
         const result = await runCallTurn(parsedTurn({ persona, callSeconds: CALL_TIMINGS[persona].backstop, ...body }), client.openai);
         expect(result).toEqual({ reply: "", endCall: true, endReason: "backstop" });
       }
@@ -672,12 +690,23 @@ describe("parseCallTurn", () => {
         silenceSeconds: 3,
         isStart: false,
         isSilent: false,
+        isMuted: false,
         isTimeMark: false,
         isAfterCheckIn: false,
         localTime: null,
         strikes: { rude: 0, breakCharacter: 0 },
       },
     });
+  });
+
+  it("muted: true is a turn with no newMessage (the mute reminder); any other value isn't", () => {
+    const muted = parseCallTurn({ persona: "tempo_discovery", messages: [], muted: true, callSeconds: 40, silenceSeconds: 10 });
+    expect(muted).toMatchObject({ turn: { isMuted: true, isSilent: false, newMessage: null, callSeconds: 40 } });
+    for (const value of ["true", 1, false, null]) {
+      expect(parseCallTurn({ persona: "tempo_discovery", messages: [], muted: value }), String(value)).toEqual({ error: "newMessage is required." });
+    }
+    // start, timeMark and silent come first.
+    expect(parseCallTurn({ persona: "tempo_discovery", messages: [], silent: true, muted: true })).toMatchObject({ turn: { isSilent: true, isMuted: false } });
   });
 
   it("seconds: whole, never negative, 0 when not a number", () => {
@@ -725,10 +754,16 @@ describe("server only, and the config", () => {
       finalStretch: 840,
       silence: 20,
       silenceAfterCheckIn: 10,
+      mutedReminder: 10,
       backstop: 1080,
-      voiceDetectionOptions: { speechEnhancementLevel: 1 },
+      connectionLostLimit: 300,
+      voiceDetectionOptions: { speechEnhancementLevel: 1, silenceBeforeSessionEndSeconds: 180 },
     };
     expect(CALL_TIMINGS).toEqual({ tempo_discovery: timings, tempo_objections: timings });
+    // Anam's own limits: the session ends at the backstop plus a minute; its silence end comes well after ours.
+    for (const persona of CALL_PERSONAS) {
+      expect(anamMaxSessionLengthSeconds(CALL_TIMINGS[persona])).toBe(1140);
+    }
     expect([...STUDENT_LABELS]).toEqual(["normal", "unclear", "off_topic", "rude", "break_character", "crisis", "goodbye"]);
   });
 

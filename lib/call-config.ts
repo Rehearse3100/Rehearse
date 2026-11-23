@@ -3,8 +3,9 @@
  * The shared call brain's settings and wire types (client-safe: numbers and names only,
  * never prompt or card text). The server half is lib/server/call-brain.ts; the route is
  * POST /api/student/call-turn. The browser reads CALL_TIMINGS to run the call clock (time
- * marks, silence check-ins; the clock rules are lib/call-clock.ts), and the Anam session
- * routes read each persona's voiceDetectionOptions. The live Dana and Dr. Kim calls
+ * marks, silence check-ins, the mute reminder, the lost-connection limit; the clock rules
+ * are lib/call-clock.ts), and the Anam session routes read each persona's
+ * voiceDetectionOptions and anamMaxSessionLengthSeconds. The live Dana and Dr. Kim calls
  * (hooks/useSimulationVoiceSession.ts) and the /tester/ai-call page use the same values.
  */
 
@@ -29,6 +30,13 @@ export function isCallPersona(persona: ChatPersona): persona is CallPersona {
 export type CallVoiceDetectionOptions = {
   /** Noise reduction on the student's mic, 0 to 1 (Anam's default 0.8). */
   speechEnhancementLevel: number;
+  /**
+   * How long the student can be silent before Anam ends the session itself, 0 to 7200 s
+   * (Anam's default 60; its docs don't say whether the persona speaking restarts it). Set
+   * well above our own silence endings, which take about 60 to 80 s of student silence when
+   * muted (mute reminder, check-in, then the persona's goodbye), so ours always come first.
+   */
+  silenceBeforeSessionEndSeconds: number;
 };
 
 /** Call timings, in seconds of call time (the callSeconds the browser sends). */
@@ -43,8 +51,12 @@ export type CallTimings = {
   silence: number;
   /** Still silent this long after the check-in's reply: the browser's afterCheckIn turn (the persona ends the call). */
   silenceAfterCheckIn: number;
+  /** Muted this long on the student's turn: the browser's muted turn (the persona says they seem to be on mute), once per muted stretch. */
+  mutedReminder: number;
   /** From here there is no model call at all: the call just ends. */
   backstop: number;
+  /** The connection lost this long (the browser offline, or Anam's connection closed while offline): the call ends ("connection_lost"). */
+  connectionLostLimit: number;
   /** For the Anam session token, not the brain. */
   voiceDetectionOptions: CallVoiceDetectionOptions;
 };
@@ -56,8 +68,10 @@ export const CALL_TIMINGS: Record<CallPersona, CallTimings> = {
     finalStretch: 840,
     silence: 20,
     silenceAfterCheckIn: 10,
+    mutedReminder: 10,
     backstop: 1080,
-    voiceDetectionOptions: { speechEnhancementLevel: 1 },
+    connectionLostLimit: 300,
+    voiceDetectionOptions: { speechEnhancementLevel: 1, silenceBeforeSessionEndSeconds: 180 },
   },
   tempo_objections: {
     callLength: 900,
@@ -65,10 +79,26 @@ export const CALL_TIMINGS: Record<CallPersona, CallTimings> = {
     finalStretch: 840,
     silence: 20,
     silenceAfterCheckIn: 10,
+    mutedReminder: 10,
     backstop: 1080,
-    voiceDetectionOptions: { speechEnhancementLevel: 1 },
+    connectionLostLimit: 300,
+    voiceDetectionOptions: { speechEnhancementLevel: 1, silenceBeforeSessionEndSeconds: 180 },
   },
 };
+
+/** How far past the backstop an Anam session may run before Anam itself ends it. */
+const ANAM_SESSION_MARGIN_SECONDS = 60;
+
+/**
+ * The Anam session's maxSessionLengthSeconds (sent with the session token): the backstop
+ * plus ANAM_SESSION_MARGIN_SECONDS (1,140 s today), so no Anam session runs longer than
+ * that even if the browser never ends it. Anam counts from when the persona starts streaming.
+ * @param timings - The call persona's timings
+ * @returns The limit in seconds
+ */
+export function anamMaxSessionLengthSeconds(timings: CallTimings): number {
+  return timings.backstop + ANAM_SESSION_MARGIN_SECONDS;
+}
 
 // ── Labels ───
 
@@ -87,16 +117,19 @@ export const CALL_END_REASONS = ["time_up", "goodbye", "rude", "break_character"
 
 export type CallEndReason = (typeof CALL_END_REASONS)[number];
 
-/** Why a live call ended, as saved with the transcript: the brain's reason, or "student" (the end-call button). */
-export type CallSessionEndReason = CallEndReason | "student";
+/**
+ * Why a live call ended, as saved with the transcript: the brain's reason, "student" (the
+ * end-call button) or "connection_lost" (the browser's own: the connection stayed lost).
+ */
+export type CallSessionEndReason = CallEndReason | "student" | "connection_lost";
 
 // ── POST /api/student/call-turn ───
 
 /**
- * The request body. Exactly one kind of turn: the student's newMessage, or start, timeMark
- * or silent: true (then no newMessage; afterCheckIn: true only with silent). localTime goes
- * with start; strikes (how many rude and break_character labels this call has had, 0 to 9)
- * with every turn. The /tester/ai-call chat route takes the same body without attemptId.
+ * The request body. Exactly one kind of turn: the student's newMessage, or start, timeMark,
+ * silent or muted: true (then no newMessage; afterCheckIn: true only with silent). localTime
+ * goes with start; strikes (how many rude and break_character labels this call has had, 0
+ * to 9) with every turn. The /tester/ai-call chat route takes the same body without attemptId.
  */
 export type CallTurnRequest = {
   attemptId: string;
@@ -112,6 +145,8 @@ export type CallTurnRequest = {
   timeMark?: true;
   silent?: true;
   afterCheckIn?: true;
+  /** The student's mic has been muted for mutedReminder seconds on their turn. */
+  muted?: true;
   localTime?: { weekday: string; partOfDay: "morning" | "afternoon" | "evening" };
   strikes?: { rude: number; breakCharacter: number };
 };

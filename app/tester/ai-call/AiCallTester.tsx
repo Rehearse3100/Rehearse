@@ -25,9 +25,14 @@
  *   is still silent silenceAfterCheckIn seconds after the check-in's reply finished, one
  *   more with afterCheckIn: true too (the persona then ends the call); also once per stretch.
  *   A silent turn whose request fails (or brings no reply) doesn't count: it can come due again.
- * Start, time-mark and silent turns add no student text to the history. Time marks and the
- * check-in wait while the persona's reply is coming or being spoken, then go right after
- * it (a time mark first, if both are due).
+ * - muted: true (no newMessage): with the avatar on, the mic muted for mutedReminder
+ *   seconds on the student's turn (counted from the later of the mute and the last reply's
+ *   end), so the persona says they seem to be on mute; once per muted stretch, before a due
+ *   check-in. Muted time counts as silence, as in the live call; unmuting resets nothing.
+ *   Text-only mode (avatar off) ignores mute. A failed one can come due again.
+ * Start, time-mark, silent and muted turns add no student text to the history. Time marks,
+ * the mute reminder and the check-in wait while the persona's reply is coming or being
+ * spoken, then go right after it (a time mark first, then the mute reminder).
  * callSeconds: the call time shown on the page at send time, in whole seconds, every
  * "+30 sec" offset included (Start call or the first turn starts the call, so it sends 0
  * plus offsets). silenceSeconds: the Silence readout at send time: whole seconds since the
@@ -81,15 +86,20 @@ import {
   CLOCK_TICK_MS,
   TIME_MARKS,
   callSecondsAt,
+  clockAfterMicMuted,
+  clockAfterMicUnmuted,
+  clockAfterMutedTurnFailed,
   clockAfterReplyFinished,
   clockAfterSilentTurnFailed,
   clockAfterTurnSent,
+  dueMutedReminder,
   dueSilenceTurn,
   dueTimeMark,
   emptyCallClock,
   endCallClock,
   formatClock,
   localTimeAt,
+  mutedSecondsAt,
   silenceSecondsAt,
   speechFallbackMs,
   type CallClock,
@@ -155,14 +165,15 @@ type AiCallTesterProps = {
 
 /**
  * "+30 sec": moves the call time forward, and the Silence readout too while it counts
- * (call running and not the persona's turn; at 00:00 during the persona's turn it stays).
+ * (call running and not the persona's turn; at 00:00 during the persona's turn it stays),
+ * and a muted stretch's start with it (so the mute reminder can be reached quickly).
  */
 export function addCallOffset(clock: CallClock): CallClock {
-  const silenceSince =
-    clock.silenceSince !== null && clock.startedAt !== null && clock.endedAt === null
-      ? clock.silenceSince - CALL_OFFSET_STEP_SECONDS * 1000
-      : clock.silenceSince;
-  return { ...clock, offsetSeconds: clock.offsetSeconds + CALL_OFFSET_STEP_SECONDS, silenceSince };
+  const isRunning = clock.startedAt !== null && clock.endedAt === null;
+  const stepMs = CALL_OFFSET_STEP_SECONDS * 1000;
+  const silenceSince = clock.silenceSince !== null && isRunning ? clock.silenceSince - stepMs : clock.silenceSince;
+  const mutedSince = clock.mutedSince !== null && isRunning ? clock.mutedSince - stepMs : clock.mutedSince;
+  return { ...clock, offsetSeconds: clock.offsetSeconds + CALL_OFFSET_STEP_SECONDS, silenceSince, mutedSince };
 }
 
 // ── Helpers ───
@@ -212,6 +223,9 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
   const [isStartPending, setIsStartPending] = useState(false);
   /** The student's mic as Anam hears it; muted each time the avatar starts. */
   const [isMicMuted, setIsMicMuted] = useState(true);
+  /** isMicMuted for the clock checks (they run from the timer tick). */
+  const isMicMutedRef = useRef(isMicMuted);
+  isMicMutedRef.current = isMicMuted;
 
   // Refs: the Anam callbacks, the timer tick and async turns read the latest values without re-subscribing.
   const personaRef = useRef<PersonaKey>(persona);
@@ -403,17 +417,25 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
 
   /**
    * Sends what the call clock says is due, at most one turn: a time mark first, else the
-   * silence check-in. Runs on every tick, right after "+30 sec", and when a reply finishes.
+   * mute reminder, else the silence check-in. Runs on every tick, right after "+30 sec", and
+   * when a reply finishes. First it tells the clock whether the student is muted: only with
+   * the avatar on (a client exists), so text-only mode ignores mute.
    */
   const runClockChecks = useCallback((): void => {
     const at = Date.now();
     const timings = CALL_TIMINGS[personaRef.current];
+    const isMuted = clientRef.current !== null && isMicMutedRef.current;
+    if (isMuted !== (clockRef.current.mutedSince !== null)) {
+      updateClock((current) => (isMuted ? clockAfterMicMuted(current, at) : clockAfterMicUnmuted(current)));
+    }
     if (dueTimeMark(clockRef.current, at, timings, isBusyRef.current)) {
       void sendTurnRef.current("", "timeMark");
+    } else if (dueMutedReminder(clockRef.current, at, timings, isBusyRef.current)) {
+      void sendTurnRef.current("", "muted");
     } else if (dueSilenceTurn(clockRef.current, at, timings, isBusyRef.current)) {
       void sendTurnRef.current("", "silence");
     }
-  }, []);
+  }, [updateClock]);
 
   /** Sends the queued spoken turns as one, once nothing is in flight. */
   const flushPendingSpoken = useCallback((): void => {
@@ -470,6 +492,7 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
       // The readouts at send time: Silence before this turn resets it; the call time after
       // this turn starts the call (so the first turn sends 0 plus any +30 sec).
       const silenceSeconds = silenceSecondsAt(clockRef.current, sentAt);
+      const mutedSeconds = mutedSecondsAt(clockRef.current, sentAt);
       // A silent turn after the check-in (the check-in already went this silent stretch).
       const isAfterCheckIn = via === "silence" && clockRef.current.silenceTurnsSent >= 1;
       updateClock((current) => clockAfterTurnSent(current, sentAt, via, timings));
@@ -486,9 +509,11 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
             ? `Time mark: ${TIME_MARK_LABELS[timeMark]} (${formatClock(timings[timeMark])}), sent at ${formatClock(callSeconds)} (timeMark: true).`
             : via === "start"
               ? "Start call: asking for the opening (start: true)."
-              : isAfterCheckIn
-                ? `Still silent ${silenceSeconds} s after the check-in (silent: true, afterCheckIn: true).`
-                : `Silence check-in after ${silenceSeconds} s of silence (silent: true).`,
+              : via === "muted"
+                ? `Mic muted for ${mutedSeconds} s on the student's turn: the mute reminder (muted: true).`
+                : isAfterCheckIn
+                  ? `Still silent ${silenceSeconds} s after the check-in (silent: true, afterCheckIn: true).`
+                  : `Silence check-in after ${silenceSeconds} s of silence (silent: true).`,
         });
       }
       const startedAt = performance.now();
@@ -504,6 +529,7 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
             callSeconds,
             silenceSeconds,
             ...(via === "silence" ? { silent: true, ...(isAfterCheckIn ? { afterCheckIn: true } : {}) } : {}),
+            ...(via === "muted" ? { muted: true } : {}),
             ...(via === "start" ? { start: true, localTime: localTimeAt(new Date()) } : {}),
             ...(via === "timeMark" ? { timeMark: true } : {}),
             strikes: { ...strikesRef.current },
@@ -545,9 +571,12 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
           return;
         }
         if (!response.ok || reply === null) {
-          // A silent turn that failed doesn't count, so it can come due again.
+          // A silent turn or mute reminder that failed doesn't count, so it can come due again.
           if (via === "silence") {
             updateClock(clockAfterSilentTurnFailed);
+          }
+          if (via === "muted") {
+            updateClock(clockAfterMutedTurnFailed);
           }
           markReplyFinished();
           return;
@@ -561,6 +590,9 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
           addLine({ kind: "error", text: `Request failed: ${errorText(error)}`, ms: Math.round(performance.now() - startedAt) });
           if (via === "silence") {
             updateClock(clockAfterSilentTurnFailed);
+          }
+          if (via === "muted") {
+            updateClock(clockAfterMutedTurnFailed);
           }
           markReplyFinished();
         }
@@ -953,7 +985,7 @@ export function AiCallTester({ simulationId, classId }: AiCallTesterProps): Reac
               ? null
               : clock.startedAt === null
                 ? "Starts with Start call or the first turn."
-                : `Amber from ${formatClock(timings.wrapUpStart)}, red from ${formatClock(timings.callLength)}. The persona speaks first at ${TIME_MARKS.map((mark) => formatClock(timings[mark])).join(", ")}; check-in after ${timings.silence} s of silence.`}
+                : `Amber from ${formatClock(timings.wrapUpStart)}, red from ${formatClock(timings.callLength)}. The persona speaks first at ${TIME_MARKS.map((mark) => formatClock(timings[mark])).join(", ")}; check-in after ${timings.silence} s of silence${isAvatarOn ? `; mute reminder after ${timings.mutedReminder} s muted` : ""}.`}
           </span>
         </div>
         {isCallEnded ? (

@@ -4,9 +4,10 @@
  * (ObjectionHandlingCallSession): the voice hook on the shared call brain, the connect
  * on mount with the microphone stream the student enabled in the lobby, the student's
  * camera preview, the speaking rings, mute and camera, the live transcript bubbled up,
- * and the call's end, once (the brain's endReason through onCallEnd, or "student" from
- * the end-call button; pressed while the persona's ending is under way, the button keeps
- * that ending's reason). Unmounted before the call ended, it ends the voice session and
+ * and the call's end, once (the brain's endReason through onCallEnd, the voice hook's own
+ * "backstop" or "connection_lost" the same way, or "student" from the end-call button;
+ * pressed while the persona's ending is under way, the button keeps that ending's reason).
+ * Every end goes to onEnded, which saves the call. Unmounted before the call ended, it ends the voice session and
  * stops the microphone and camera tracks. Returns what TempoCallSessionShell renders; each session adds
  * its persona's name, role, connecting line and the Avatar, and its own extras (the
  * objection tracker).

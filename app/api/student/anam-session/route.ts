@@ -4,14 +4,16 @@
  * Anam runs STT + TTS + avatar video; Rehearse supplies GPT via client talk stream.
  * Server-only ANAM_API_KEY; client receives sessionToken + avatarId only.
  * A Tempo attempt's discovery and objections sessions (the live Dana and Dr. Kim calls)
- * also send that persona's voiceDetectionOptions from CALL_TIMINGS in lib/call-config.ts;
- * every other session's personaConfig is unchanged. Errors from Supabase or Anam are
+ * also send that persona's voiceDetectionOptions from CALL_TIMINGS in lib/call-config.ts
+ * and maxSessionLengthSeconds (anamMaxSessionLengthSeconds: the backstop plus 60 s), so no
+ * Anam session runs longer than that; every other session's personaConfig is unchanged.
+ * Errors from Supabase or Anam are
  * logged on the server; the browser gets only a generic message, never their text.
  */
 
 import { NextResponse } from "next/server";
 import { requireStudentApi } from "@/lib/api-auth";
-import { CALL_TIMINGS, type CallPersona } from "@/lib/call-config";
+import { CALL_TIMINGS, anamMaxSessionLengthSeconds, type CallPersona } from "@/lib/call-config";
 import { TEMPO_SIMULATION_ID } from "@/lib/constants";
 import {
   ANAM_CUSTOM_CLIENT_LLM_ID,
@@ -134,6 +136,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const sessionLabel = `${stage}:${attemptId}`;
     // Tempo only: a legacy simulation can use these stages too, and keeps Anam's defaults.
     const isTempoCall = attempt.simulation_id === TEMPO_SIMULATION_ID;
+    const timings = CALL_TIMINGS[TEMPO_STAGE_PERSONAS[stage]];
 
     const anamResponse = await fetch(ANAM_SESSION_TOKEN_URL, {
       method: "POST",
@@ -149,7 +152,10 @@ export async function POST(request: Request): Promise<NextResponse> {
           voiceId,
           llmId: ANAM_CUSTOM_CLIENT_LLM_ID,
           ...(isTempoCall
-            ? { voiceDetectionOptions: CALL_TIMINGS[TEMPO_STAGE_PERSONAS[stage]].voiceDetectionOptions }
+            ? {
+                voiceDetectionOptions: timings.voiceDetectionOptions,
+                maxSessionLengthSeconds: anamMaxSessionLengthSeconds(timings),
+              }
             : {}),
         },
       }),

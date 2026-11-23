@@ -13,9 +13,11 @@
  * - the student's spoken turns (newMessage), with the call time, the Silence readout,
  *   the strikes (rude and break_character labels so far, counted from each turn's label)
  *   and the turn type;
- * - the time marks (wrap-up start, final stretch, time up: timeMark: true) and the two
- *   silent turns (the check-in, then afterCheckIn), from CALL_TIMINGS and the clock rules
- *   in lib/call-clock.ts, checked every CLOCK_TICK_MS on the student's turn.
+ * - the time marks (wrap-up start, final stretch, time up: timeMark: true), the two
+ *   silent turns (the check-in, then afterCheckIn) and the mute reminder (muted: true,
+ *   once per muted stretch, after CALL_TIMINGS.mutedReminder seconds muted on the
+ *   student's turn; it goes before a due silent turn), from CALL_TIMINGS and the clock
+ *   rules in lib/call-clock.ts, checked every CLOCK_TICK_MS on the student's turn.
  * A reply is "spoken" at Anam's real end of speech: MESSAGE_HISTORY_UPDATED ending on the
  * persona, or one that adds nothing and ends on the student's message already handled (the
  * SDK updates the persona's message in place, so words heard while it spoke stay last).
@@ -27,18 +29,26 @@
  * Anam's events reference advises) Silence holds, so a long answer never gets the check-in.
  * TALK_STREAM_INTERRUPTED (the student cut the persona off) only stops playback: a turn in
  * flight carries on. Queued words go on the next clock tick (and on unmute). A silent turn
- * whose request fails doesn't count.
+ * or mute reminder whose request fails doesn't count.
  * endCall from the route: the mic is muted (the Avatar API), the ending's fallback is armed,
  * the reply is spoken in full, the avatar stops, and onCallEnd(endReason) ends the call the
  * way the end-call button does (which, during an ending, keeps the ending's reason:
- * getPendingEndReason). Local safety stops end the call the same way, once, with
- * "backstop": the clock passing CALL_TIMINGS.backstop, or Anam's connection closing
- * mid-call. The hook exposes callSeconds from the clock. pauseMic / resumeMic are Anam's
- * own input mute (the Avatar's setInputMuted) on the stream startCall was given; muted,
- * Silence is paused (no check-in or silence ending) and it starts from zero on unmute.
+ * getPendingEndReason). The local safety stop ends the call the same way, once, with
+ * "backstop" when the clock passes CALL_TIMINGS.backstop.
+ * A lost connection: the browser's offline event starts a CALL_TIMINGS.connectionLostLimit
+ * timer; online again first, the call carries on. Anam's CONNECTION_CLOSED mid-call is
+ * final (SDK 4.26.0 retries on its own first and has no public "reconnecting" event), so
+ * the call ends with "connection_lost" at once when the browser is online, or, offline, as
+ * soon as it is back online (so the save can go through) or at the limit. Every one of
+ * these ends the call once, through onCallEnd("connection_lost"); an ending under way
+ * finishes with its own reason instead.
+ * The hook exposes callSeconds from the clock. pauseMic / resumeMic are Anam's own input
+ * mute (the Avatar's setInputMuted) on the stream startCall was given; muted time counts
+ * as silence (the mute reminder comes first), and unmuting alone resets nothing.
  * Diagnostics: one console.info line, prefixed "[call]", per turn sent, reply received,
- * talk() sent, persona end of speech, ending finished and silence turn due (types, labels
- * and timings only: never the reply's or the student's text).
+ * talk() sent, persona end of speech, ending finished, silence turn or mute reminder due,
+ * safety stop and lost connection (types, labels and timings only: never the reply's or
+ * the student's text).
  *
  * ── Every other persona (legacy "simulation" calls): unchanged ───
  * GPT via POST /api/chat; the opening is openingGreeting (or the default greeting);
@@ -54,17 +64,21 @@ import {
   CALL_TIMINGS,
   isCallPersona,
   type CallEndReason,
+  type CallSessionEndReason,
   type CallTurnRequest,
 } from "@/lib/call-config";
 import {
   CLOCK_TICK_MS,
   USER_SPEECH_DROPPED_MS,
   callSecondsAt,
+  clockAfterMicMuted,
   clockAfterMicUnmuted,
+  clockAfterMutedTurnFailed,
   clockAfterReplyFinished,
   clockAfterSilentTurnFailed,
   clockAfterStudentSpeechStarted,
   clockAfterTurnSent,
+  dueMutedReminder,
   dueSilenceTurn,
   dueTimeMark,
   emptyCallClock,
@@ -101,10 +115,11 @@ export type SimulationVoiceConfig = {
   /** Which Anam avatar and voice the session uses. */
   anamStage: AnamSessionStage;
   /**
-   * Call personas only: the brain ended the call (endCall). Called once the reply has been
-   * spoken and the avatar has stopped; end the call as the end-call button does.
+   * Call personas only: the brain ended the call (endCall), called once the reply has been
+   * spoken and the avatar has stopped; or the call ended locally ("backstop",
+   * "connection_lost"). End the call as the end-call button does.
    */
-  onCallEnd?: (endReason: CallEndReason) => void;
+  onCallEnd?: (endReason: Exclude<CallSessionEndReason, "student">) => void;
 };
 
 export type SimulationVoiceReturn = {
@@ -136,9 +151,14 @@ type CallStrikes = { rude: number; breakCharacter: number };
 
 /**
  * How the persona's ending finished: its end of speech, the fallback, cut off, the reply
- * couldn't be spoken, or a local safety stop.
+ * couldn't be spoken, a local safety stop, or the connection lost.
  */
-type EndingFinish = "event" | "fallback" | "interrupted" | "not spoken" | "safety stop";
+type EndingFinish = "event" | "fallback" | "interrupted" | "not spoken" | "safety stop" | "connection lost";
+
+/** False only when the browser says it is offline (navigator.onLine). */
+function isBrowserOnline(): boolean {
+  return typeof navigator === "undefined" || navigator.onLine !== false;
+}
 
 function getExtendedAvatar(ref: AvatarRef | null): ExtendedAvatarRef | null {
   return ref as ExtendedAvatarRef | null;
@@ -223,6 +243,11 @@ export function useSimulationVoiceSession(
   const finishPersonaSpeechRef = useRef<(status?: string) => void>(() => undefined);
   const completePersonaEndingRef = useRef<(how: EndingFinish) => void>(() => undefined);
   const releaseSilenceHoldRef = useRef<() => void>(() => undefined);
+  /** The lost-connection timer (CALL_TIMINGS.connectionLostLimit), or null when the connection is fine. */
+  const connectionLostTimerRef = useRef<number | null>(null);
+  /** Anam reported its connection closed mid-call: the call can't go on (the SDK doesn't come back after it). */
+  const isAnamClosedRef = useRef(false);
+  const endCallForLostConnectionRef = useRef<(why: string) => void>(() => undefined);
 
   useEffect(() => {
     configRef.current = config;
@@ -336,6 +361,13 @@ export function useSimulationVoiceSession(
     if (endingTimerRef.current !== null) {
       window.clearTimeout(endingTimerRef.current);
       endingTimerRef.current = null;
+    }
+  }, []);
+
+  const clearConnectionLostTimer = useCallback((): void => {
+    if (connectionLostTimerRef.current !== null) {
+      window.clearTimeout(connectionLostTimerRef.current);
+      connectionLostTimerRef.current = null;
     }
   }, []);
 
@@ -460,8 +492,9 @@ export function useSimulationVoiceSession(
 
   /**
    * The student's queued words go before a time mark or check-in (they carry the time note
-   * too; the clock tick flushes them, so they never hold the clock turns for long). Muted,
-   * Silence is paused: no check-in and no silence ending (time marks still go).
+   * too; the clock tick flushes them, so they never hold the clock turns for long; muted,
+   * they wait for the unmute). Then a due time mark, else the mute reminder, else a due
+   * silent turn: muted time counts as silence, and the reminder comes first.
    */
   const runClockChecks = useCallback((): void => {
     const persona = configRef.current.persona;
@@ -477,7 +510,9 @@ export function useSimulationVoiceSession(
       void sendCallTurnRef.current("", "timeMark");
       return;
     }
-    if (isMicMuted()) {
+    if (dueMutedReminder(clockRef.current, at, timings, isProcessingUserRef.current)) {
+      console.info("[call] mute reminder due");
+      void sendCallTurnRef.current("", "muted");
       return;
     }
     const silenceTurn = dueSilenceTurn(clockRef.current, at, timings, isProcessingUserRef.current);
@@ -496,7 +531,7 @@ export function useSimulationVoiceSession(
 
   /**
    * One turn to the call brain: the history so far, the student's text or start / timeMark
-   * / silent: true, and the clock, Silence and strikes. Speaks the reply; on endCall, ends
+   * / silent / muted: true, and the clock, Silence and strikes. Speaks the reply; on endCall, ends
    * the call. True when a reply came back. A failed turn adds nothing to the history and
    * Silence counts from then. Nothing is sent once the call is ending or ended; spoken text
    * that arrives while a turn is in flight is queued.
@@ -562,6 +597,7 @@ export function useSimulationVoiceSession(
         callSeconds: turnCallSeconds,
         silenceSeconds,
         ...(via === "silence" ? { silent: true as const, ...(isAfterCheckIn ? { afterCheckIn: true as const } : {}) } : {}),
+        ...(via === "muted" ? { muted: true as const } : {}),
         ...(via === "start" ? { start: true as const, localTime: localTimeAt(new Date()) } : {}),
         ...(via === "timeMark" ? { timeMark: true as const } : {}),
         strikes: { ...strikesRef.current },
@@ -620,9 +656,12 @@ export function useSimulationVoiceSession(
           releaseDiscardedReply();
           return false;
         }
-        // A silent turn that failed doesn't count, so it can come due again.
+        // A silent turn or mute reminder that failed doesn't count, so it can come due again.
         if (via === "silence") {
           updateClock(clockAfterSilentTurnFailed);
+        }
+        if (via === "muted") {
+          updateClock(clockAfterMutedTurnFailed);
         }
         // A failed opening is handled by startCall.
         if (via !== "start") {
@@ -879,35 +918,81 @@ export function useSimulationVoiceSession(
   }, [scheduleFlushPending]);
 
   /**
-   * A local safety stop (`why`: the clock passed the backstop, or Anam's connection closed
-   * mid-call): the call ends now through the persona's ending path, once, with "backstop"
-   * (an ending already under way keeps its own reason). Nothing before the call starts or
-   * after it has ended.
+   * The local safety stop (the clock passed the backstop): the call ends now through the
+   * persona's ending path, once, with "backstop" (an ending already under way keeps its own
+   * reason). Nothing before the call starts or after it has ended.
    */
-  const stopCallForSafety = useCallback((why: "clock" | "connection"): void => {
+  const stopCallForSafety = useCallback((): void => {
     const isEnding = endingReasonRef.current !== null;
     const isLive = clockRef.current.startedAt !== null && clockRef.current.endedAt === null;
     if (!isEnding && !isLive) {
       return;
     }
-    console.info(`[call] safety stop: ${why}`);
+    console.info("[call] safety stop: backstop passed");
     if (!isEnding) {
       endingReasonRef.current = "backstop";
     }
     completePersonaEndingRef.current("safety stop");
   }, []);
 
+  /**
+   * The connection is lost mid-call (`why`, for the log): starts the connectionLostLimit
+   * timer, once; when it runs out, the call ends with "connection_lost". Nothing before the
+   * call starts, after it has ended, or while the timer already runs.
+   */
+  const startConnectionLostTimer = useCallback((why: string): void => {
+    const persona = configRef.current.persona;
+    const isLive = clockRef.current.startedAt !== null && clockRef.current.endedAt === null;
+    if (!isCallPersona(persona) || !isLive || connectionLostTimerRef.current !== null) {
+      return;
+    }
+    const limitSeconds = CALL_TIMINGS[persona].connectionLostLimit;
+    console.info(`[call] connection lost (${why}): the call ends in ${limitSeconds} s unless it comes back`);
+    connectionLostTimerRef.current = window.setTimeout(() => {
+      connectionLostTimerRef.current = null;
+      endCallForLostConnectionRef.current("limit reached");
+    }, limitSeconds * 1000);
+  }, []);
+
+  /**
+   * The browser is back online while the timer runs: the call carries on, unless Anam's
+   * connection closed meanwhile (it doesn't come back), and then it ends now, while the
+   * network is up for the save.
+   */
+  const handleBrowserOnline = useCallback((): void => {
+    if (connectionLostTimerRef.current === null) {
+      return;
+    }
+    if (isAnamClosedRef.current) {
+      endCallForLostConnectionRef.current("back online");
+      return;
+    }
+    clearConnectionLostTimer();
+    console.info("[call] connection back: the call carries on");
+  }, [clearConnectionLostTimer]);
+
   const handleConnectionClosed = useCallback(
     (reason: string, details?: string): void => {
       console.warn("[voice] Anam connection closed:", reason, details ?? "");
       setStatusText("Call connection ended.");
-      // Call personas: the call can't go on without Anam (our own endSession comes after the call has ended).
+      // Call personas: Anam has already tried to reconnect, and its session doesn't come back
+      // after this (our own endSession's close comes after the call has ended: nothing to do).
       if (isCallPersona(configRef.current.persona)) {
-        stopCallForSafety("connection");
+        const isLive = clockRef.current.startedAt !== null && clockRef.current.endedAt === null;
+        if (endingReasonRef.current !== null) {
+          completePersonaEndingRef.current("connection lost");
+        } else if (isLive) {
+          isAnamClosedRef.current = true;
+          if (isBrowserOnline()) {
+            endCallForLostConnectionRef.current("Anam's connection closed");
+          } else {
+            startConnectionLostTimer("Anam's connection closed while offline");
+          }
+        }
       }
       setIsActive(false);
     },
-    [stopCallForSafety]
+    [startConnectionLostTimer]
   );
 
   // ── Anam event wiring ──────────────────────────────────────────────────────
@@ -949,7 +1034,7 @@ export function useSimulationVoiceSession(
         return;
       }
       if (callSecondsAt(clockRef.current, at) >= CALL_TIMINGS[persona].backstop) {
-        stopCallForSafety("clock");
+        stopCallForSafety();
         return;
       }
       if (isAwaitingSpeechEndRef.current && at - speechSentAtRef.current >= speechFallbackMsRef.current) {
@@ -966,8 +1051,29 @@ export function useSimulationVoiceSession(
     return () => window.clearInterval(timer);
   }, [isCallClockRunning, stopCallForSafety, flushPendingUtterance]);
 
-  // The ending's fallback timer never outlives the component.
-  useEffect(() => clearEndingTimer, [clearEndingTimer]);
+  // ── Call personas: the browser's offline and online events ───
+  const isCallPersonaSession = isCallPersona(config.persona);
+  useEffect(() => {
+    if (!isCallPersonaSession) {
+      return undefined;
+    }
+    const handleOffline = (): void => startConnectionLostTimer("browser offline");
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("online", handleBrowserOnline);
+    return () => {
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", handleBrowserOnline);
+    };
+  }, [isCallPersonaSession, startConnectionLostTimer, handleBrowserOnline]);
+
+  // The ending's fallback and the lost-connection timer never outlive the component.
+  useEffect(
+    () => (): void => {
+      clearEndingTimer();
+      clearConnectionLostTimer();
+    },
+    [clearEndingTimer, clearConnectionLostTimer]
+  );
 
   const stopListening = useCallback((): void => {
     pendingUtteranceRef.current = "";
@@ -1021,6 +1127,8 @@ export function useSimulationVoiceSession(
           isAwaitingSpeechEndRef.current = false;
           endingReasonRef.current = null;
           clearEndingTimer();
+          clearConnectionLostTimer();
+          isAnamClosedRef.current = false;
           studentSpeechStartedAtRef.current = null;
           isSilenceHeldBySpeechRef.current = false;
           isActiveRef.current = true;
@@ -1063,15 +1171,17 @@ export function useSimulationVoiceSession(
         throw err;
       }
     },
-    [speakPersona, sendCallTurn, clearEndingTimer]
+    [speakPersona, sendCallTurn, clearEndingTimer, clearConnectionLostTimer]
   );
 
   const endCall = useCallback((): void => {
-    // Call personas: the clock stops, and an ending in progress is settled.
+    // Call personas: the clock stops, and an ending in progress (or a lost-connection wait) is settled.
     if (isCallPersona(configRef.current.persona)) {
       updateClock((current) => endCallClock(current, Date.now()));
       endingReasonRef.current = null;
       clearEndingTimer();
+      clearConnectionLostTimer();
+      isAnamClosedRef.current = false;
       isAwaitingSpeechEndRef.current = false;
       studentSpeechStartedAtRef.current = null;
       isSilenceHeldBySpeechRef.current = false;
@@ -1083,7 +1193,7 @@ export function useSimulationVoiceSession(
     getExtendedAvatar(avatarRef.current)?.stopSpeaking();
     stopListening();
     void getExtendedAvatar(avatarRef.current)?.endSession();
-  }, [stopListening, updateClock, clearEndingTimer]);
+  }, [stopListening, updateClock, clearEndingTimer, clearConnectionLostTimer]);
 
   /** The persona's closing reply has been spoken (`how`, for the log): stop the avatar, then end the call with its reason. */
   const completePersonaEnding = useCallback((how: EndingFinish): void => {
@@ -1098,6 +1208,31 @@ export function useSimulationVoiceSession(
 
   completePersonaEndingRef.current = completePersonaEnding;
 
+  /**
+   * The connection stayed lost (`why`, for the log): the call ends now with
+   * "connection_lost", once: endCall stops the Anam session if it can still be reached, and
+   * onCallEnd saves the call as the end-call button does. An ending under way finishes with
+   * its own reason instead. Nothing once the call has ended.
+   */
+  const endCallForLostConnection = useCallback(
+    (why: string): void => {
+      clearConnectionLostTimer();
+      if (endingReasonRef.current !== null) {
+        completePersonaEnding("connection lost");
+        return;
+      }
+      if (clockRef.current.startedAt === null || clockRef.current.endedAt !== null) {
+        return;
+      }
+      console.info(`[call] call ended: connection lost (${why})`);
+      endCall();
+      configRef.current.onCallEnd?.("connection_lost");
+    },
+    [clearConnectionLostTimer, completePersonaEnding, endCall]
+  );
+
+  endCallForLostConnectionRef.current = endCallForLostConnection;
+
   const replaceAudioStream = useCallback((audioStream: MediaStream): void => {
     if (audioStream.getAudioTracks().length === 0) {
       return;
@@ -1105,22 +1240,26 @@ export function useSimulationVoiceSession(
     void getExtendedAvatar(avatarRef.current)?.updateInputStream(audioStream);
   }, []);
 
+  // Call personas: a muted stretch begins (muted time counts as silence; the mute reminder comes first).
   const pauseMic = useCallback((): void => {
     if (configRef.current.isMutedRef) {
       configRef.current.isMutedRef.current = true;
     }
     getExtendedAvatar(avatarRef.current)?.setInputMuted(true);
-  }, []);
+    if (isCallPersona(configRef.current.persona)) {
+      updateClock((current) => clockAfterMicMuted(current, Date.now()));
+    }
+  }, [updateClock]);
 
   // Anam's input mute on the current stream: no new stream, so the lobby's echo-cancelled mic carries on.
-  // Call personas: Silence, paused while muted, starts again from zero, and queued words go.
+  // Call personas: the muted stretch ends (nothing else resets), and words queued before the mute go.
   const resumeMic = useCallback((): void => {
     if (configRef.current.isMutedRef) {
       configRef.current.isMutedRef.current = false;
     }
     getExtendedAvatar(avatarRef.current)?.setInputMuted(false);
     if (isCallPersona(configRef.current.persona)) {
-      updateClock((current) => clockAfterMicUnmuted(current, Date.now(), isProcessingUserRef.current));
+      updateClock(clockAfterMicUnmuted);
       scheduleFlushPending();
     }
   }, [updateClock, scheduleFlushPending]);
